@@ -859,11 +859,11 @@ await group("static boundary and Makefile contract", async () => {
     const declaration = [lines[start]];
     while (declaration.at(-1).endsWith("\\")) declaration.push(lines[start + declaration.length]);
     assert.deepEqual(declaration.join(" ").replace(/^test-v1x-fixtures:\s*/, "").replaceAll("\\", " ").trim().split(/\s+/).slice(-5), [
-      "test-pending-handoff-core-fixtures",
       "test-pending-handoff-identity-fixtures",
       "test-pending-handoff-secret-provider-fixtures",
       "test-pending-handoff-identity-composition-fixtures",
       "test-pending-handoff-candidate-fixtures",
+      "test-pending-handoff-store-fixtures",
     ]);
   });
 });
