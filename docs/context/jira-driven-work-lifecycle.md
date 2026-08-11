@@ -1,11 +1,8 @@
 # Product Decision: Jira-driven Work Lifecycle
 
-**Status:** Accepted design decision — adopted by PM Product Decision; canonical
-repository context only after merge to `master`.
-**Date:** 2026-07-28
-**Scope:** Product contract only. This document does not ship a Jira connector,
-skills, hooks, installer behavior, or Git mutation runtime. This PR does not
-release a Skill or Runtime feature.
+**Status:** Accepted product decision — RISK_TIERED_HYBRID.
+**Date:** 2026-08-11
+**Scope:** Jira planning ownership, execution-readiness, and Worker boundaries.
 
 ## Decision
 
@@ -14,9 +11,9 @@ oh-my-ai will model Jira work as two separate, optional skills:
 1. `jira-ticket` authors a Ticket Contract. It collects sources, presents a
    preview, creates the Jira issue only after explicit user approval, reports
    the issue key and URL, and then stops.
-2. `jira-work` consumes an already-existing Ticket Contract. It validates the
-   ticket, its sources, and the Git preflight before it can begin repository
-   work.
+2. `jira-work` is the preferred Deep Lane execution-readiness gate. It validates either
+   current Connector evidence plus the Main Contract, or a structured Main
+   Handoff, and must consume the shared Git preflight before the Worker begins.
 
 The boundary is intentional. Creating a record of planned work is not
 authorization to create a branch, modify a repository, or change Jira status.
@@ -28,10 +25,10 @@ request / Confluence
   -> Jira issue creation -> key + URL report -> stop
 
 Consumption
-existing Jira Ticket
-  -> Ticket + source gates -> Git preflight -> Execution Policy
-  -> branch or existing-work resume -> implementation + verification
-  -> commit + push + draft PR -> Jira evidence + permitted transition
+Main Contract + selected Source Mode
+  -> claim-level Jira freshness -> shared Git preflight
+  -> jira-work readiness result -> Worker
+  -> implementation + verification -> commit + push + draft PR
 ```
 
 `jira-ticket` must not create a branch, change code, commit, push, create a
@@ -43,8 +40,9 @@ different Ticket.
 
 - `jira-ticket` and `jira-work` are separate optional skills.
 - `jira-ticket` ends after an explicitly approved Jira creation.
-- `jira-work` consumes an existing Ticket Contract; it does not infer one from
-  a vague task description.
+- `jira-work` consumes current Connector evidence or a complete
+  `jira-work-main-handoff/v1`; it does not infer a Contract from arbitrary
+  prose.
 - A Jira Ticket is an execution contract, not the canonical Product or
   Architecture Decision.
 - If the Jira Ticket conflicts with an accepted decision or canonical
@@ -53,12 +51,13 @@ different Ticket.
 - One Ticket maps to one repository, one working branch, and one draft PR.
   Existing work may be resumed only after the same contract and preflight
   gates pass.
-- `$jira-work` expresses intent to execute; the active Execution Policy still
-  controls every mutation.
+- `$jira-work` expresses intent to run the readiness gate; the Worker and active
+  Execution Policy still control every mutation.
 - Removing draft status, merge, release, tag, and deployment each require a
   separate explicit approval.
-- V1 does not permit degraded execution without the required Jira Connector:
-  `jira-work` must not mutate Git when the Connector is absent.
+- In `MAIN_HANDOFF`, optional Jira freshness is `NOT_PERFORMED` and does not
+  invalidate independently verifiable Repository claims. Required freshness
+  without a Connector is `NOT_VERIFIABLE` and stops execution readiness.
 - Git and Jira partial successes are preserved and reported. The workflow does
   not automatically roll them back.
 
@@ -87,11 +86,27 @@ the confirmed sources and wait for explicit approval before writing to Jira.
 5. Handoff Candidate
 6. Current conversation
 
-At consumption time Jira is added as the execution contract: it identifies the
-approved work to perform and the evidence to return. It cannot override the
-sources above it. Handoff Candidates and conversation are useful inputs, but
-are not durable facts. A mismatch between either and a canonical source must
-not be promoted as truth by `jira-work`.
+At consumption time, `CONNECTOR_VERIFIED` requires actual current-session Jira
+evidence. `MAIN_HANDOFF` requires a complete `jira-work-main-handoff/v1` with
+`APPROVED_BY_MAIN`. That marker is declarative provenance, not authentication,
+a digital signature, or cryptographic trust. Neither mode can override the
+sources above it.
+
+The Main Handoff contains Issue Key, Repository, Base Branch and expected Base
+SHA, Goal, In Scope, Out of Scope, Do Not Touch, Acceptance Criteria,
+Verification, Risk Tier, Jira Freshness Requirement, and the approval marker.
+Digest and durable machine-verifiable evidence handoff remain out of scope.
+
+## Risk-tiered route
+
+- Fast Lane: ordinary UI, Feature, Small Bug, and simple documentation use Web
+  Main → Git Preflight → Worker. `jira-work` is optional.
+- Deep Lane: Auth/Security, Secret/Privacy, DB/Schema Migration, Backfill,
+  CAS/Lock/Concurrency, Shared Platform, Cross-repository Contract, Destructive
+  Git, Release/Deploy, and Repository Ownership should prefer Web Main →
+  `jira-work` → Worker when the risk justifies the additional gate. The route is
+  recommended, not mandatory; once invoked, every gate claim remains
+  fail-closed.
 
 ## Common Ticket Contract
 
@@ -145,9 +160,9 @@ Execution Policy is a higher-order control than a `jira-work` invocation.
 
 | Mode | Allowed lifecycle outcome |
 |---|---|
-| `suggest-only` | Read the Ticket, sources, and Git state; present an execution plan only. |
-| `patch-with-approval` | After Ticket, source, and preflight gates pass, present a concrete mutation plan and wait for a separate approval before branch creation, implementation, commit, push, draft PR, or Jira update. |
-| `auto-apply` | After every gate passes, proceed through implementation, draft PR, and Jira update. |
+| `suggest-only` | Read the Contract, sources, and Git state; present readiness and a plan only. |
+| `patch-with-approval` | After source and preflight gates pass, the Worker still needs the policy's separate mutation approval. |
+| `auto-apply` | After every readiness gate passes, the Worker may proceed within the approved scope. |
 
 No mode automatically removes draft status, merges, releases, tags, deploys to
 production, runs a migration, or changes secrets. These remain separate
@@ -194,8 +209,17 @@ Ticket-level Verification and repository verification rules are both mandatory.
 If a required check fails, or cannot be executed, the work is not verified:
 commit, push, and draft PR are prohibited. The changed files are preserved, and
 the result must report the failure evidence and a recovery procedure. This
-decision deliberately does not introduce a Ticket-level verification-exception
-format; that is an open follow-up decision.
+preserves fail-closed semantics after `jira-work` has been invoked; it does not
+make Deep Lane invocation mandatory. This decision deliberately does not
+introduce a Ticket-level verification-exception format; that is an open
+follow-up decision.
+
+Current-invocation consumption is procedural in this version: the Worker must
+execute `git-work-preflight` and inspect its process result during the same
+invocation. Semantic fixtures reject a stale or pasted artifact represented as
+`NOT_EXECUTED`, but there is no durable nonce or machine-verifiable freshness
+channel that can authenticate an external report. That evidence system remains
+out of scope.
 
 Partial success is state to preserve, not a reason to issue compensating
 mutations:
@@ -215,30 +239,20 @@ historical evidence rather than rewriting it.
 ## Optional integration boundary
 
 `jira-ticket` and `jira-work` are not required Public Core skills and are not
-included automatically by `make install-shared`. Their UX is available only in
-an environment where the relevant Connector and Runtime Skill are explicitly
-installed. README must not advertise an uninstalled command as current product
-functionality.
+included automatically by `make install-shared`. README must not advertise an
+uninstalled command as current product functionality.
 
 Jira Connector configuration is optional and must not hard-code credentials,
-Cloud ID, project key, or account ID. A draft-PR provider has an abstraction
-boundary; an initial implementation may use `gh`, but the actual provider is an
-implementation-time architecture decision that requires verification.
-
-Open installation decisions, deferred until PR 8, are:
-
-- individual manual installation guidance;
-- a generic optional-skill installer; and
-- a Jira-workflow-specific opt-in installer.
+Cloud ID, project key, or account ID. Connector availability controls
+`CONNECTOR_VERIFIED` and required-freshness claims; it does not make optional
+`MAIN_HANDOFF` Repository evidence unverifiable. Draft PR and Jira write
+providers belong to the Worker lifecycle, not this readiness gate.
 
 ## Consequences and non-goals
 
-This decision favors explicit gates and recoverable evidence over a convenient
-single-command workflow. It adds contract maintenance and connector setup cost,
-but prevents a ticket authoring action or stale Jira description from becoming
-unreviewed repository mutation.
-
-It does not implement either skill, a connector, preflight code, hook changes,
-installer changes, a telemetry schema, or documentation advertising the skills
-as shipped functionality. The implementation boundary is specified in
+This decision favors explicit, claim-level gates over a convenient
+single-command workflow. It adds handoff-contract maintenance, but prevents
+unstructured prose or stale Jira state from becoming repository authorization.
+`jira-work` remains a gate rather than an implementation orchestrator. The
+implementation boundary is specified in
 [Shared Git Preflight and Jira Execution Boundary](shared-git-preflight-jira-execution-boundary.md).

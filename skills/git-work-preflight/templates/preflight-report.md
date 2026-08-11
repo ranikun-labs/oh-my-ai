@@ -8,6 +8,8 @@
 
 - Consumer:
 - Repository:
+- Canonical Repository:
+- Push Remote:
 - Expected Base Branch:
 - Expected Base SHA:
 - Expected Branch Candidate:
@@ -25,18 +27,25 @@
 ## Repository and Base
 
 - Repository Verification:
-- Remote Verification:
-- Feature Remote Verification:
+- Canonical Repository Verification:
+- Push Remote Verification:
+- Configured Fetch URL: credential and query redacted; destination preserved.
+- Configured Push URL: credential and query redacted; destination preserved.
+- Fetch Repository Relation: `SAME_CANONICAL_REPOSITORY`,
+  `VERIFIED_FORK_OF_CANONICAL`, `UNRELATED_REPOSITORY`, or `NOT_VERIFIABLE`.
+- Push Repository Relation: same relation vocabulary as Fetch Repository.
+- Actual Feature Push Target: configured Push URL plus the exact Feature ref.
+- Canonical Base Verification:
+- Push Remote Feature Verification:
 - Current Branch:
 - Current HEAD:
 - Expected Base SHA:
-- Cached Remote-tracking Base SHA:
-- Actual Remote Base SHA:
-- Cached Remote-tracking Feature SHA:
-- Actual Remote Feature SHA:
+- Cached Fetch-remote Base SHA:
+- Authoritative Base SHA:
+- Cached Fetch-remote Feature SHA:
+- Actual Push-remote Feature SHA:
 - Feature Integration Point:
 - Local Base SHA:
-- Remote Base SHA:
 - Ancestry Status:
 
 ## Working Tree Status
@@ -57,6 +66,7 @@
 - PR Status:
 - Issue Association Status:
 - Candidate Tip Evidence:
+- Unique Feature Commits:
 - Existing Work A-H:
 
 ## Preflight Result

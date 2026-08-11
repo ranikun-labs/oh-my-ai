@@ -2,6 +2,8 @@
 set -euo pipefail
 
 repository=""
+canonical_repository=""
+push_remote=""
 expected_base_branch=""
 expected_base_sha=""
 expected_branch_name=""
@@ -11,6 +13,13 @@ consumer=""
 provided_evidence=""
 
 repository_verification='NOT_VERIFIABLE'
+canonical_repository_verification='NOT_CHECKED'
+push_remote_verification='NOT_CHECKED'
+configured_fetch_url='NOT_CHECKED'
+configured_push_url='NOT_CHECKED'
+fetch_repository_relation='NOT_CHECKED'
+push_repository_relation='NOT_CHECKED'
+actual_feature_push_target='NOT_CHECKED'
 remote_verification='NOT_CHECKED'
 feature_remote_verification='NOT_CHECKED'
 current_branch='NOT_CHECKED'
@@ -36,6 +45,7 @@ ancestry_status='NOT_CHECKED'
 local_branch_tip='NOT_CHECKED'
 remote_branch_tip='NOT_CHECKED'
 candidate_tip_evidence='NOT_CHECKED'
+unique_feature_commits='NOT_CHECKED'
 existing_work_state='NONE'
 executed_evidence='NOT_CHECKED'
 unexecuted_checks='Required checks not reached; per-field status is authoritative'
@@ -44,6 +54,8 @@ usage() {
   cat <<'USAGE'
 usage: scripts/git-work-preflight.sh \
   --repository <path> \
+  --canonical-repository <owner/repo> \
+  --push-remote <name> \
   --expected-base-branch <name> \
   --execution-policy <suggest-only|patch-with-approval|auto-apply> \
   --consumer <work-start|jira-work|manual-review> \
@@ -64,6 +76,13 @@ safe_report_value() {
   value="${value//:/\\:}"
   value="${value//#/\\#}"
   printf '%s' "$value" | LC_ALL=C tr '\000-\037\177' '?'
+}
+
+sanitize_remote_url() {
+  printf '%s' "$1" | sed -E \
+    -e 's#(https?://)[^/@]+:[^/@]+@#\1#' \
+    -e 's#(https?://)[^/@]+@#\1#' \
+    -e 's#[?#].*$##'
 }
 
 report_field() {
@@ -97,19 +116,27 @@ report() {
   report_field 'Execution Policy' "${execution_policy:-NOT_PROVIDED}"
   report_field 'Repository' "${repository:-NOT_PROVIDED}"
   report_field 'Repository Verification' "$repository_verification"
-  report_field 'Remote Verification' "$remote_verification"
-  report_field 'Feature Remote Verification' "$feature_remote_verification"
+  report_field 'Canonical Repository' "${canonical_repository:-NOT_PROVIDED}"
+  report_field 'Canonical Repository Verification' "$canonical_repository_verification"
+  report_field 'Push Remote' "${push_remote:-NOT_PROVIDED}"
+  report_field 'Push Remote Verification' "$push_remote_verification"
+  report_field 'Configured Fetch URL' "$configured_fetch_url"
+  report_field 'Configured Push URL' "$configured_push_url"
+  report_field 'Fetch Repository Relation' "$fetch_repository_relation"
+  report_field 'Push Repository Relation' "$push_repository_relation"
+  report_field 'Actual Feature Push Target' "$actual_feature_push_target"
+  report_field 'Canonical Base Verification' "$remote_verification"
+  report_field 'Push Remote Feature Verification' "$feature_remote_verification"
   report_field 'Current Branch' "$current_branch"
   report_field 'Current HEAD' "$current_head"
   report_field 'Expected Base Branch' "${expected_base_branch:-NOT_PROVIDED}"
   report_field 'Expected Base SHA' "${expected_base_sha:-NOT_PROVIDED}"
-  report_field 'Cached Remote-tracking Base SHA' "$cached_remote_tracking_base_sha"
-  report_field 'Actual Remote Base SHA' "$actual_remote_base_sha"
-  report_field 'Cached Remote-tracking Feature SHA' "$cached_remote_tracking_feature_sha"
-  report_field 'Actual Remote Feature SHA' "$actual_remote_feature_sha"
+  report_field 'Cached Fetch-remote Base SHA' "$cached_remote_tracking_base_sha"
+  report_field 'Authoritative Base SHA' "$actual_remote_base_sha"
+  report_field 'Cached Fetch-remote Feature SHA' "$cached_remote_tracking_feature_sha"
+  report_field 'Actual Push-remote Feature SHA' "$actual_remote_feature_sha"
   report_field 'Feature Integration Point' "$feature_integration_point"
   report_field 'Local Base SHA' "$local_base_sha"
-  report_field 'Remote Base SHA' "$remote_base_sha"
   report_field 'Working Tree Status' "$working_tree_status"
   report_field 'Tracked Status' "$tracked_status"
   report_field 'Staged Status' "$staged_status"
@@ -122,6 +149,7 @@ report() {
   report_field 'PR Status' "$pr_status"
   report_field 'Issue Association Status' "$issue_association_status"
   report_field 'Candidate Tip Evidence' "$candidate_tip_evidence"
+  report_field 'Unique Feature Commits' "$unique_feature_commits"
   report_field 'Ancestry Status' "$ancestry_status"
   report_field 'Executed Evidence' "$executed_evidence"
   report_field 'Provided Evidence' "${provided_evidence:-NONE}"
@@ -154,13 +182,6 @@ require_value() {
   [ "$#" -ge 2 ] && [ -n "$2" ] || { usage >&2; exit 2; }
 }
 
-safe_ref_component() {
-  case "$1" in
-    ''|-*|/*|*'..'*|*'@{'*|*' '*|*'~'*|*'^'*|*':'*|*'?'*|*'['*|*'\\'*|*'*'*|*'//'*|*/.|*.lock) return 1 ;;
-    *) return 0 ;;
-  esac
-}
-
 evidence_has_marker() {
   local marker="$1"
   printf '%s' "$provided_evidence" | tr ',' '\n' | grep -F -x -q -- "$marker"
@@ -172,6 +193,18 @@ while [ "$#" -gt 0 ]; do
       require_value "$@"
       [ -z "$repository" ] || hard_stop NOT_VERIFIABLE 'Multiple Repository values are not supported'
       repository="$2"
+      shift 2
+      ;;
+    --canonical-repository)
+      require_value "$@"
+      [ -z "$canonical_repository" ] || hard_stop NOT_VERIFIABLE 'Canonical Repository was supplied more than once'
+      canonical_repository="$2"
+      shift 2
+      ;;
+    --push-remote)
+      require_value "$@"
+      [ -z "$push_remote" ] || hard_stop NOT_VERIFIABLE 'Push Remote was supplied more than once'
+      push_remote="$2"
       shift 2
       ;;
     --expected-base-branch)
@@ -229,6 +262,8 @@ if [ -x "$HOME/.local/bin/harness-event" ]; then
 fi
 
 [ -n "$repository" ] || hard_stop NOT_VERIFIABLE 'Repository Required'
+[ -n "$canonical_repository" ] || hard_stop NOT_VERIFIABLE 'Canonical Repository Required'
+[ -n "$push_remote" ] || hard_stop NOT_VERIFIABLE 'Push Remote Required'
 [ -n "$expected_base_branch" ] || hard_stop NOT_VERIFIABLE 'Base Branch Required'
 [ -n "$execution_policy" ] || hard_stop NOT_VERIFIABLE 'Execution Policy Required'
 [ -n "$consumer" ] || hard_stop NOT_VERIFIABLE 'Consumer Required'
@@ -246,38 +281,123 @@ if [ "$consumer" = 'jira-work' ] && [ -z "$issue_key" ]; then
   unexecuted_checks='Jira Issue-to-Branch association=NOT_EXECUTED (Issue Key not supplied); Git and GitHub checks=NOT_EXECUTED'
   hard_stop NOT_VERIFIABLE 'Issue Key is required for jira-work'
 fi
-safe_ref_component "$expected_base_branch" || hard_stop NOT_VERIFIABLE 'Expected Base Branch is unsafe'
+git check-ref-format --branch "$expected_base_branch" >/dev/null 2>&1 || hard_stop NOT_VERIFIABLE 'Expected Base Branch is not a valid Git branch name'
+[[ "$canonical_repository" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || hard_stop NOT_VERIFIABLE 'Canonical Repository is unsafe'
+[[ "$push_remote" =~ ^[A-Za-z0-9._-]+$ ]] || hard_stop NOT_VERIFIABLE 'Push Remote is unsafe'
 if [ -n "$expected_branch_name" ]; then
-  safe_ref_component "$expected_branch_name" || hard_stop NOT_VERIFIABLE 'Expected Branch Candidate is unsafe'
+  git check-ref-format --branch "$expected_branch_name" >/dev/null 2>&1 || hard_stop NOT_VERIFIABLE 'Expected Branch Candidate is not a valid Git branch name'
 fi
 case "$repository" in -*) hard_stop NOT_VERIFIABLE 'Repository path is unsafe' ;; esac
 
 repo_root="$(git -C "$repository" rev-parse --show-toplevel 2>/dev/null)" || hard_stop NOT_VERIFIABLE 'Repository cannot be verified'
 repository="$repo_root"
-repository_verification='VERIFIED'
-append_executed 'Repository identity=VERIFIED'
+append_executed 'Local Repository path=VERIFIED'
 current_branch="$(git -C "$repository" rev-parse --abbrev-ref HEAD 2>/dev/null)" || hard_stop NOT_VERIFIABLE 'Current Branch cannot be verified'
 current_head="$(git -C "$repository" rev-parse HEAD 2>/dev/null)" || hard_stop NOT_VERIFIABLE 'Current HEAD cannot be verified'
 append_executed 'Current branch and HEAD=VERIFIED'
 
-cached_remote_tracking_base_sha="$(git -C "$repository" rev-parse --verify "origin/${expected_base_branch}^{commit}" 2>/dev/null)" || hard_stop NOT_VERIFIABLE 'Cached Remote-tracking Base cannot be resolved'
-append_executed 'Cached remote-tracking Base=VERIFIED'
-actual_base_output="$(git -C "$repository" ls-remote --heads origin "refs/heads/${expected_base_branch}" 2>/dev/null)" || hard_stop NOT_VERIFIABLE 'Actual Remote Base cannot be queried'
-append_executed 'Actual remote Base=QUERIED'
+canonical_repository_json="$(cd "$repository" && gh repo view "$canonical_repository" --json id,nameWithOwner,isFork,parent,defaultBranchRef,url 2>/dev/null)" || hard_stop NOT_VERIFIABLE 'Canonical Repository cannot be queried'
+canonical_repository_meta="$(printf '%s' "$canonical_repository_json" | node -e '
+let input = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => { input += chunk; });
+process.stdin.on("end", () => {
+  try {
+    const repo = JSON.parse(input);
+    if (!repo || typeof repo.id !== "string" || typeof repo.nameWithOwner !== "string" || typeof repo.url !== "string" || typeof repo.defaultBranchRef?.name !== "string") throw new Error("incomplete repository response");
+    process.stdout.write(`${repo.id}\t${repo.nameWithOwner}\t${repo.defaultBranchRef.name}\t${repo.url}`);
+  } catch (_) {
+    process.exitCode = 1;
+  }
+});
+')" || hard_stop NOT_VERIFIABLE 'Canonical Repository response is malformed'
+IFS=$'\t' read -r canonical_repository_id resolved_canonical_repository canonical_default_branch canonical_repository_url <<< "$canonical_repository_meta"
+if [ "$resolved_canonical_repository" != "$canonical_repository" ]; then
+  canonical_repository_verification='MISMATCH'
+  hard_stop CONFLICTED 'Canonical Repository identity does not match the supplied Repository'
+fi
+canonical_repository_verification='VERIFIED'
+append_executed 'Canonical Repository identity=VERIFIED'
+
+fetch_url_output="$(git -C "$repository" remote get-url --all "$push_remote" 2>/dev/null)" || hard_stop NOT_VERIFIABLE 'Configured Fetch URL cannot be resolved'
+fetch_url_count="$(printf '%s\n' "$fetch_url_output" | sed '/^$/d' | wc -l | tr -d ' ')"
+[ "$fetch_url_count" -eq 1 ] || hard_stop NOT_VERIFIABLE 'Configured Fetch URL must resolve to exactly one destination'
+fetch_remote_url="$fetch_url_output"
+configured_fetch_url="$(sanitize_remote_url "$fetch_remote_url")"
+
+push_url_output="$(git -C "$repository" remote get-url --push --all "$push_remote" 2>/dev/null)" || hard_stop NOT_VERIFIABLE 'Configured Push URL cannot be resolved'
+push_url_count="$(printf '%s\n' "$push_url_output" | sed '/^$/d' | wc -l | tr -d ' ')"
+if [ "$push_url_count" -ne 1 ]; then
+  push_repository_relation='NOT_VERIFIABLE'
+  hard_stop NOT_VERIFIABLE 'Configured Push URL must resolve to exactly one destination'
+fi
+push_remote_url="$push_url_output"
+configured_push_url="$(sanitize_remote_url "$push_remote_url")"
+
+repository_relation() {
+  local target="$1" target_json
+  target_json="$(cd "$repository" && gh repo view "$target" --json id,nameWithOwner,isFork,parent,url 2>/dev/null)" || return 1
+  printf '%s' "$target_json" | node -e '
+let input = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => { input += chunk; });
+process.stdin.on("end", () => {
+  try {
+    const repo = JSON.parse(input);
+    const canonicalId = process.argv[1];
+    if (!repo || typeof repo.id !== "string" || typeof repo.nameWithOwner !== "string" || typeof repo.isFork !== "boolean") throw new Error("incomplete repository response");
+    let relation = "UNRELATED_REPOSITORY";
+    if (repo.id === canonicalId) relation = "SAME_CANONICAL_REPOSITORY";
+    else if (repo.isFork === true && repo.parent && repo.parent.id === canonicalId) relation = "VERIFIED_FORK_OF_CANONICAL";
+    process.stdout.write(`${relation}\t${repo.id}`);
+  } catch (_) {
+    process.exitCode = 1;
+  }
+});
+' "$canonical_repository_id"
+}
+
+fetch_repository_meta="$(repository_relation "$configured_fetch_url")" || hard_stop NOT_VERIFIABLE 'Configured Fetch Repository relation cannot be verified'
+IFS=$'\t' read -r fetch_repository_relation fetch_repository_id <<< "$fetch_repository_meta"
+if [ "$fetch_repository_relation" = 'UNRELATED_REPOSITORY' ]; then
+  repository_verification='UNRELATED_REPOSITORY'
+  hard_stop CONFLICTED 'Configured Fetch Repository is unrelated to the Canonical Repository'
+fi
+repository_verification="$fetch_repository_relation"
+append_executed "Local Repository identity=${repository_verification}"
+
+push_repository_meta="$(repository_relation "$configured_push_url")" || hard_stop NOT_VERIFIABLE 'Configured Push Repository relation cannot be verified'
+IFS=$'\t' read -r push_repository_relation push_repository_id <<< "$push_repository_meta"
+if [ "$push_repository_relation" = 'UNRELATED_REPOSITORY' ]; then
+  repository_verification='UNRELATED_REPOSITORY'
+  hard_stop CONFLICTED 'Configured Push Repository is unrelated to the Canonical Repository'
+fi
+
+push_remote_verification='VERIFIED'
+append_executed 'Configured Fetch and Push destinations=VERIFIED'
+if [ "$fetch_repository_id" = "$push_repository_id" ]; then
+  fetch_push_same_repository='true'
+else
+  fetch_push_same_repository='false'
+fi
+
+if cached_remote_tracking_base_sha="$(git -C "$repository" rev-parse --verify "${push_remote}/${expected_base_branch}^{commit}" 2>/dev/null)"; then
+  append_executed 'Cached Push Remote Base=QUERIED'
+else
+  cached_remote_tracking_base_sha='NOT_FOUND'
+  append_executed 'Cached Push Remote Base=NOT_FOUND'
+fi
+actual_base_output="$(git -C "$repository" ls-remote --heads "$canonical_repository_url" "refs/heads/${expected_base_branch}" 2>/dev/null)" || hard_stop NOT_VERIFIABLE 'Authoritative Canonical Base cannot be queried'
+append_executed 'Authoritative Canonical Base=QUERIED'
 if [ -z "$actual_base_output" ] || [ "$(printf '%s\n' "$actual_base_output" | wc -l | tr -d ' ')" -ne 1 ]; then
   remote_verification='NOT_VERIFIABLE'
-  hard_stop NOT_VERIFIABLE 'Actual Remote Base must resolve to exactly one ref'
+  hard_stop NOT_VERIFIABLE 'Authoritative Canonical Base must resolve to exactly one ref'
 fi
 actual_remote_base_sha="${actual_base_output%%$'\t'*}"
 actual_base_ref="${actual_base_output#*$'\t'}"
 if ! [[ "$actual_remote_base_sha" =~ ^[0-9a-fA-F]{40,64}$ ]] || [ "$actual_base_ref" != "refs/heads/${expected_base_branch}" ]; then
   remote_verification='NOT_VERIFIABLE'
-  hard_stop NOT_VERIFIABLE 'Actual Remote Base response is malformed'
-fi
-if [ "$cached_remote_tracking_base_sha" != "$actual_remote_base_sha" ]; then
-  remote_verification='CACHED_ACTUAL_MISMATCH'
-  remote_base_sha="$actual_remote_base_sha"
-  hard_stop BLOCKED_BASE_MISMATCH 'Cached Remote-tracking Base differs from Actual Remote Base'
+  hard_stop NOT_VERIFIABLE 'Authoritative Canonical Base response is malformed'
 fi
 remote_verification='VERIFIED'
 remote_base_sha="$actual_remote_base_sha"
@@ -362,7 +482,8 @@ if ! evidence_has_marker 'repository-naming-rule-verified'; then
 fi
 
 local_branch_output="$(git -C "$repository" branch --list -- "$expected_branch_name" 2>/dev/null)" || hard_stop NOT_VERIFIABLE 'Local Branch cannot be queried'
-remote_branch_output="$(git -C "$repository" ls-remote --heads origin "refs/heads/${expected_branch_name}" 2>/dev/null)" || {
+actual_feature_push_target="${configured_push_url} refs/heads/${expected_branch_name}"
+remote_branch_output="$(git -C "$repository" ls-remote --heads "$configured_push_url" "refs/heads/${expected_branch_name}" 2>/dev/null)" || {
   feature_remote_verification='NOT_VERIFIABLE'
   hard_stop NOT_VERIFIABLE 'Remote Branch cannot be queried'
 }
@@ -396,7 +517,7 @@ if [ "$remote_branch_status" = 'PRESENT' ]; then
   actual_remote_feature_sha="$remote_branch_tip"
 fi
 
-pr_json="$(cd "$repository" && gh pr list --head "$expected_branch_name" --state all --json state,isDraft,headRefName 2>/dev/null)" || { pr_status='NOT_VERIFIABLE'; hard_stop NOT_VERIFIABLE 'GitHub PR state cannot be queried'; }
+pr_json="$(cd "$repository" && gh pr list --repo "$canonical_repository" --head "$expected_branch_name" --state all --json state,isDraft,headRefName 2>/dev/null)" || { pr_status='NOT_VERIFIABLE'; hard_stop NOT_VERIFIABLE 'Canonical GitHub PR state cannot be queried'; }
 append_executed 'GitHub PR JSON=QUERIED'
 pr_status="$(printf '%s' "$pr_json" | node -e '
 let input = "";
@@ -438,16 +559,29 @@ if [ "$consumer" = 'jira-work' ] && [ -n "$issue_key" ]; then
   fi
 fi
 
+if [ "$pr_status" = 'OPEN_DRAFT' ] && { [ "$local_branch_status" != 'PRESENT' ] || [ "$remote_branch_status" != 'PRESENT' ]; }; then
+  existing_work_state='H'
+  unique_feature_commits='0'
+  hard_stop CONFLICTED 'Canonical Draft PR exists without an aligned Local and Push Remote Issue Branch'
+fi
+
 unexecuted_checks='NONE'
-if cached_remote_branch_tip="$(git -C "$repository" rev-parse --verify "origin/${expected_branch_name}^{commit}" 2>/dev/null)"; then
+if cached_remote_branch_tip="$(git -C "$repository" rev-parse --verify "${push_remote}/${expected_branch_name}^{commit}" 2>/dev/null)"; then
   cached_remote_tracking_feature_sha="$cached_remote_branch_tip"
 else
   cached_remote_branch_tip=''
   cached_remote_tracking_feature_sha='NOT_FOUND'
 fi
-append_executed 'Cached remote-tracking Feature=QUERIED'
+append_executed 'Cached Fetch remote-tracking Feature=QUERIED'
 
-if [ "$remote_branch_status" = 'ABSENT' ] && [ -z "$cached_remote_branch_tip" ]; then
+if [ "$fetch_push_same_repository" = 'false' ]; then
+  if [ "$remote_branch_status" = 'ABSENT' ]; then
+    feature_remote_verification='VERIFIED_ABSENT'
+  else
+    feature_remote_verification='VERIFIED'
+  fi
+  append_executed 'Actual Push Feature ref=VERIFIED independently of Fetch remote-tracking cache'
+elif [ "$remote_branch_status" = 'ABSENT' ] && [ -z "$cached_remote_branch_tip" ]; then
   feature_remote_verification='VERIFIED_ABSENT'
 elif [ "$remote_branch_status" = 'ABSENT' ]; then
   feature_remote_verification='CACHED_REF_REMOTE_ABSENT'
@@ -474,7 +608,7 @@ else
 fi
 
 if [ "$local_branch_status" = 'PRESENT' ] && [ "$remote_branch_status" = 'PRESENT' ]; then
-  branch_counts="$(git -C "$repository" rev-list --left-right --count "${local_branch_tip}...${cached_remote_branch_tip}" 2>/dev/null)" || hard_stop NOT_VERIFIABLE 'Issue Branch ancestry cannot be verified'
+  branch_counts="$(git -C "$repository" rev-list --left-right --count "${local_branch_tip}...${remote_branch_tip}" 2>/dev/null)" || hard_stop NOT_VERIFIABLE 'Issue Branch ancestry cannot be verified'
   read -r branch_local_ahead branch_remote_ahead <<< "$branch_counts"
   if [ "$branch_local_ahead" != 0 ] && [ "$branch_remote_ahead" != 0 ]; then
     local_branch_status='PRESENT_DIVERGED'
@@ -504,8 +638,28 @@ if [ "$local_branch_status" = 'PRESENT_LOCAL_AHEAD' ] || [ "$remote_branch_statu
   finish RECOVERY_REQUIRED RECOVERY_PLAN_ONLY 'Local and Remote Issue Branches are not aligned'
 fi
 if [ "$local_branch_status" = 'PRESENT' ] && [ "$remote_branch_status" = 'ABSENT' ]; then
-  candidate_tip_evidence="LOCAL_ONLY SHA=${local_branch_tip}"
+  unique_feature_commits="$(git -C "$repository" rev-list --count "${actual_remote_base_sha}..${local_branch_tip}" 2>/dev/null)" || hard_stop NOT_VERIFIABLE 'Local-only Feature commit count cannot be verified'
+  [[ "$unique_feature_commits" =~ ^[0-9]+$ ]] || hard_stop NOT_VERIFIABLE 'Local-only Feature commit count is malformed'
+  candidate_tip_evidence="LOCAL_ONLY SHA=${local_branch_tip}; AUTHORITATIVE_BASE SHA=${actual_remote_base_sha}; UNIQUE_COMMITS=${unique_feature_commits}"
   append_executed 'Candidate tip source=LOCAL_ONLY'
+  append_executed 'Local-only unique Feature commits=VERIFIED'
+  if [ "$consumer" = 'jira-work' ] \
+    && [ "$issue_association_status" = 'MATCHED' ] \
+    && [ "$current_branch" = "$expected_branch_name" ] \
+    && [ "$current_head" = "$local_branch_tip" ] \
+    && [ "$local_branch_tip" = "$actual_remote_base_sha" ] \
+    && [ "$unique_feature_commits" = '0' ] \
+    && [ "$pr_status" = 'NONE' ]; then
+    local_branch_status='PRESENT_BASE_TIP'
+    existing_work_state='A'
+    case "$execution_policy" in
+      suggest-only) next_step='PLAN_NEW_WORK_ONLY' ;;
+      patch-with-approval) next_step='PLAN_WITH_SEPARATE_APPROVAL' ;;
+      auto-apply) next_step='PLAN_ONLY_RUNTIME_UNAVAILABLE' ;;
+    esac
+    finish READY_NEW_WORK "$next_step" 'NONE'
+  fi
+  local_branch_status='PRESENT_UNPUBLISHED'
   existing_work_state='C'
   finish RECOVERY_REQUIRED RECOVERY_PLAN_ONLY 'Local-only Issue Branch requires recovery planning'
 fi
@@ -556,6 +710,7 @@ if [ "$local_branch_status" = 'PRESENT_ALIGNED' ] && [ "$remote_branch_status" =
 fi
 
 existing_work_state='A'
+unique_feature_commits='0'
 case "$execution_policy" in
   suggest-only) next_step='PLAN_NEW_WORK_ONLY' ;;
   patch-with-approval) next_step='PLAN_WITH_SEPARATE_APPROVAL' ;;

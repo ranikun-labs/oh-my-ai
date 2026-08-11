@@ -1,12 +1,13 @@
-# Existing Work Status — Pure Contract Model
+# Existing Work Status — Preflight Consumption Model
 
-> Map only supplied, verified evidence. This template does not perform Local
-> Git, Remote, or PR queries and never checks out, pushes, creates, or repairs
-> a Branch.
+> Consume only the current `git-work-preflight` result. This template never
+> reconstructs Local Git, Remote, or PR state from prose and never checks out,
+> pushes, creates, or repairs a Branch.
 
 ## A. New Branch and PR absent
 
-Future new Branch planning is possible after every other gate passes.
+New work is ready when no branch exists, or when the preflight verified the
+approved clean base-tip local-only Issue Branch exception.
 
 ## B. Normal Local and Remote Issue Branch
 
@@ -15,8 +16,9 @@ preflight gates pass.
 
 ## C. Local-only Branch
 
-Recovery or alignment planning is required. Automatic checkout and push are
-forbidden.
+A local-only Branch with unique work or unclear ancestry requires recovery or
+alignment planning. The exact base-tip/zero-commit exception belongs to A.
+Automatic checkout and push are forbidden.
 
 ## D. Remote-only Branch
 

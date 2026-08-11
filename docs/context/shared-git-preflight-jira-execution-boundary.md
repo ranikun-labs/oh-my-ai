@@ -1,11 +1,8 @@
 # Architecture Clarification: Shared Git Preflight and Jira Execution Boundary
 
-**Status:** Accepted architecture clarification — adopted by PM Product
-Decision; canonical repository context only after merge to `master`.
-**Date:** 2026-07-28
-**Scope:** Future implementation boundaries only. No runtime, hook, Connector,
-installer, or telemetry behavior is changed by this document. This PR does not
-release a Skill or Runtime feature.
+**Status:** Accepted architecture clarification — RISK_TIERED_HYBRID.
+**Date:** 2026-08-11
+**Scope:** Shared Git preflight, Jira execution-readiness, and Worker boundaries.
 
 This clarification records the implementation boundary for the product decision in
 [Jira-driven Work Lifecycle](jira-driven-work-lifecycle.md) without changing
@@ -22,20 +19,21 @@ create Candidate -> stop at Human Review
 It does not choose execution, create a working branch, or run `jira-work`.
 Conversely, `jira-work` must not directly invoke the `work-start` runtime.
 These are different product boundaries: `work-start` gathers reviewable context
-candidates, while `jira-work` executes an already-approved Ticket Contract.
+candidates, while `jira-work` gates an already-approved execution Contract.
 
 ## Shared `git-work-preflight` contract
 
-Future implementation may extract a shared `git-work-preflight` capability.
-Both `work-start` and `jira-work` consume its read-only preflight contract;
+The shared `git-work-preflight` capability is the read-only Repository gate.
+Both `work-start` and `jira-work` consume its contract;
 they retain their distinct runtime and stop boundaries.
 
 The contract reports, at minimum:
 
 | Check | Required conclusion |
 |---|---|
-| Repository | Target repository identity and whether it matches the Ticket Contract. |
-| Remote | Configured remote identity and reachable/ref-resolvable state. |
+| Repository | Local repository path plus GitHub stable repository identity. The configured Fetch Repository must be the Canonical Repository, a redirect resolving to the same stable ID, or a direct fork whose parent metadata proves the Canonical Repository. |
+| Canonical Repository | GitHub owner/repository identity, authoritative Base ref, canonical PR target, PR collision, and merged-PR state. |
+| Push Remote | The configured remote name is resolved into separate Fetch URL and Git-effective Push URL evidence. `git remote get-url --push` determines the actual Feature Branch destination; the remote name and Fetch URL do not. Multiple Push URLs fail closed. |
 | Base Branch | Required base branch and its resolvability. |
 | Local and remote HEAD | Actual revisions used to detect stale or divergent state. |
 | Working Tree | Clean, dirty, staged, untracked, and conflicting state. |
@@ -51,42 +49,59 @@ it must not reset, stash, clean, force checkout, force-push, rebase, delete
 branches, perform any form of history rewrite, or silently select another
 Ticket or branch. A failure remains evidence for human review.
 
-Extracting this common contract must not change `work-start`'s external
-behavior: it still creates a Candidate and ends at Human Review. Function
-names, files, language choice, data shape, and call graph are deliberately
-deferred to an implementation design after the pure contracts and fixtures
-exist.
+This clean-tree check belongs to the Entry or Resume Readiness stage, before
+implementation starts or resumes. Once approved implementation has produced
+intentional changes, tests, builds, and diff checks are Execution Verification;
+the Entry Preflight is not a mid-implementation verification gate. This stage
+distinction is a workflow boundary, not a separate lifecycle runtime.
 
-## `jira-work` gate and mutation boundary
+A clean local-only Issue Branch is new-work state rather than recovery state
+only when its HEAD equals the authoritative canonical Base, its unique Feature
+Commit count is zero, the Push Remote Feature Branch and canonical PR are both
+verified absent, and the Issue-to-Branch association is exact. Any unique
+commit, unclear ancestry, unavailable remote/PR evidence, or association gap
+preserves `RECOVERY_REQUIRED`, `NOT_VERIFIABLE`, or `CONFLICTED`.
 
-Before any branch creation, `jira-work` must establish all of the following:
+Expected Base and Feature names must pass `git check-ref-format --branch`
+before any remote or PR absence query. A malformed name cannot be interpreted
+as an absent branch. When verified Fetch and Push repositories differ, cached
+Fetch remote-tracking refs remain evidence only; actual Feature existence and
+alignment come from the Git-effective Push URL.
+
+This common contract does not change `work-start`'s external behavior: it still
+creates a Candidate and ends at Human Review.
+
+## `jira-work` execution-readiness boundary
+
+Before the Worker starts or resumes implementation, `jira-work` must establish:
 
 ```text
-existing Ticket Contract
+explicit invocation + selected Source Mode
+-> complete Main-approved Contract
 -> canonical source agreement
--> no blocking sentinel
--> Connector available
--> shared Git preflight passed
--> Execution Policy permits the next action
+-> claim-level Jira freshness conclusion
+-> actually executed shared Git preflight passed
+-> JIRA_WORK_READY
 ```
 
-V1 has no Connector-less degraded path: absent Connector means no Git mutation,
-even where local Git checks could otherwise run. The Connector must obtain its
-configuration at runtime or approved environment configuration; credentials,
-Cloud ID, project key, and account ID are never embedded in the skill.
+`CONNECTOR_VERIFIED` is valid only with actual current-session Connector
+evidence. `MAIN_HANDOFF` requires `jira-work-main-handoff/v1` and
+`APPROVED_BY_MAIN`; the marker is declarative provenance, not identity or
+cryptographic trust. Optional freshness without a Connector is
+`NOT_PERFORMED`; required freshness is `NOT_VERIFIABLE` and stops. A pasted
+preflight report does not count as consumption, and `jira-work` cannot return
+ready unless the current preflight process returns `READY_NEW_WORK` or
+`READY_RESUME` with exit code 0.
 
-After a permitted mutation begins, the workflow may use a draft-PR provider
-behind an abstraction boundary. `gh` is acceptable for an initial provider,
-but provider selection and its authentication/error semantics must be verified
-in the future implementation architecture. Draft-only is part of the boundary;
-removing the draft state, merge, release, tag, production deployment,
-migration, and secret changes stay outside it.
+The Worker owns implementation, tests, commit, ordinary push, and Draft PR.
+Removing Draft state, merge, release, deploy, migration, and secret changes
+remain outside this gate.
 
-## Evidence and recovery boundary
+## Worker evidence and recovery boundary
 
-Every external mutation is independently observable and can partially succeed.
-Therefore future runtime behavior records actual state after each stage rather
-than assuming an all-or-nothing transaction:
+Every Worker mutation is independently observable and can partially succeed.
+The Worker records actual state after each stage rather than assuming an
+all-or-nothing transaction:
 
 ```text
 Git branch / commit / push
@@ -114,30 +129,10 @@ constraints:
 - extend only the telemetry fixture needed to prove qualified skill names; and
 - do not add a `jira-work` step-level telemetry schema in this scope.
 
-## Approved implementation sequence
+## RPL-67 implementation boundary
 
-| PR | Purpose | Depends on |
-|---|---|---|
-| PR 0 | Fix the telemetry `:` validation bug and its fixture. | None; intentionally independent. |
-| PR 1 | Record this Product Decision and Architecture Clarification. | Accepted design input; independent of PR 0. |
-| PR 2 | Add `jira-ticket` pure contract, preview, and fixture. | PR 1. |
-| PR 3 | Add `jira-work` pure contract, Ticket gate, and fixture. | PR 1 and the shared Ticket Contract from PR 2. |
-| PR 4 | Extract shared `git-work-preflight`. | PR 3; retain the existing `work-start` stop boundary. |
-| PR 5 | Add `jira-work` local Git mutation lifecycle. | PR 3 and PR 4. |
-| PR 6 | Add `jira-ticket` Atlassian write integration. | PR 2. |
-| PR 7 | Add `jira-work` Atlassian comment and transition integration. | PR 5 and PR 6. |
-| PR 8 | Decide optional installation, README, and full E2E coverage. | PR 0 through PR 7. |
-
-PR 8 is the first point at which installation instructions can be selected.
-Until then, no installer or README feature claim is authorized.
-
-## Open decisions retained for later PRs
-
-- Ticket-level verification exception format.
-- Optional-skill installation path: manual guidance, generic installer, or
-  Jira-specific opt-in installer.
-- Draft PR provider selection and provider-specific recovery semantics.
-- Exact `git-work-preflight` module/files/language and how it is consumed
-  without changing `work-start`'s public behavior.
-- Jira field mapping, allowed transitions, and permission/error handling after
-  Connector capability is verified.
+RPL-67 changes only the shared preflight contract and the `jira-work`
+execution-readiness contract. It does not redesign `jira-ticket`, add an
+Evidence Server or Cloud Runtime, implement durable machine-verifiable handoff,
+automate merge/release/deploy, or execute a migration. Draft PR provider and
+Jira write/reconciliation behavior remain Worker concerns outside this gate.

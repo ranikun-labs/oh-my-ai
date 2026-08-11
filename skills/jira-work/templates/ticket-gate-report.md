@@ -1,18 +1,40 @@
-# Jira Work Ticket Gate Report
+# Jira Work Execution Readiness Report
 
-> Pure Contract preview only. This report neither reads a Jira Ticket nor runs
-> Git, creates a Branch, implements code, verifies changes, commits, pushes,
-> creates a Draft PR, comments on Jira, or changes Jira state.
+## Lean ready result
 
-## Issue Key
+```text
+JIRA_WORK_READY
 
-- Provided key only. Do not infer or invent one.
+Issue: <ISSUE-KEY>
+Source: <CONNECTOR_VERIFIED|MAIN_HANDOFF>
+Jira Live State: <VERIFIED|NOT_PERFORMED>
+Repository: EXACT
+Base SHA: EXACT
+Working Tree: CLEAN
+Existing Branch: <NONE|ALIGNED>
+Open PR Collision: NONE
 
-## Ticket Source Status
+Next:
+PROCEED_TO_IMPLEMENTATION
+```
 
-- `Verified`, `Ticket Source Not Verifiable`, or the supplied evidence status.
+Use this short form only after `git-work-preflight` was actually executed with
+`Process Exit Code: 0` and returned `READY_NEW_WORK` or `READY_RESUME`.
 
-## Contract Validation
+## Detailed blocked result
+
+Start with `JIRA_WORK_BLOCKED`, then report only the claims needed to explain
+the mismatch and the single safe next step.
+
+### Source and freshness
+
+- Source Mode: CONNECTOR_VERIFIED or MAIN_HANDOFF
+- Jira Ticket Connector Read: CURRENT_SESSION or NOT_PERFORMED
+- Jira Live State: VERIFIED, NOT_PERFORMED, or NOT_VERIFIABLE
+- Jira Freshness Requirement: OPTIONAL or REQUIRED
+- Main Approval Marker: APPROVED_BY_MAIN or the observed mismatch
+
+### Contract Validation
 
 - Summary
 - Context
@@ -23,16 +45,15 @@
 - Acceptance Criteria
 - Repository
 - Base Branch
+- Expected Base SHA
 - Expected Branch Name
 - Dependencies
 - Verification
 - Do Not Touch
 - Definition of Done
-- Blocking sentinels:
-  - Decision Required
-  - Repository Required
-  - Base Branch Required
-  - Not Verifiable
+- Contract Schema/Version
+- Risk Tier
+- Blocking sentinels: Decision Required, Repository Required, Base Branch Required, Not Verifiable
 
 ## Source of Truth Validation
 
@@ -43,57 +64,27 @@
 5. Handoff Candidate
 6. Current Conversation
 
-Record unread material as `Not Verifiable`. A Canonical/Jira mismatch is
-`CONFLICTED`.
+### Repository Evidence
 
-## Dependency Validation
+- Git Preflight: ACTUALLY_EXECUTED or NOT_EXECUTED
+- Process Exit Code
+- Preflight Result
+- Repository exactness
+- Base Branch/SHA exactness
+- Working Tree
+- Local and Push Remote Branch
+- Open PR Collision
+- Divergence / other Issue collision / already merged
 
-- List each dependency and whether supplied evidence shows it complete.
-- An unresolved blocking dependency is `BLOCKED`.
+### Gate Result
 
-## Repository Scope
+- JIRA_WORK_BLOCKED
+- Claim-level status, when relevant: READY, BLOCKED, NOT_VERIFIABLE, ALREADY_IN_PROGRESS, ALREADY_MERGED, or CONFLICTED
+- Blocking Items: exact mismatched or unavailable claims
+- Next: STOP, CORRECT_MAIN_HANDOFF, PROVIDE_CONNECTOR, or RESOLVE_REPOSITORY_STATE
 
-- One Repository only. Multiple repositories are `BLOCKED`.
+## Unavailable gate capabilities
 
-## Base Branch Status
-
-- Report verified, required, conflict, or `Not Verifiable`; do not query it.
-
-## Expected Branch Candidate
-
-- Candidate only; apply verified Repository rules before a Ticket name or the
-  common fallback.
-
-## Existing Work Status
-
-- Apply A–H supplied evidence using
-  [existing-work-status.md](existing-work-status.md).
-
-## Execution Policy
-
-- `suggest-only`: Preview; Mutation 0.
-- `patch-with-approval`: Preview plus separate approval required; Mutation 0.
-- `auto-apply`: Local Git Lifecycle unavailable in this PR; Mutation 0.
-
-## Gate Result
-
-- READY, BLOCKED, NOT_VERIFIABLE, ALREADY_IN_PROGRESS, ALREADY_MERGED, or
-  CONFLICTED.
-
-## Blocking Items
-
-- Enumerate every missing field, Sentinel, contradiction, unavailable source,
-  dependency, or conflict. No blocking item is silently downgraded.
-
-## Allowed Next Step
-
-- State the safe Preview-only or correction step; do not mark a Git Mutation as
-  executable.
-
-## Unavailable Runtime Capabilities
-
-- Jira Ticket Connector Read
-- Git Preflight
 - Branch Creation
 - Implementation
 - Verification Execution
