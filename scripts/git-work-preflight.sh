@@ -15,6 +15,11 @@ provided_evidence=""
 repository_verification='NOT_VERIFIABLE'
 canonical_repository_verification='NOT_CHECKED'
 push_remote_verification='NOT_CHECKED'
+configured_fetch_url='NOT_CHECKED'
+configured_push_url='NOT_CHECKED'
+fetch_repository_relation='NOT_CHECKED'
+push_repository_relation='NOT_CHECKED'
+actual_feature_push_target='NOT_CHECKED'
 remote_verification='NOT_CHECKED'
 feature_remote_verification='NOT_CHECKED'
 current_branch='NOT_CHECKED'
@@ -73,6 +78,13 @@ safe_report_value() {
   printf '%s' "$value" | LC_ALL=C tr '\000-\037\177' '?'
 }
 
+sanitize_remote_url() {
+  printf '%s' "$1" | sed -E \
+    -e 's#(https?://)[^/@]+:[^/@]+@#\1#' \
+    -e 's#(https?://)[^/@]+@#\1#' \
+    -e 's#[?#].*$##'
+}
+
 report_field() {
   printf '%s: %s\n' "$1" "$(safe_report_value "$2")"
 }
@@ -108,15 +120,20 @@ report() {
   report_field 'Canonical Repository Verification' "$canonical_repository_verification"
   report_field 'Push Remote' "${push_remote:-NOT_PROVIDED}"
   report_field 'Push Remote Verification' "$push_remote_verification"
+  report_field 'Configured Fetch URL' "$configured_fetch_url"
+  report_field 'Configured Push URL' "$configured_push_url"
+  report_field 'Fetch Repository Relation' "$fetch_repository_relation"
+  report_field 'Push Repository Relation' "$push_repository_relation"
+  report_field 'Actual Feature Push Target' "$actual_feature_push_target"
   report_field 'Canonical Base Verification' "$remote_verification"
   report_field 'Push Remote Feature Verification' "$feature_remote_verification"
   report_field 'Current Branch' "$current_branch"
   report_field 'Current HEAD' "$current_head"
   report_field 'Expected Base Branch' "${expected_base_branch:-NOT_PROVIDED}"
   report_field 'Expected Base SHA' "${expected_base_sha:-NOT_PROVIDED}"
-  report_field 'Cached Push-remote Base SHA' "$cached_remote_tracking_base_sha"
+  report_field 'Cached Fetch-remote Base SHA' "$cached_remote_tracking_base_sha"
   report_field 'Authoritative Base SHA' "$actual_remote_base_sha"
-  report_field 'Cached Push-remote Feature SHA' "$cached_remote_tracking_feature_sha"
+  report_field 'Cached Fetch-remote Feature SHA' "$cached_remote_tracking_feature_sha"
   report_field 'Actual Push-remote Feature SHA' "$actual_remote_feature_sha"
   report_field 'Feature Integration Point' "$feature_integration_point"
   report_field 'Local Base SHA' "$local_base_sha"
@@ -163,13 +180,6 @@ hard_stop() {
 
 require_value() {
   [ "$#" -ge 2 ] && [ -n "$2" ] || { usage >&2; exit 2; }
-}
-
-safe_ref_component() {
-  case "$1" in
-    ''|-*|/*|*'..'*|*'@{'*|*' '*|*'~'*|*'^'*|*':'*|*'?'*|*'['*|*'\\'*|*'*'*|*'//'*|*/.|*.lock) return 1 ;;
-    *) return 0 ;;
-  esac
 }
 
 evidence_has_marker() {
@@ -271,23 +281,22 @@ if [ "$consumer" = 'jira-work' ] && [ -z "$issue_key" ]; then
   unexecuted_checks='Jira Issue-to-Branch association=NOT_EXECUTED (Issue Key not supplied); Git and GitHub checks=NOT_EXECUTED'
   hard_stop NOT_VERIFIABLE 'Issue Key is required for jira-work'
 fi
-safe_ref_component "$expected_base_branch" || hard_stop NOT_VERIFIABLE 'Expected Base Branch is unsafe'
+git check-ref-format --branch "$expected_base_branch" >/dev/null 2>&1 || hard_stop NOT_VERIFIABLE 'Expected Base Branch is not a valid Git branch name'
 [[ "$canonical_repository" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || hard_stop NOT_VERIFIABLE 'Canonical Repository is unsafe'
 [[ "$push_remote" =~ ^[A-Za-z0-9._-]+$ ]] || hard_stop NOT_VERIFIABLE 'Push Remote is unsafe'
 if [ -n "$expected_branch_name" ]; then
-  safe_ref_component "$expected_branch_name" || hard_stop NOT_VERIFIABLE 'Expected Branch Candidate is unsafe'
+  git check-ref-format --branch "$expected_branch_name" >/dev/null 2>&1 || hard_stop NOT_VERIFIABLE 'Expected Branch Candidate is not a valid Git branch name'
 fi
 case "$repository" in -*) hard_stop NOT_VERIFIABLE 'Repository path is unsafe' ;; esac
 
 repo_root="$(git -C "$repository" rev-parse --show-toplevel 2>/dev/null)" || hard_stop NOT_VERIFIABLE 'Repository cannot be verified'
 repository="$repo_root"
-repository_verification='VERIFIED'
-append_executed 'Repository identity=VERIFIED'
+append_executed 'Local Repository path=VERIFIED'
 current_branch="$(git -C "$repository" rev-parse --abbrev-ref HEAD 2>/dev/null)" || hard_stop NOT_VERIFIABLE 'Current Branch cannot be verified'
 current_head="$(git -C "$repository" rev-parse HEAD 2>/dev/null)" || hard_stop NOT_VERIFIABLE 'Current HEAD cannot be verified'
 append_executed 'Current branch and HEAD=VERIFIED'
 
-canonical_repository_json="$(cd "$repository" && gh repo view "$canonical_repository" --json nameWithOwner,defaultBranchRef,url 2>/dev/null)" || hard_stop NOT_VERIFIABLE 'Canonical Repository cannot be queried'
+canonical_repository_json="$(cd "$repository" && gh repo view "$canonical_repository" --json id,nameWithOwner,isFork,parent,defaultBranchRef,url 2>/dev/null)" || hard_stop NOT_VERIFIABLE 'Canonical Repository cannot be queried'
 canonical_repository_meta="$(printf '%s' "$canonical_repository_json" | node -e '
 let input = "";
 process.stdin.setEncoding("utf8");
@@ -295,14 +304,14 @@ process.stdin.on("data", (chunk) => { input += chunk; });
 process.stdin.on("end", () => {
   try {
     const repo = JSON.parse(input);
-    if (!repo || typeof repo.nameWithOwner !== "string" || typeof repo.url !== "string" || typeof repo.defaultBranchRef?.name !== "string") throw new Error("incomplete repository response");
-    process.stdout.write(`${repo.nameWithOwner}\t${repo.defaultBranchRef.name}\t${repo.url}`);
+    if (!repo || typeof repo.id !== "string" || typeof repo.nameWithOwner !== "string" || typeof repo.url !== "string" || typeof repo.defaultBranchRef?.name !== "string") throw new Error("incomplete repository response");
+    process.stdout.write(`${repo.id}\t${repo.nameWithOwner}\t${repo.defaultBranchRef.name}\t${repo.url}`);
   } catch (_) {
     process.exitCode = 1;
   }
 });
 ')" || hard_stop NOT_VERIFIABLE 'Canonical Repository response is malformed'
-IFS=$'\t' read -r resolved_canonical_repository canonical_default_branch canonical_repository_url <<< "$canonical_repository_meta"
+IFS=$'\t' read -r canonical_repository_id resolved_canonical_repository canonical_default_branch canonical_repository_url <<< "$canonical_repository_meta"
 if [ "$resolved_canonical_repository" != "$canonical_repository" ]; then
   canonical_repository_verification='MISMATCH'
   hard_stop CONFLICTED 'Canonical Repository identity does not match the supplied Repository'
@@ -310,10 +319,67 @@ fi
 canonical_repository_verification='VERIFIED'
 append_executed 'Canonical Repository identity=VERIFIED'
 
-push_remote_url="$(git -C "$repository" remote get-url "$push_remote" 2>/dev/null)" || hard_stop NOT_VERIFIABLE 'Push Remote cannot be resolved'
-[ -n "$push_remote_url" ] || hard_stop NOT_VERIFIABLE 'Push Remote URL is empty'
+fetch_url_output="$(git -C "$repository" remote get-url --all "$push_remote" 2>/dev/null)" || hard_stop NOT_VERIFIABLE 'Configured Fetch URL cannot be resolved'
+fetch_url_count="$(printf '%s\n' "$fetch_url_output" | sed '/^$/d' | wc -l | tr -d ' ')"
+[ "$fetch_url_count" -eq 1 ] || hard_stop NOT_VERIFIABLE 'Configured Fetch URL must resolve to exactly one destination'
+fetch_remote_url="$fetch_url_output"
+configured_fetch_url="$(sanitize_remote_url "$fetch_remote_url")"
+
+push_url_output="$(git -C "$repository" remote get-url --push --all "$push_remote" 2>/dev/null)" || hard_stop NOT_VERIFIABLE 'Configured Push URL cannot be resolved'
+push_url_count="$(printf '%s\n' "$push_url_output" | sed '/^$/d' | wc -l | tr -d ' ')"
+if [ "$push_url_count" -ne 1 ]; then
+  push_repository_relation='NOT_VERIFIABLE'
+  hard_stop NOT_VERIFIABLE 'Configured Push URL must resolve to exactly one destination'
+fi
+push_remote_url="$push_url_output"
+configured_push_url="$(sanitize_remote_url "$push_remote_url")"
+
+repository_relation() {
+  local target="$1" target_json
+  target_json="$(cd "$repository" && gh repo view "$target" --json id,nameWithOwner,isFork,parent,url 2>/dev/null)" || return 1
+  printf '%s' "$target_json" | node -e '
+let input = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => { input += chunk; });
+process.stdin.on("end", () => {
+  try {
+    const repo = JSON.parse(input);
+    const canonicalId = process.argv[1];
+    if (!repo || typeof repo.id !== "string" || typeof repo.nameWithOwner !== "string" || typeof repo.isFork !== "boolean") throw new Error("incomplete repository response");
+    let relation = "UNRELATED_REPOSITORY";
+    if (repo.id === canonicalId) relation = "SAME_CANONICAL_REPOSITORY";
+    else if (repo.isFork === true && repo.parent && repo.parent.id === canonicalId) relation = "VERIFIED_FORK_OF_CANONICAL";
+    process.stdout.write(`${relation}\t${repo.id}`);
+  } catch (_) {
+    process.exitCode = 1;
+  }
+});
+' "$canonical_repository_id"
+}
+
+fetch_repository_meta="$(repository_relation "$configured_fetch_url")" || hard_stop NOT_VERIFIABLE 'Configured Fetch Repository relation cannot be verified'
+IFS=$'\t' read -r fetch_repository_relation fetch_repository_id <<< "$fetch_repository_meta"
+if [ "$fetch_repository_relation" = 'UNRELATED_REPOSITORY' ]; then
+  repository_verification='UNRELATED_REPOSITORY'
+  hard_stop CONFLICTED 'Configured Fetch Repository is unrelated to the Canonical Repository'
+fi
+repository_verification="$fetch_repository_relation"
+append_executed "Local Repository identity=${repository_verification}"
+
+push_repository_meta="$(repository_relation "$configured_push_url")" || hard_stop NOT_VERIFIABLE 'Configured Push Repository relation cannot be verified'
+IFS=$'\t' read -r push_repository_relation push_repository_id <<< "$push_repository_meta"
+if [ "$push_repository_relation" = 'UNRELATED_REPOSITORY' ]; then
+  repository_verification='UNRELATED_REPOSITORY'
+  hard_stop CONFLICTED 'Configured Push Repository is unrelated to the Canonical Repository'
+fi
+
 push_remote_verification='VERIFIED'
-append_executed 'Push Remote=VERIFIED'
+append_executed 'Configured Fetch and Push destinations=VERIFIED'
+if [ "$fetch_repository_id" = "$push_repository_id" ]; then
+  fetch_push_same_repository='true'
+else
+  fetch_push_same_repository='false'
+fi
 
 if cached_remote_tracking_base_sha="$(git -C "$repository" rev-parse --verify "${push_remote}/${expected_base_branch}^{commit}" 2>/dev/null)"; then
   append_executed 'Cached Push Remote Base=QUERIED'
@@ -416,7 +482,8 @@ if ! evidence_has_marker 'repository-naming-rule-verified'; then
 fi
 
 local_branch_output="$(git -C "$repository" branch --list -- "$expected_branch_name" 2>/dev/null)" || hard_stop NOT_VERIFIABLE 'Local Branch cannot be queried'
-remote_branch_output="$(git -C "$repository" ls-remote --heads "$push_remote" "refs/heads/${expected_branch_name}" 2>/dev/null)" || {
+actual_feature_push_target="${configured_push_url} refs/heads/${expected_branch_name}"
+remote_branch_output="$(git -C "$repository" ls-remote --heads "$configured_push_url" "refs/heads/${expected_branch_name}" 2>/dev/null)" || {
   feature_remote_verification='NOT_VERIFIABLE'
   hard_stop NOT_VERIFIABLE 'Remote Branch cannot be queried'
 }
@@ -505,9 +572,16 @@ else
   cached_remote_branch_tip=''
   cached_remote_tracking_feature_sha='NOT_FOUND'
 fi
-append_executed 'Cached remote-tracking Feature=QUERIED'
+append_executed 'Cached Fetch remote-tracking Feature=QUERIED'
 
-if [ "$remote_branch_status" = 'ABSENT' ] && [ -z "$cached_remote_branch_tip" ]; then
+if [ "$fetch_push_same_repository" = 'false' ]; then
+  if [ "$remote_branch_status" = 'ABSENT' ]; then
+    feature_remote_verification='VERIFIED_ABSENT'
+  else
+    feature_remote_verification='VERIFIED'
+  fi
+  append_executed 'Actual Push Feature ref=VERIFIED independently of Fetch remote-tracking cache'
+elif [ "$remote_branch_status" = 'ABSENT' ] && [ -z "$cached_remote_branch_tip" ]; then
   feature_remote_verification='VERIFIED_ABSENT'
 elif [ "$remote_branch_status" = 'ABSENT' ]; then
   feature_remote_verification='CACHED_REF_REMOTE_ABSENT'
@@ -534,7 +608,7 @@ else
 fi
 
 if [ "$local_branch_status" = 'PRESENT' ] && [ "$remote_branch_status" = 'PRESENT' ]; then
-  branch_counts="$(git -C "$repository" rev-list --left-right --count "${local_branch_tip}...${cached_remote_branch_tip}" 2>/dev/null)" || hard_stop NOT_VERIFIABLE 'Issue Branch ancestry cannot be verified'
+  branch_counts="$(git -C "$repository" rev-list --left-right --count "${local_branch_tip}...${remote_branch_tip}" 2>/dev/null)" || hard_stop NOT_VERIFIABLE 'Issue Branch ancestry cannot be verified'
   read -r branch_local_ahead branch_remote_ahead <<< "$branch_counts"
   if [ "$branch_local_ahead" != 0 ] && [ "$branch_remote_ahead" != 0 ]; then
     local_branch_status='PRESENT_DIVERGED'

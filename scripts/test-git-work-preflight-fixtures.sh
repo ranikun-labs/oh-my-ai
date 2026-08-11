@@ -113,7 +113,7 @@ function validate(input) {
     invariant(skill.includes(state), `skill missing state ${state}`);
     invariant(report.includes(state), `report missing state ${state}`);
   }
-  for (const field of ["Consumer", "Repository", "Repository Verification", "Canonical Repository", "Canonical Repository Verification", "Push Remote", "Push Remote Verification", "Canonical Base Verification", "Current Branch", "Current HEAD", "Expected Base Branch", "Expected Base SHA", "Cached Push-remote Base SHA", "Authoritative Base SHA", "Feature Integration Point", "Local Base SHA", "Working Tree Status", "Tracked Status", "Staged Status", "Unmerged Status", "Untracked Local State", "Ignored Local State", "Expected Branch Candidate", "Local Branch Status", "Remote Branch Status", "PR Status", "Ancestry Status", "Existing Work A-H", "Preflight Result", "Blocking Items", "Evidence", "Allowed Next Step", "Process Exit Code", "Prohibited Actions", "Unavailable Capabilities"]) {
+  for (const field of ["Consumer", "Repository", "Repository Verification", "Canonical Repository", "Canonical Repository Verification", "Push Remote", "Push Remote Verification", "Configured Fetch URL", "Configured Push URL", "Fetch Repository Relation", "Push Repository Relation", "Actual Feature Push Target", "Canonical Base Verification", "Current Branch", "Current HEAD", "Expected Base Branch", "Expected Base SHA", "Cached Fetch-remote Base SHA", "Authoritative Base SHA", "Feature Integration Point", "Local Base SHA", "Working Tree Status", "Tracked Status", "Staged Status", "Unmerged Status", "Untracked Local State", "Ignored Local State", "Expected Branch Candidate", "Local Branch Status", "Remote Branch Status", "PR Status", "Ancestry Status", "Existing Work A-H", "Preflight Result", "Blocking Items", "Evidence", "Allowed Next Step", "Process Exit Code", "Prohibited Actions", "Unavailable Capabilities"]) {
     invariant(report.includes(field), `report missing '${field}'`);
   }
   for (const text of ["Branch Creation", "Checkout", "Commit and Push", "Draft PR", "Jira Comment and Transition"]) {
@@ -207,7 +207,7 @@ const fixture = JSON.parse(fs.readFileSync(fixturePath, "utf8"));
 assert.equal(fixture.contract, "git-work-preflight-runtime-fixtures-v2");
 assert.deepEqual(
   fixture.scenarios.map(({ id }) => id),
-  ["canonical-push-remote-split", "local-only-base-tip", "local-only-unique-commit", "canonical-base-push-cache-mismatch", "canonical-pr-collision", "draft-pr-key-order", "merged-pr", "aligned", "local-ahead", "remote-ahead", "diverged", "candidate-ancestor", "expected-canonical-base-mismatch", "github-unavailable", "multiple-prs", "report-newline-injection", "malformed-pr-json", "jira-association-unavailable", "jira-association-conflict", "remote-ahead-local-tip-already-in-base", "jira-association-unavailable-ancestor", "jira-association-matched-ancestor", "jira-association-conflicted-ancestor", "manual-review-ancestor", "stale-cached-feature-remote-ahead", "jira-work-missing-issue-key", "jira-work-valid-issue-key"],
+  ["actual-pushurl-aligned", "canonical-repository-identity", "redirect-alias-repository-identity", "verified-fork-repository-identity", "unrelated-repository-identity", "malformed-feature-branch", "malformed-base-branch", "multiple-pushurls", "canonical-push-remote-split", "local-only-base-tip", "local-only-unique-commit", "canonical-base-push-cache-mismatch", "canonical-pr-collision", "draft-pr-key-order", "merged-pr", "aligned", "local-ahead", "remote-ahead", "diverged", "candidate-ancestor", "expected-canonical-base-mismatch", "github-unavailable", "multiple-prs", "report-newline-injection", "malformed-pr-json", "jira-association-unavailable", "jira-association-conflict", "remote-ahead-local-tip-already-in-base", "jira-association-unavailable-ancestor", "jira-association-matched-ancestor", "jira-association-conflicted-ancestor", "manual-review-ancestor", "stale-cached-feature-remote-ahead", "jira-work-missing-issue-key", "jira-work-valid-issue-key"],
 );
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "git-work-preflight-runtime-"));
@@ -253,6 +253,9 @@ case "$scenario" in
   stale-cached-feature-remote-ahead)
     actual_remote_candidate='dddddddddddddddddddddddddddddddddddddddd'
     ;;
+  actual-pushurl-aligned)
+    cached_remote_candidate="$base"
+    ;;
 esac
 if [ "$1" = '-C' ]; then shift 2; fi
 command="$1"
@@ -276,7 +279,30 @@ case "$command" in
     ;;
   remote)
     [ "$1" = 'get-url' ] || exit 73
-    printf '%s\n' 'https://github.com/aixion1506/oh-my-ai.git'
+    if [ "$scenario" = 'multiple-pushurls' ] && { [ " $* " = ' get-url --all --push origin ' ] || [ " $* " = ' get-url --push --all origin ' ]; }; then
+      printf '%s\n' 'https://github.com/contributor/oh-my-ai.git' 'https://github.com/backup/oh-my-ai.git'
+    elif [ " $* " = ' get-url --all --push origin ' ] || [ " $* " = ' get-url --push --all origin ' ] || [ " $* " = ' get-url --push origin ' ]; then
+      case "$scenario" in
+        actual-pushurl-aligned) printf '%s\n' 'https://github.com/contributor/oh-my-ai.git' ;;
+        verified-fork-repository-identity) printf '%s\n' 'https://github.com/contributor/oh-my-ai.git' ;;
+        unrelated-repository-identity) printf '%s\n' 'https://github.com/unrelated/other.git' ;;
+        canonical-repository-identity) printf '%s\n' 'https://github.com/ranikun-labs/oh-my-ai.git' ;;
+        *) printf '%s\n' 'https://github.com/aixion1506/oh-my-ai.git' ;;
+      esac
+    else
+      case "$scenario" in
+        actual-pushurl-aligned|canonical-repository-identity) printf '%s\n' 'https://github.com/ranikun-labs/oh-my-ai.git' ;;
+        verified-fork-repository-identity) printf '%s\n' 'https://github.com/contributor/oh-my-ai.git' ;;
+        unrelated-repository-identity) printf '%s\n' 'https://github.com/unrelated/other.git' ;;
+        *) printf '%s\n' 'https://github.com/aixion1506/oh-my-ai.git' ;;
+      esac
+    fi
+    ;;
+  check-ref-format)
+    case "$scenario:$*" in
+      malformed-feature-branch:*bad.|malformed-base-branch:*bad.) exit 128 ;;
+      *) exit 0 ;;
+    esac
     ;;
   merge-base)
     if [ "$1" = '--is-ancestor' ]; then
@@ -319,6 +345,11 @@ case "$command" in
     elif [ "$ref" = 'refs/heads/feat/shared-git-preflight' ]; then
       case "$scenario" in
         local-only-base-tip|local-only-unique-commit|canonical-push-remote-split|canonical-pr-collision) ;;
+        actual-pushurl-aligned)
+          if [ "$remote" = 'https://github.com/contributor/oh-my-ai.git' ]; then
+            printf '%s\trefs/heads/feat/shared-git-preflight\n' "$actual_remote_candidate"
+          fi
+          ;;
         *) printf '%s\trefs/heads/feat/shared-git-preflight\n' "$actual_remote_candidate" ;;
       esac
     else
@@ -331,7 +362,21 @@ esac
 const fakeGh = String.raw`#!/usr/bin/env bash
 set -euo pipefail
 if [ "$1" = 'repo' ] && [ "$2" = 'view' ]; then
-  printf '%s\n' '{"defaultBranchRef":{"name":"master"},"nameWithOwner":"ranikun-labs/oh-my-ai","url":"https://github.com/ranikun-labs/oh-my-ai"}'
+  case "$3" in
+    ranikun-labs/oh-my-ai|https://github.com/ranikun-labs/oh-my-ai|https://github.com/ranikun-labs/oh-my-ai.git)
+      printf '%s\n' '{"id":"R_CANONICAL","defaultBranchRef":{"name":"master"},"isFork":false,"parent":null,"nameWithOwner":"ranikun-labs/oh-my-ai","url":"https://github.com/ranikun-labs/oh-my-ai"}'
+      ;;
+    https://github.com/aixion1506/oh-my-ai.git)
+      printf '%s\n' '{"id":"R_CANONICAL","defaultBranchRef":{"name":"master"},"isFork":false,"parent":null,"nameWithOwner":"ranikun-labs/oh-my-ai","url":"https://github.com/ranikun-labs/oh-my-ai"}'
+      ;;
+    https://github.com/contributor/oh-my-ai.git)
+      printf '%s\n' '{"id":"R_FORK","defaultBranchRef":{"name":"master"},"isFork":true,"parent":{"id":"R_CANONICAL","nameWithOwner":"ranikun-labs/oh-my-ai"},"nameWithOwner":"contributor/oh-my-ai","url":"https://github.com/contributor/oh-my-ai"}'
+      ;;
+    https://github.com/unrelated/other.git)
+      printf '%s\n' '{"id":"R_UNRELATED","defaultBranchRef":{"name":"master"},"isFork":false,"parent":null,"nameWithOwner":"unrelated/other","url":"https://github.com/unrelated/other"}'
+      ;;
+    *) exit 1 ;;
+  esac
   exit 0
 fi
 case "$PREFLIGHT_SCENARIO" in
@@ -378,8 +423,8 @@ try {
       "--repository", repo,
       "--canonical-repository", "ranikun-labs/oh-my-ai",
       "--push-remote", "origin",
-      "--expected-base-branch", "master",
-      "--expected-branch-name", "feat/shared-git-preflight",
+      "--expected-base-branch", scenario.id === "malformed-base-branch" ? "bad." : "master",
+      "--expected-branch-name", scenario.id === "malformed-feature-branch" ? "bad." : "feat/shared-git-preflight",
       "--execution-policy", "suggest-only",
       "--consumer", jiraConsumer ? "jira-work" : "manual-review",
       "--provided-evidence", evidence,
@@ -408,7 +453,13 @@ try {
     }
     if (scenario.remote_verification) assert.equal(report.get("Canonical Base Verification"), scenario.remote_verification, `${scenario.id}: Canonical Base Verification`);
     if (scenario.feature_remote_verification) assert.equal(report.get("Push Remote Feature Verification"), scenario.feature_remote_verification, `${scenario.id}: Push Remote Feature Verification`);
-    for (const field of ["Consumer", "Issue Key", "Execution Policy", "Mutation Safety", "Repository", "Canonical Repository", "Canonical Repository Verification", "Push Remote", "Push Remote Verification", "Expected Base Branch", "Executed Evidence", "Provided Evidence", "Supplied Evidence", "Unexecuted Checks", "Prohibited Actions", "Tracked Status", "Staged Status", "Unmerged Status", "Untracked Local State", "Ignored Local State", "Cached Push-remote Base SHA", "Authoritative Base SHA", "Cached Push-remote Feature SHA", "Actual Push-remote Feature SHA", "Feature Integration Point", "Candidate Tip Evidence", "Unique Feature Commits"]) {
+    if (scenario.repository_verification) assert.equal(report.get("Repository Verification"), scenario.repository_verification, `${scenario.id}: Repository Verification`);
+    if (scenario.fetch_repository_relation) assert.equal(report.get("Fetch Repository Relation"), scenario.fetch_repository_relation, `${scenario.id}: Fetch Repository Relation`);
+    if (scenario.push_repository_relation) assert.equal(report.get("Push Repository Relation"), scenario.push_repository_relation, `${scenario.id}: Push Repository Relation`);
+    if (scenario.configured_fetch_url) assert.equal(report.get("Configured Fetch URL"), scenario.configured_fetch_url, `${scenario.id}: Configured Fetch URL`);
+    if (scenario.configured_push_url) assert.equal(report.get("Configured Push URL"), scenario.configured_push_url, `${scenario.id}: Configured Push URL`);
+    if (scenario.actual_feature_push_target) assert.equal(report.get("Actual Feature Push Target"), scenario.actual_feature_push_target, `${scenario.id}: Actual Feature Push Target`);
+    for (const field of ["Consumer", "Issue Key", "Execution Policy", "Mutation Safety", "Repository", "Repository Verification", "Canonical Repository", "Canonical Repository Verification", "Push Remote", "Push Remote Verification", "Configured Fetch URL", "Configured Push URL", "Fetch Repository Relation", "Push Repository Relation", "Actual Feature Push Target", "Expected Base Branch", "Executed Evidence", "Provided Evidence", "Supplied Evidence", "Unexecuted Checks", "Prohibited Actions", "Tracked Status", "Staged Status", "Unmerged Status", "Untracked Local State", "Ignored Local State", "Cached Fetch-remote Base SHA", "Authoritative Base SHA", "Cached Fetch-remote Feature SHA", "Actual Push-remote Feature SHA", "Feature Integration Point", "Candidate Tip Evidence", "Unique Feature Commits"]) {
       assert.ok(report.has(field), `${scenario.id}: report lacks ${field}`);
     }
     if (scenario.canonical_repository_verification) assert.equal(report.get("Canonical Repository Verification"), scenario.canonical_repository_verification, `${scenario.id}: Canonical Repository Verification`);
@@ -416,7 +467,7 @@ try {
     if (scenario.authoritative_base_sha) assert.equal(report.get("Authoritative Base SHA"), scenario.authoritative_base_sha, `${scenario.id}: authoritative Base SHA`);
     if (scenario.unique_feature_commits) assert.equal(report.get("Unique Feature Commits"), scenario.unique_feature_commits, `${scenario.id}: Unique Feature Commits`);
     if (scenario.cached_remote_tracking_feature_sha) {
-      assert.equal(report.get("Cached Push-remote Feature SHA"), scenario.cached_remote_tracking_feature_sha, `${scenario.id}: cached Feature SHA`);
+      assert.equal(report.get("Cached Fetch-remote Feature SHA"), scenario.cached_remote_tracking_feature_sha, `${scenario.id}: cached Feature SHA`);
     }
     if (scenario.actual_remote_feature_sha) {
       assert.equal(report.get("Actual Push-remote Feature SHA"), scenario.actual_remote_feature_sha, `${scenario.id}: actual Feature SHA`);

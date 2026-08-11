@@ -31,9 +31,9 @@ The contract reports, at minimum:
 
 | Check | Required conclusion |
 |---|---|
-| Repository | Local repository identity and whether it matches the Ticket Contract. |
+| Repository | Local repository path plus GitHub stable repository identity. The configured Fetch Repository must be the Canonical Repository, a redirect resolving to the same stable ID, or a direct fork whose parent metadata proves the Canonical Repository. |
 | Canonical Repository | GitHub owner/repository identity, authoritative Base ref, canonical PR target, PR collision, and merged-PR state. |
-| Push Remote | Configured Feature Branch push destination and its reachable/ref-resolvable state. It is not canonical truth merely because it is named `origin`. |
+| Push Remote | The configured remote name is resolved into separate Fetch URL and Git-effective Push URL evidence. `git remote get-url --push` determines the actual Feature Branch destination; the remote name and Fetch URL do not. Multiple Push URLs fail closed. |
 | Base Branch | Required base branch and its resolvability. |
 | Local and remote HEAD | Actual revisions used to detect stale or divergent state. |
 | Working Tree | Clean, dirty, staged, untracked, and conflicting state. |
@@ -61,6 +61,12 @@ Commit count is zero, the Push Remote Feature Branch and canonical PR are both
 verified absent, and the Issue-to-Branch association is exact. Any unique
 commit, unclear ancestry, unavailable remote/PR evidence, or association gap
 preserves `RECOVERY_REQUIRED`, `NOT_VERIFIABLE`, or `CONFLICTED`.
+
+Expected Base and Feature names must pass `git check-ref-format --branch`
+before any remote or PR absence query. A malformed name cannot be interpreted
+as an absent branch. When verified Fetch and Push repositories differ, cached
+Fetch remote-tracking refs remain evidence only; actual Feature existence and
+alignment come from the Git-effective Push URL.
 
 This common contract does not change `work-start`'s external behavior: it still
 creates a Candidate and ends at Human Review.

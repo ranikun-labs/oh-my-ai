@@ -29,14 +29,20 @@
 - Repository Verification:
 - Canonical Repository Verification:
 - Push Remote Verification:
+- Configured Fetch URL: credential and query redacted; destination preserved.
+- Configured Push URL: credential and query redacted; destination preserved.
+- Fetch Repository Relation: `SAME_CANONICAL_REPOSITORY`,
+  `VERIFIED_FORK_OF_CANONICAL`, `UNRELATED_REPOSITORY`, or `NOT_VERIFIABLE`.
+- Push Repository Relation: same relation vocabulary as Fetch Repository.
+- Actual Feature Push Target: configured Push URL plus the exact Feature ref.
 - Canonical Base Verification:
 - Push Remote Feature Verification:
 - Current Branch:
 - Current HEAD:
 - Expected Base SHA:
-- Cached Push-remote Base SHA:
+- Cached Fetch-remote Base SHA:
 - Authoritative Base SHA:
-- Cached Push-remote Feature SHA:
+- Cached Fetch-remote Feature SHA:
 - Actual Push-remote Feature SHA:
 - Feature Integration Point:
 - Local Base SHA:

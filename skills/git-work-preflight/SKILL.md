@@ -56,9 +56,9 @@ are `work-start`, `jira-work`, and `manual-review`.
 
 | Input | Requirement |
 |---|---|
-| Repository | Required. One local repository path only. Missing input is `Repository Required`. |
+| Repository | Required. One local repository path only. Missing input is `Repository Required`. Its configured Fetch Repository must resolve by GitHub stable repository identity to the Canonical Repository or a direct verified fork. |
 | Canonical Repository | Required GitHub `owner/repo`. Owns repository identity, authoritative Base, canonical PR target, PR collision, and merged-PR state. |
-| Push Remote | Required configured remote name. Owns Feature Branch push destination and remote Feature existence/alignment only. |
+| Push Remote | Required configured remote name. Its Fetch URL and Git-effective Push URL are separate evidence. The Push URL owns Feature Branch existence/alignment only. |
 | Expected Base Branch | Required. Missing input is `Base Branch Required`. |
 | Expected Base SHA | Optional. If supplied, both local and remote Base must match it. |
 | Expected Branch Name Candidate | Optional. Validate only; never generate or create a Branch. |
@@ -81,7 +81,7 @@ using them as refs.
 The Runtime may use only these read-only operations after confirming the
 Repository and ref input are usable:
 
-- `git rev-parse`, `git status`, `git branch --list`, `git branch -vv`, `git remote get-url`
+- `git check-ref-format --branch`, `git rev-parse`, `git status`, `git branch --list`, `git branch -vv`, `git remote get-url`, `git remote get-url --push`
 - `git ls-remote`, `git rev-list`, `git merge-base`, `git log`
 - `gh repo view`, `gh pr list`, `gh pr view`
 
@@ -99,12 +99,22 @@ the authoritative Base with `git ls-remote` against that canonical repository,
 and always queries PR state with `gh pr list --repo <canonical owner/repo>`.
 It never assumes a remote named `origin` is canonical truth.
 
-The configured Push Remote is resolved independently. Its cached Base is
-reported as evidence but never outranks the authoritative canonical Base. Only
-Feature Branch existence and alignment are queried from the Push Remote. The
-report keeps Expected Base SHA, Cached Push-remote Base SHA, Authoritative Base
-SHA, Feature Integration Point, Cached Push-remote Feature SHA, and Actual
-Push-remote Feature SHA separate.
+The configured remote is resolved into exactly one Fetch URL and exactly one
+Git-effective Push URL. `git remote get-url --push` is authoritative for the
+push destination; a remote name or Fetch URL is not a substitute. Multiple Push
+URLs are `NOT_VERIFIABLE`. GitHub stable repository ID proves a redirect alias
+as `SAME_CANONICAL_REPOSITORY`; a direct fork is accepted only when GitHub
+metadata proves its parent is the Canonical Repository. Unavailable metadata or
+unrelated repositories fail closed.
+
+The Fetch remote-tracking cache is reported as evidence but never outranks the
+authoritative canonical Base or the actual Push URL. Feature Branch existence
+and alignment are queried from the actual Push URL. When Fetch and Push resolve
+to different verified repositories, Fetch remote-tracking refs are not treated
+as Push destination refs. The report keeps Expected Base SHA, Cached
+Fetch-remote Base SHA, Authoritative Base SHA, Feature Integration Point,
+Cached Fetch-remote Feature SHA, Actual Push-remote Feature SHA, and Actual
+Feature Push Target separate.
 
 When both local and Push Remote Issue Branches exist, the Runtime verifies their
 actual tips first, classifies local-ahead, remote-ahead, or divergence, and
@@ -115,6 +125,10 @@ Remote Feature is verified absent, the canonical PR is verified absent, and
 the jira-work consumer supplied the exact Issue-to-Branch association. A
 local-only Branch with unique commits or unclear ancestry remains
 `RECOVERY_REQUIRED` or `NOT_VERIFIABLE`.
+
+Expected Base and Feature Branch names are accepted only after
+`git check-ref-format --branch` succeeds. A malformed ref is never converted
+into evidence that a remote branch is absent.
 
 ## Result model
 

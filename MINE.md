@@ -16,7 +16,7 @@
 - `skills/handoff-prompt/` — 세션 전환 시 다음 AI 세션에 붙여넣을 handoff prompt를 사람이 직접 작성하도록 안내
 - `skills/harness-automation/` — 반복 업무를 감지하고 적절한 자동화 형태로 구조화
 - `skills/jira-ticket/` — Jira MCP-backed Create Workflow로 중복·승인·반환 Evidence를 fail-closed 처리
-- `skills/jira-work/` — Main Contract와 Repository Reality를 검증하는 high-risk execution readiness gate
+- `skills/jira-work/` — Main Contract와 Repository Reality를 검증하는 preferred high-risk execution readiness gate
 - `skills/local-search/` — rg/find와 Jikji의 역할을 분리하는 로컬 파일·문서 탐색 플레이북
 - `skills/project-context/` — 세션 간 설계 배경과 작업 상태를 이어주는 컨텍스트 관리
 - `skills/release-note/` — Optional Jira/Confluence 릴리즈 노트 workflow
