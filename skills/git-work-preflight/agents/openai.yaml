@@ -1,6 +1,6 @@
 interface:
   display_name: "Git Work Preflight"
-  short_description: "Inspect Git state before a future work mutation"
+  short_description: "Verify canonical Git and push-remote state before work"
   default_prompt: "Use $git-work-preflight through an approved consumer to inspect Git state without mutations."
 
 policy:

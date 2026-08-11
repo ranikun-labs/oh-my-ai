@@ -8,6 +8,8 @@
 
 - Consumer:
 - Repository:
+- Canonical Repository:
+- Push Remote:
 - Expected Base Branch:
 - Expected Base SHA:
 - Expected Branch Candidate:
@@ -25,18 +27,19 @@
 ## Repository and Base
 
 - Repository Verification:
-- Remote Verification:
-- Feature Remote Verification:
+- Canonical Repository Verification:
+- Push Remote Verification:
+- Canonical Base Verification:
+- Push Remote Feature Verification:
 - Current Branch:
 - Current HEAD:
 - Expected Base SHA:
-- Cached Remote-tracking Base SHA:
-- Actual Remote Base SHA:
-- Cached Remote-tracking Feature SHA:
-- Actual Remote Feature SHA:
+- Cached Push-remote Base SHA:
+- Authoritative Base SHA:
+- Cached Push-remote Feature SHA:
+- Actual Push-remote Feature SHA:
 - Feature Integration Point:
 - Local Base SHA:
-- Remote Base SHA:
 - Ancestry Status:
 
 ## Working Tree Status
@@ -57,6 +60,7 @@
 - PR Status:
 - Issue Association Status:
 - Candidate Tip Evidence:
+- Unique Feature Commits:
 - Existing Work A-H:
 
 ## Preflight Result

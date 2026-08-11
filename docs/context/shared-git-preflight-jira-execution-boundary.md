@@ -34,8 +34,9 @@ The contract reports, at minimum:
 
 | Check | Required conclusion |
 |---|---|
-| Repository | Target repository identity and whether it matches the Ticket Contract. |
-| Remote | Configured remote identity and reachable/ref-resolvable state. |
+| Repository | Local repository identity and whether it matches the Ticket Contract. |
+| Canonical Repository | GitHub owner/repository identity, authoritative Base ref, canonical PR target, PR collision, and merged-PR state. |
+| Push Remote | Configured Feature Branch push destination and its reachable/ref-resolvable state. It is not canonical truth merely because it is named `origin`. |
 | Base Branch | Required base branch and its resolvability. |
 | Local and remote HEAD | Actual revisions used to detect stale or divergent state. |
 | Working Tree | Clean, dirty, staged, untracked, and conflicting state. |
@@ -50,6 +51,19 @@ diverged branch, unexpected remote, duplicate PR, or `Do Not Touch` conflict;
 it must not reset, stash, clean, force checkout, force-push, rebase, delete
 branches, perform any form of history rewrite, or silently select another
 Ticket or branch. A failure remains evidence for human review.
+
+This clean-tree check belongs to the Entry or Resume Readiness stage, before
+implementation starts or resumes. Once approved implementation has produced
+intentional changes, tests, builds, and diff checks are Execution Verification;
+the Entry Preflight is not a mid-implementation verification gate. This stage
+distinction is a workflow boundary, not a separate lifecycle runtime.
+
+A clean local-only Issue Branch is new-work state rather than recovery state
+only when its HEAD equals the authoritative canonical Base, its unique Feature
+Commit count is zero, the Push Remote Feature Branch and canonical PR are both
+verified absent, and the Issue-to-Branch association is exact. Any unique
+commit, unclear ancestry, unavailable remote/PR evidence, or association gap
+preserves `RECOVERY_REQUIRED`, `NOT_VERIFIABLE`, or `CONFLICTED`.
 
 Extracting this common contract must not change `work-start`'s external
 behavior: it still creates a Candidate and ends at Human Review. Function

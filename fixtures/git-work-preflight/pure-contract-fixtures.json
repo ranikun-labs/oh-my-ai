@@ -1,12 +1,14 @@
 {
-  "contract": "git-work-preflight-pure-contract-v1",
-  "required_inputs": ["Repository", "Expected Base Branch", "Execution Policy", "Consumer"],
+  "contract": "git-work-preflight-pure-contract-v2",
+  "required_inputs": ["Repository", "Canonical Repository", "Push Remote", "Expected Base Branch", "Execution Policy", "Consumer"],
   "optional_inputs": ["Expected Base SHA", "Expected Branch Name Candidate", "Issue Key", "Provided Evidence"],
   "consumers": ["work-start", "jira-work", "manual-review"],
   "network": false,
   "git_mutation": false,
   "pr_write": false,
   "scenarios": [
+    { "id": "canonical-push-remote-split", "repository_verified": true, "working_tree": "CLEAN", "local_branch_state": "ABSENT", "remote_branch_state": "ABSENT", "pr_state": "NONE", "ancestry": "BASE_ALIGNED", "existing_work_state": "A", "preflight_result": "READY_NEW_WORK", "blocking": false, "allowed_next_step": "PLAN_NEW_WORK_ONLY", "mutation": 0, "execution_policy": "suggest-only" },
+    { "id": "local-only-base-tip", "repository_verified": true, "working_tree": "CLEAN", "local_branch_state": "PRESENT_BASE_TIP", "remote_branch_state": "ABSENT", "pr_state": "NONE", "ancestry": "BASE_ALIGNED", "existing_work_state": "A", "preflight_result": "READY_NEW_WORK", "blocking": false, "allowed_next_step": "PLAN_NEW_WORK_ONLY", "mutation": 0, "execution_policy": "suggest-only" },
     { "id": "valid-new-work", "repository_verified": true, "working_tree": "CLEAN", "local_branch_state": "ABSENT", "remote_branch_state": "ABSENT", "pr_state": "NONE", "ancestry": "BASE_ALIGNED", "existing_work_state": "A", "preflight_result": "READY_NEW_WORK", "blocking": false, "allowed_next_step": "PLAN_NEW_WORK_ONLY", "mutation": 0, "execution_policy": "suggest-only" },
     { "id": "valid-resume", "repository_verified": true, "working_tree": "CLEAN", "local_branch_state": "PRESENT_ALIGNED", "remote_branch_state": "PRESENT_ALIGNED", "pr_state": "NONE", "ancestry": "BASE_ALIGNED", "existing_work_state": "B", "preflight_result": "READY_RESUME", "blocking": false, "allowed_next_step": "PLAN_RESUME_ONLY", "mutation": 0, "execution_policy": "suggest-only" },
     { "id": "tracked-dirty-tree", "repository_verified": true, "working_tree": "TRACKED_DIRTY", "local_branch_state": "ABSENT", "remote_branch_state": "ABSENT", "pr_state": "NONE", "ancestry": "BASE_ALIGNED", "existing_work_state": "NONE", "preflight_result": "BLOCKED_DIRTY_TREE", "blocking": true, "allowed_next_step": "STOP", "mutation": 0, "execution_policy": "suggest-only" },

@@ -1,6 +1,6 @@
 ---
 name: git-work-preflight
-description: Use only when work-start, jira-work, or manual-review explicitly requests a shared read-only Git preflight before planning a future mutation. Inspect one repository, base, working tree, branch, remote, PR, and ancestry state; report a safe candidate next step and never mutate Git or GitHub.
+description: Use only when work-start, jira-work, or manual-review explicitly requests a shared read-only Git preflight before planning a future mutation. Separate the canonical GitHub repository from the configured push remote, then inspect authoritative base, working tree, branch, PR, and ancestry state without mutating Git or GitHub.
 metadata:
   source: born-here
   summary: Git Mutation 전 공통으로 소비하는 읽기 전용 Repository 안전 Gate
@@ -19,6 +19,12 @@ It is a read-only gate. It inspects one supplied repository and produces a
 Preflight Report with evidence and a candidate next step. It never creates a
 Branch, checks out, resets, restores, stashes, cleans, rebases, merges, pulls,
 pushes, creates a PR, or changes a PR.
+
+Use this clean-tree contract only as an Entry or Resume Readiness Gate before
+implementation begins or resumes. After approved implementation has produced
+intentional changes, use execution verification such as tests, builds, and
+diff checks; do not rerun this Entry Gate as a mid-implementation verification
+gate and reinterpret its expected dirty-tree result as a contract failure.
 
 `work-start` continues to create a Candidate and stop at Human Review.
 `jira-work` continues to require its Ticket Gate, canonical source agreement,
@@ -44,13 +50,15 @@ is fail-closed: report `NOT_VERIFIABLE` or another blocking result.
 
 ## Input contract
 
-Require exactly one Repository, Expected Base Branch, Execution Policy, and
-Consumer. The supported Consumers are `work-start`, `jira-work`, and
-`manual-review`.
+Require exactly one local Repository, Canonical Repository, Push Remote,
+Expected Base Branch, Execution Policy, and Consumer. The supported Consumers
+are `work-start`, `jira-work`, and `manual-review`.
 
 | Input | Requirement |
 |---|---|
 | Repository | Required. One local repository path only. Missing input is `Repository Required`. |
+| Canonical Repository | Required GitHub `owner/repo`. Owns repository identity, authoritative Base, canonical PR target, PR collision, and merged-PR state. |
+| Push Remote | Required configured remote name. Owns Feature Branch push destination and remote Feature existence/alignment only. |
 | Expected Base Branch | Required. Missing input is `Base Branch Required`. |
 | Expected Base SHA | Optional. If supplied, both local and remote Base must match it. |
 | Expected Branch Name Candidate | Optional. Validate only; never generate or create a Branch. |
@@ -59,9 +67,9 @@ Consumer. The supported Consumers are `work-start`, `jira-work`, and
 | Consumer | Required: `work-start`, `jira-work`, or `manual-review`. |
 | Provided Evidence | Optional evidence reference. Never claim it was verified unless the consumer supplied verified evidence. |
 
-Multiple Repository values, unsafe ref input, unreadable Repository, missing
-Base, unavailable Remote, unavailable GitHub query, or missing required
-Repository rule evidence are never treated as branch absence or READY.
+Multiple values, unsafe input, unreadable Repository, unresolved Canonical
+Repository or Push Remote, missing Base, unavailable GitHub query, or missing
+required Repository rule evidence are never treated as branch absence or READY.
 
 ## Read-only runtime
 
@@ -73,32 +81,40 @@ using them as refs.
 The Runtime may use only these read-only operations after confirming the
 Repository and ref input are usable:
 
-- `git rev-parse`, `git status`, `git branch --list`, `git branch -vv`
+- `git rev-parse`, `git status`, `git branch --list`, `git branch -vv`, `git remote get-url`
 - `git ls-remote`, `git rev-list`, `git merge-base`, `git log`
-- `gh pr list`, `gh pr view`
+- `gh repo view`, `gh pr list`, `gh pr view`
 
 The Runtime reports executed Evidence separately from supplied Evidence. An
 unexecuted query is `NOT_CHECKED`, not a successful absence result. It parses
 `gh pr list` with Node.js JSON parsing, so PR state never depends on JSON key
 order; malformed, unavailable, or multiple records fail closed as appropriate.
 
-For a feature Branch, Local Base SHA is the merge base between current HEAD and
-verified `origin/<base>`. This detects a stale integration point without
-misclassifying a Feature Branch that already merged the latest Base merely
-because a separate local base ref has not moved.
+For a Feature Branch, Local Base SHA is the merge base between current HEAD and
+the authoritative canonical Base SHA. This detects a stale integration point
+without treating a cached Push Remote Base as canonical truth.
 
-Before a READY conclusion, the Runtime separately verifies the cached
-`origin/<base>` ref and the actual `refs/heads/<base>` value from
-`git ls-remote --heads origin`. Exactly one actual remote ref is required and
-it must match the cached ref. The report keeps Expected Base SHA, Cached
-Remote-tracking Base SHA, Actual Remote Base SHA, and Feature Integration Point
-separate. The candidate Feature Branch receives the same cached-versus-actual
-Remote verification, reported independently as Cached Remote-tracking Feature
-SHA and Actual Remote Feature SHA. A missing, stale, malformed, or unavailable
-Feature ref cannot produce READY. When both local and remote Issue Branches
-exist, the Runtime verifies their actual tips first, classifies local-ahead,
-remote-ahead, or divergence, and performs a merge conclusion only for an
-aligned tip. The report records which verified tip supplied ancestry evidence.
+The Runtime resolves Canonical Repository identity with `gh repo view`, queries
+the authoritative Base with `git ls-remote` against that canonical repository,
+and always queries PR state with `gh pr list --repo <canonical owner/repo>`.
+It never assumes a remote named `origin` is canonical truth.
+
+The configured Push Remote is resolved independently. Its cached Base is
+reported as evidence but never outranks the authoritative canonical Base. Only
+Feature Branch existence and alignment are queried from the Push Remote. The
+report keeps Expected Base SHA, Cached Push-remote Base SHA, Authoritative Base
+SHA, Feature Integration Point, Cached Push-remote Feature SHA, and Actual
+Push-remote Feature SHA separate.
+
+When both local and Push Remote Issue Branches exist, the Runtime verifies their
+actual tips first, classifies local-ahead, remote-ahead, or divergence, and
+performs a merge conclusion only for an aligned tip. A clean local-only Issue
+Branch is `READY_NEW_WORK` only when its local tip and current HEAD equal the
+authoritative Base, its unique Feature Commit count is exactly zero, the Push
+Remote Feature is verified absent, the canonical PR is verified absent, and
+the jira-work consumer supplied the exact Issue-to-Branch association. A
+local-only Branch with unique commits or unclear ancestry remains
+`RECOVERY_REQUIRED` or `NOT_VERIFIABLE`.
 
 ## Result model
 
@@ -129,7 +145,7 @@ Use the shared model without changing `jira-work` semantics.
 |---|---|---|
 | A. New Branch and PR absent | READY_NEW_WORK | PLAN_NEW_WORK_ONLY |
 | B. Normal Local and Remote Issue Branch | READY_RESUME | PLAN_RESUME_ONLY |
-| C. Local-only Branch | RECOVERY_REQUIRED | RECOVERY_PLAN_ONLY |
+| C. Local-only Branch with unique work or unclear ancestry | RECOVERY_REQUIRED | RECOVERY_PLAN_ONLY |
 | D. Remote-only Branch | RECOVERY_REQUIRED | RECOVERY_PLAN_ONLY |
 | E. Open Draft PR | READY_RESUME | PLAN_RESUME_ONLY; duplicate PR forbidden |
 | F. Local and Remote Divergence | BLOCKED_DIVERGENCE | STOP |
