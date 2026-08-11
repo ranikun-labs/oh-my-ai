@@ -9,6 +9,11 @@ import {
 } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { canonicalizePendingHandoffCandidate } from "./pending-handoff-candidate.mjs";
+import {
+  createPendingHandoffIntegrityDependencies,
+  createPendingHandoffIntegrityEnvelope,
+  verifyPendingHandoffIntegrityEnvelope,
+} from "./pending-handoff-integrity.mjs";
 
 const RECORD_FILE_NAME = "record.json";
 const RECORD_KEY_PATTERN = /^k-[A-Za-z0-9_-]+$/;
@@ -33,10 +38,14 @@ const DEFAULT_FILE_SYSTEM = Object.freeze({
 export const PENDING_HANDOFF_STORE_FAILURES = Object.freeze([
   "store_root_invalid",
   "store_dependency_invalid",
+  "integrity_dependency_invalid",
   "unsafe_store_path",
   "unsafe_record_path",
   "record_key_invalid",
   "record_invalid",
+  "record_integrity_invalid",
+  "record_integrity_key_invalid",
+  "record_integrity_mismatch",
   "record_not_found",
   "record_malformed",
   "record_read_failed",
@@ -66,15 +75,15 @@ export function createPendingHandoffStore(options) {
   const inspected = inspectOptions(options);
   if (!inspected.ok) return failure(inspected.reason);
 
-  const { rootDirectory, fileSystem } = inspected.value;
+  const { rootDirectory, fileSystem, integrity } = inspected.value;
   const store = Object.freeze({
-    write: record => writeRecord(rootDirectory, fileSystem, record),
-    read: candidateId => readRecord(rootDirectory, fileSystem, candidateId),
+    write: record => writeRecord(rootDirectory, fileSystem, integrity, record),
+    read: candidateId => readRecord(rootDirectory, fileSystem, integrity, candidateId),
   });
   return success(store);
 }
 
-async function writeRecord(rootDirectory, fileSystem, record) {
+async function writeRecord(rootDirectory, fileSystem, integrity, record) {
   let canonical;
   try {
     const validation = canonicalizePendingHandoffCandidate(record);
@@ -86,6 +95,9 @@ async function writeRecord(rootDirectory, fileSystem, record) {
 
   const keyResult = derivePendingHandoffRecordKey(canonical.candidate_id);
   if (!keyResult.ok) return failure("record_key_invalid");
+
+  const envelopeResult = createPendingHandoffIntegrityEnvelope(canonical, integrity);
+  if (!envelopeResult.ok) return failure("record_integrity_invalid");
 
   const recordDirectory = join(rootDirectory, keyResult.value);
   const recordPath = join(recordDirectory, RECORD_FILE_NAME);
@@ -108,7 +120,7 @@ async function writeRecord(rootDirectory, fileSystem, record) {
 
     let serialized;
     try {
-      serialized = `${JSON.stringify(canonical)}\n`;
+      serialized = `${JSON.stringify(envelopeResult.value)}\n`;
     } catch {
       return failure("record_write_failed");
     }
@@ -140,7 +152,7 @@ async function writeRecord(rootDirectory, fileSystem, record) {
   }
 }
 
-async function readRecord(rootDirectory, fileSystem, candidateId) {
+async function readRecord(rootDirectory, fileSystem, integrity, candidateId) {
   const keyResult = derivePendingHandoffRecordKey(candidateId);
   if (!keyResult.ok) return failure("record_key_invalid");
 
@@ -176,14 +188,9 @@ async function readRecord(rootDirectory, fileSystem, candidateId) {
       return failure("record_malformed");
     }
 
-    let canonical;
-    try {
-      const validation = canonicalizePendingHandoffCandidate(parsed);
-      if (!validation.ok) return failure("record_invalid");
-      canonical = validation.value;
-    } catch {
-      return failure("record_invalid");
-    }
+    const verified = verifyPendingHandoffIntegrityEnvelope(parsed, integrity);
+    if (!verified.ok) return failure(mapIntegrityReadFailure(verified.reason));
+    const canonical = verified.value;
 
     if (canonical.candidate_id !== candidateId) {
       return failure("record_invalid");
@@ -220,7 +227,7 @@ function inspectOptions(options) {
   try {
     if (!isPlainObject(options)) return failure("store_root_invalid");
     const keys = Reflect.ownKeys(options);
-    if (keys.some(key => typeof key !== "string" || !["rootDirectory", "fileSystem"].includes(key))) {
+    if (keys.some(key => typeof key !== "string" || !["rootDirectory", "integrityProvider", "fileSystem"].includes(key))) {
       return failure("store_root_invalid");
     }
 
@@ -235,6 +242,11 @@ function inspectOptions(options) {
     }
 
     const rootDirectory = resolve(rootDescriptor.value);
+    const integrityDescriptor = Object.getOwnPropertyDescriptor(options, "integrityProvider");
+    if (!isEnumerableDataDescriptor(integrityDescriptor)) return failure("integrity_dependency_invalid");
+    const integrityResult = createPendingHandoffIntegrityDependencies(integrityDescriptor.value);
+    if (!integrityResult.ok) return failure("integrity_dependency_invalid");
+
     let fileSystem = DEFAULT_FILE_SYSTEM;
     if (Object.hasOwn(options, "fileSystem")) {
       const fileSystemDescriptor = Object.getOwnPropertyDescriptor(options, "fileSystem");
@@ -246,6 +258,7 @@ function inspectOptions(options) {
     return success(Object.freeze({
       rootDirectory,
       fileSystem: inspectedFileSystem.value,
+      integrity: integrityResult.value,
     }));
   } catch {
     return failure("store_root_invalid");
@@ -320,6 +333,12 @@ function mapReadStatus(status) {
   if (status === "missing") return "record_not_found";
   if (status === "unsafe_store_path" || status === "unsafe_record_path") return status;
   return "record_read_failed";
+}
+
+function mapIntegrityReadFailure(reason) {
+  if (reason === "integrity_key_not_found") return "record_integrity_key_invalid";
+  if (reason === "integrity_mismatch") return "record_integrity_mismatch";
+  return "record_integrity_invalid";
 }
 
 function isDirectoryStat(stat) {

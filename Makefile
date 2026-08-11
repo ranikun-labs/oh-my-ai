@@ -5,7 +5,7 @@ PROFILE ?=
 #   make install-completion-notify PYTHON=/opt/homebrew/bin/python3.11
 PYTHON  ?= python3
 
-.PHONY: install install-shared install-completion-notify completion-notify-status test-completion-notify doctor-completion-notify uninstall-completion-notify init-profile install-profile doctor doctor-strict instructions update work-start test-install-fixtures test-completion-notify-fixtures test-routing-fixtures test-work-start-fixtures test-notice-fixtures test-capability-fixtures test-result-fixtures test-truthfulness-fixtures test-jira-ticket-fixtures test-jira-work-fixtures test-git-work-preflight-fixtures test-context-checkpoint-codex-fixtures test-context-checkpoint-fixtures test-pending-handoff-core-fixtures test-pending-handoff-identity-fixtures test-pending-handoff-secret-provider-fixtures test-pending-handoff-identity-composition-fixtures test-pending-handoff-candidate-fixtures test-pending-handoff-store-fixtures test-v1-fixtures test-v1x-fixtures
+.PHONY: install install-shared install-completion-notify completion-notify-status test-completion-notify doctor-completion-notify uninstall-completion-notify init-profile install-profile doctor doctor-strict instructions update work-start test-install-fixtures test-completion-notify-fixtures test-routing-fixtures test-work-start-fixtures test-notice-fixtures test-capability-fixtures test-result-fixtures test-truthfulness-fixtures test-jira-ticket-fixtures test-jira-work-fixtures test-git-work-preflight-fixtures test-context-checkpoint-codex-fixtures test-context-checkpoint-fixtures test-pending-handoff-core-fixtures test-pending-handoff-identity-fixtures test-pending-handoff-secret-provider-fixtures test-pending-handoff-identity-composition-fixtures test-pending-handoff-candidate-fixtures test-pending-handoff-store-fixtures test-pending-handoff-integrity-fixtures test-v1-fixtures test-v1x-fixtures
 
 instructions:
 	./scripts/render-instructions.sh
@@ -74,6 +74,9 @@ test-pending-handoff-candidate-fixtures:
 test-pending-handoff-store-fixtures:
 	node ./scripts/test-pending-handoff-store-fixtures.mjs
 
+test-pending-handoff-integrity-fixtures:
+	node ./scripts/test-pending-handoff-integrity-fixtures.mjs
+
 test-v1-fixtures: test-install-fixtures test-completion-notify-fixtures test-routing-fixtures test-work-start-fixtures test-notice-fixtures test-capability-fixtures test-result-fixtures test-truthfulness-fixtures
 
 test-v1x-fixtures: \
@@ -84,7 +87,8 @@ test-v1x-fixtures: \
 	test-pending-handoff-secret-provider-fixtures \
 	test-pending-handoff-identity-composition-fixtures \
 	test-pending-handoff-candidate-fixtures \
-	test-pending-handoff-store-fixtures
+	test-pending-handoff-store-fixtures \
+	test-pending-handoff-integrity-fixtures
 
 install: install-shared
 	@if [ "$(ENABLE_COMPLETION_NOTIFY)" = "1" ]; then ENABLE_COMPLETION_NOTIFY=1 $(PYTHON) ./scripts/completion-notify.py install --yes; else printf '%s\n' 'completion notify: skipped (explicit ENABLE_COMPLETION_NOTIFY=1 required)'; fi

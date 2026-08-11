@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import * as fileSystem from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PENDING_HANDOFF_SCHEMA_VERSION } from "./lib/pending-handoff-core.mjs";
+import {
+  PENDING_HANDOFF_INTEGRITY_PROVIDER_VERSION,
+  PENDING_HANDOFF_INTEGRITY_PURPOSE,
+} from "./lib/pending-handoff-integrity.mjs";
 
 let storeModule = null;
 try {
@@ -31,6 +36,12 @@ const REPOSITORY_IDENTITY = `phr1.repository.key_A-1.${"B".repeat(43)}`;
 const WORKTREE_IDENTITY = `phr1.worktree.key_A-1.${"C".repeat(43)}`;
 const PRIVATE_MARKER = "private-store-marker";
 const EXCEPTION_MARKER = "filesystem-exception-marker";
+const CURRENT_INTEGRITY_KEY_ID = "integrity_current";
+const PREVIOUS_INTEGRITY_KEY_ID = "integrity_previous";
+const INTEGRITY_KEY_MATERIAL = Object.freeze({
+  [CURRENT_INTEGRITY_KEY_ID]: "store-current-integrity-secret",
+  [PREVIOUS_INTEGRITY_KEY_ID]: "store-previous-integrity-secret",
+});
 const ARRAY_FIELDS = Object.freeze(["completed", "open_issues", "verification", "do_not_touch"]);
 
 const REAL_FILE_SYSTEM = Object.freeze({
@@ -114,6 +125,33 @@ function assertNoLeak(value) {
   assert.equal(serialized.includes("record.json"), false);
 }
 
+function integrityProvider(overrides = {}) {
+  const keyedDigest = overrides.keyed_digest ?? Object.freeze(({ key_id, purpose, bytes }) => {
+    const secret = INTEGRITY_KEY_MATERIAL[key_id];
+    if (secret === undefined || purpose !== PENDING_HANDOFF_INTEGRITY_PURPOSE) {
+      throw new Error(`${EXCEPTION_MARKER} ${PRIVATE_MARKER}`);
+    }
+    return createHmac("sha256", secret).update(Buffer.from(bytes)).digest("base64url");
+  });
+  const safeEqual = overrides.safe_equal ?? Object.freeze((left, right) => left === right);
+  return Object.freeze({
+    version: overrides.version ?? PENDING_HANDOFF_INTEGRITY_PROVIDER_VERSION,
+    current_key_id: overrides.current_key_id ?? CURRENT_INTEGRITY_KEY_ID,
+    verification_key_ids: overrides.verification_key_ids
+      ?? Object.freeze([CURRENT_INTEGRITY_KEY_ID, PREVIOUS_INTEGRITY_KEY_ID]),
+    keyed_digest: keyedDigest,
+    safe_equal: safeEqual,
+  });
+}
+
+function storeOptions(rootDirectory, options = {}) {
+  return {
+    rootDirectory,
+    integrityProvider: integrityProvider(),
+    ...options,
+  };
+}
+
 function assertNoRawIdentity(value, identity) {
   const serialized = JSON.stringify(value);
   assert.equal(serialized.includes(identity), false);
@@ -141,7 +179,7 @@ async function withStore(operation, options = {}) {
   const rootDirectory = await fileSystem.mkdtemp(join(tmpdir(), "phr-store-fixture-"));
   try {
     assert.equal(typeof createPendingHandoffStore, "function");
-    const result = createPendingHandoffStore({ rootDirectory, ...options });
+    const result = createPendingHandoffStore(storeOptions(rootDirectory, options));
     const store = assertFactorySuccess(result);
     return await operation({ rootDirectory, store });
   } finally {
@@ -178,10 +216,14 @@ await group("API contract", async () => {
     assert.deepEqual(PENDING_HANDOFF_STORE_FAILURES, [
       "store_root_invalid",
       "store_dependency_invalid",
+      "integrity_dependency_invalid",
       "unsafe_store_path",
       "unsafe_record_path",
       "record_key_invalid",
       "record_invalid",
+      "record_integrity_invalid",
+      "record_integrity_key_invalid",
+      "record_integrity_mismatch",
       "record_not_found",
       "record_malformed",
       "record_read_failed",
@@ -197,7 +239,7 @@ await group("API contract", async () => {
     await withStore(async ({ store }) => {
       assert.equal(Object.isFrozen(store), true);
       assertFrozenFailure(
-        createPendingHandoffStore({ rootDirectory: "/tmp/ignored", fileSystem: {} }),
+        createPendingHandoffStore(storeOptions("/tmp/ignored", { fileSystem: {} })),
         "store_dependency_invalid",
       );
     });
@@ -269,7 +311,7 @@ await group("identity-safe key and read binding regression", async () => {
       );
 
       const result = await store.read(requestedId);
-      assertFrozenFailure(result, "record_invalid");
+      assertFrozenFailure(result, "record_integrity_invalid");
       assertNoLeak(result);
       assertNoRawIdentity(result, requestedId);
       assertNoRawIdentity(result, storedId);
@@ -287,7 +329,9 @@ await group("roundtrip and isolation", async () => {
       assert.equal(written.record_key, key);
       assert.deepEqual(await fileSystem.readdir(rootDirectory), [key]);
       assert.deepEqual(await fileSystem.readdir(join(rootDirectory, key)), ["record.json"]);
-      assert.deepEqual(JSON.parse(await fileSystem.readFile(join(rootDirectory, key, "record.json"), "utf8")), input);
+      const stored = JSON.parse(await fileSystem.readFile(join(rootDirectory, key, "record.json"), "utf8"));
+      assert.deepEqual(Object.keys(stored), ["envelope_version", "integrity", "candidate"]);
+      assert.deepEqual(stored.candidate, input);
       const read = assertFrozenSuccess(await store.read(input.candidate_id));
       assert.deepEqual(read, input);
       assert.equal(Object.isFrozen(read), true);
@@ -350,7 +394,7 @@ await group("fail-closed record reads", async () => {
         JSON.stringify(candidate({ candidate_id: "invalid-record", status: "pending" })),
         "utf8",
       );
-      assertFrozenFailure(await store.read("invalid-record"), "record_invalid");
+      assertFrozenFailure(await store.read("invalid-record"), "record_integrity_invalid");
     });
   });
 
@@ -394,7 +438,7 @@ await group("fail-closed record reads", async () => {
     const linkedRoot = join(parent, "linked-root");
     try {
       await fileSystem.symlink(realRoot, linkedRoot, "dir");
-      const result = createPendingHandoffStore({ rootDirectory: linkedRoot });
+      const result = createPendingHandoffStore(storeOptions(linkedRoot));
       const store = assertFactorySuccess(result);
       assertFrozenFailure(await store.read("linked-root-record"), "unsafe_store_path");
       assertFrozenFailure(await store.write(candidate({ candidate_id: "linked-root-record" })), "unsafe_store_path");
@@ -414,7 +458,7 @@ await group("atomic replacement and cleanup", async () => {
       const failingFileSystem = customFileSystem({
         rename: async () => { throw new Error(`${EXCEPTION_MARKER} ${PRIVATE_MARKER}`); },
       });
-      const failingStore = assertFactorySuccess(createPendingHandoffStore({ rootDirectory, fileSystem: failingFileSystem }));
+      const failingStore = assertFactorySuccess(createPendingHandoffStore(storeOptions(rootDirectory, { fileSystem: failingFileSystem })));
       const failed = await failingStore.write(replacement);
       assertFrozenFailure(failed, "record_replace_failed");
       assert.deepEqual(assertFrozenSuccess(await store.read(original.candidate_id)), original);
@@ -431,10 +475,9 @@ await group("atomic replacement and cleanup", async () => {
           throw new Error(`${EXCEPTION_MARKER} ${PRIVATE_MARKER}`);
         },
       });
-      const store = assertFactorySuccess(createPendingHandoffStore({
-        rootDirectory,
+      const store = assertFactorySuccess(createPendingHandoffStore(storeOptions(rootDirectory, {
         fileSystem: partiallyFailingFileSystem,
-      }));
+      })));
       const failed = await store.write(candidate({ candidate_id: "temp-cleanup" }));
       assertFrozenFailure(failed, "record_write_failed");
       assert.deepEqual(await fileSystem.readdir(join(rootDirectory, keyFor("temp-cleanup"))), []);
@@ -458,7 +501,7 @@ await group("privacy and filesystem exception boundaries", async () => {
       const throwingFileSystem = customFileSystem({
         lstat: async () => { throw new Error(`/private/raw/path/${EXCEPTION_MARKER}`); },
       });
-      const store = assertFactorySuccess(createPendingHandoffStore({ rootDirectory, fileSystem: throwingFileSystem }));
+      const store = assertFactorySuccess(createPendingHandoffStore(storeOptions(rootDirectory, { fileSystem: throwingFileSystem })));
       const writeResult = await store.write(candidate({ candidate_id: PRIVATE_MARKER }));
       const readResult = await store.read(PRIVATE_MARKER);
       assertFrozenFailure(writeResult, "record_write_failed");
@@ -476,7 +519,7 @@ await group("static boundary and Makefile wiring", async () => {
     assert.match(STORE_SOURCE, /export function derivePendingHandoffRecordKey\(candidateId\)/);
     assert.match(STORE_SOURCE, /export function createPendingHandoffStore\(options\)/);
     assert.doesNotMatch(STORE_SOURCE, /\b(?:console|process|fetch)\b/);
-    assert.doesNotMatch(STORE_SOURCE, /HMAC|digest|integrity|state_revision|CAS|claim|lease|delivery|consume|session registry|sqlite/i);
+    assert.doesNotMatch(STORE_SOURCE, /HMAC|state_revision|CAS|claim|lease|delivery|consume|session registry|sqlite/i);
   });
 
   await test("store target is declared once and included last in V1.x", () => {
@@ -489,7 +532,7 @@ await group("static boundary and Makefile wiring", async () => {
     assert.notEqual(start, -1);
     const declaration = [lines[start]];
     while (declaration.at(-1).endsWith("\\")) declaration.push(lines[start + declaration.length]);
-    assert.equal(declaration.join(" ").replace(/^test-v1x-fixtures:\s*/, "").replaceAll("\\", " ").trim().split(/\s+/).at(-1), "test-pending-handoff-store-fixtures");
+    assert.equal(declaration.join(" ").replace(/^test-v1x-fixtures:\s*/, "").replaceAll("\\", " ").trim().split(/\s+/).at(-1), "test-pending-handoff-integrity-fixtures");
   });
 });
 
