@@ -112,9 +112,11 @@ function assertFrozenSuccess(result) {
 
 function assertFactorySuccess(result) {
   const store = assertFrozenSuccess(result);
-  assert.deepEqual(Object.keys(store).sort(), ["read", "write"]);
+  assert.deepEqual(Object.keys(store).sort(), ["compareAndSet", "read", "readSnapshot", "write"]);
   assert.equal(typeof store.read, "function");
   assert.equal(typeof store.write, "function");
+  assert.equal(typeof store.readSnapshot, "function");
+  assert.equal(typeof store.compareAndSet, "function");
   return store;
 }
 
@@ -221,9 +223,16 @@ await group("API contract", async () => {
       "unsafe_record_path",
       "record_key_invalid",
       "record_invalid",
+      "record_exists",
       "record_integrity_invalid",
       "record_integrity_key_invalid",
       "record_integrity_mismatch",
+      "revision_invalid",
+      "revision_conflict",
+      "revision_exhausted",
+      "cas_read_failed",
+      "cas_publish_failed",
+      "cas_arbitration_failed",
       "record_not_found",
       "record_malformed",
       "record_read_failed",
@@ -234,10 +243,11 @@ await group("API contract", async () => {
     assert.throws(() => PENDING_HANDOFF_STORE_FAILURES.push("unexpected"));
   });
 
-  await test("requires an explicit store root and exposes only read/write", async () => {
+  await test("requires an explicit store root and exposes read/write plus revision methods", async () => {
     assertFrozenFailure(createPendingHandoffStore({}), "store_root_invalid");
     await withStore(async ({ store }) => {
       assert.equal(Object.isFrozen(store), true);
+      assert.deepEqual(Object.keys(store).sort(), ["compareAndSet", "read", "readSnapshot", "write"]);
       assertFrozenFailure(
         createPendingHandoffStore(storeOptions("/tmp/ignored", { fileSystem: {} })),
         "store_dependency_invalid",
@@ -330,7 +340,8 @@ await group("roundtrip and isolation", async () => {
       assert.deepEqual(await fileSystem.readdir(rootDirectory), [key]);
       assert.deepEqual(await fileSystem.readdir(join(rootDirectory, key)), ["record.json"]);
       const stored = JSON.parse(await fileSystem.readFile(join(rootDirectory, key, "record.json"), "utf8"));
-      assert.deepEqual(Object.keys(stored), ["envelope_version", "integrity", "candidate"]);
+      assert.deepEqual(Object.keys(stored), ["envelope_version", "state_revision", "integrity", "candidate"]);
+      assert.equal(stored.state_revision, 0);
       assert.deepEqual(stored.candidate, input);
       const read = assertFrozenSuccess(await store.read(input.candidate_id));
       assert.deepEqual(read, input);
@@ -459,8 +470,12 @@ await group("atomic replacement and cleanup", async () => {
         rename: async () => { throw new Error(`${EXCEPTION_MARKER} ${PRIVATE_MARKER}`); },
       });
       const failingStore = assertFactorySuccess(createPendingHandoffStore(storeOptions(rootDirectory, { fileSystem: failingFileSystem })));
-      const failed = await failingStore.write(replacement);
-      assertFrozenFailure(failed, "record_replace_failed");
+      const failed = await failingStore.compareAndSet({
+        candidate_id: original.candidate_id,
+        expected_revision: 0,
+        next_state: replacement,
+      });
+      assertFrozenFailure(failed, "cas_publish_failed");
       assert.deepEqual(assertFrozenSuccess(await store.read(original.candidate_id)), original);
       assert.deepEqual(await fileSystem.readdir(join(rootDirectory, keyFor(original.candidate_id))), ["record.json"]);
       assertNoLeak(failed);
@@ -518,8 +533,9 @@ await group("static boundary and Makefile wiring", async () => {
     assert.match(STORE_SOURCE, /export const PENDING_HANDOFF_STORE_FAILURES/);
     assert.match(STORE_SOURCE, /export function derivePendingHandoffRecordKey\(candidateId\)/);
     assert.match(STORE_SOURCE, /export function createPendingHandoffStore\(options\)/);
-    assert.doesNotMatch(STORE_SOURCE, /\b(?:console|process|fetch)\b/);
-    assert.doesNotMatch(STORE_SOURCE, /HMAC|state_revision|CAS|claim|lease|delivery|consume|session registry|sqlite/i);
+    assert.doesNotMatch(STORE_SOURCE, /\b(?:console|fetch)\b/);
+    assert.match(STORE_SOURCE, /compareAndSet|readSnapshot|state_revision/);
+    assert.doesNotMatch(STORE_SOURCE, /\bclaim\b|\blease\b|delivery|consume|session registry|sqlite/i);
   });
 
   await test("store target is declared once and included last in V1.x", () => {
@@ -532,7 +548,7 @@ await group("static boundary and Makefile wiring", async () => {
     assert.notEqual(start, -1);
     const declaration = [lines[start]];
     while (declaration.at(-1).endsWith("\\")) declaration.push(lines[start + declaration.length]);
-    assert.equal(declaration.join(" ").replace(/^test-v1x-fixtures:\s*/, "").replaceAll("\\", " ").trim().split(/\s+/).at(-1), "test-pending-handoff-integrity-fixtures");
+    assert.equal(declaration.join(" ").replace(/^test-v1x-fixtures:\s*/, "").replaceAll("\\", " ").trim().split(/\s+/).at(-1), "test-pending-handoff-revision-cas-fixtures");
   });
 });
 

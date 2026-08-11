@@ -10,6 +10,12 @@ const PROVIDER_KEYS = Object.freeze([
 const DEPENDENCY_KEYS = Object.freeze(["current", "verification", "safe_equal"]);
 const ENTRY_KEYS = Object.freeze(["key_id", "keyed_digest"]);
 const ENVELOPE_KEYS = Object.freeze(["envelope_version", "integrity", "candidate"]);
+const REVISION_ENVELOPE_KEYS = Object.freeze([
+  "envelope_version",
+  "state_revision",
+  "integrity",
+  "candidate",
+]);
 const INTEGRITY_KEYS = Object.freeze(["algorithm", "key_id", "digest"]);
 const CANDIDATE_FIELDS = Object.freeze([
   "candidate_id",
@@ -32,6 +38,7 @@ const CANDIDATE_FIELDS = Object.freeze([
 ]);
 const PROVIDER_VERSION = "phr-integrity-provider-v1";
 const ENVELOPE_VERSION = "phr-integrity-envelope-v1";
+const REVISION_ENVELOPE_VERSION = "phr-integrity-envelope-v2";
 const PURPOSE = "pending-handoff-integrity";
 const ALGORITHM = "hmac-sha256-base64url-v1";
 const KEY_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
@@ -59,6 +66,11 @@ export const PENDING_HANDOFF_INTEGRITY_FAILURES = Object.freeze([
 ]);
 export const PENDING_HANDOFF_INTEGRITY_PROVIDER_VERSION = PROVIDER_VERSION;
 export const PENDING_HANDOFF_INTEGRITY_PURPOSE = PURPOSE;
+export const PENDING_HANDOFF_REVISION_ENVELOPE_VERSION = REVISION_ENVELOPE_VERSION;
+export const PENDING_HANDOFF_REVISION_INTEGRITY_FAILURES = Object.freeze([
+  ...PENDING_HANDOFF_INTEGRITY_FAILURES,
+  "integrity_revision_invalid",
+]);
 
 export function createPendingHandoffIntegrityDependencies(provider) {
   try {
@@ -143,6 +155,69 @@ export function verifyPendingHandoffIntegrityEnvelope(envelope, dependencies) {
   return success(prepared.value.candidate);
 }
 
+export function createPendingHandoffRevisionIntegrityEnvelope(
+  candidate,
+  stateRevision,
+  dependencies,
+) {
+  const dependencyStatus = inspectDependencies(dependencies);
+  if (!dependencyStatus.ok) return failure(dependencyStatus.reason);
+  if (!validRevision(stateRevision)) return failure("integrity_revision_invalid");
+
+  const prepared = prepareRevisionState(candidate, stateRevision);
+  if (!prepared.ok) return failure(prepared.reason);
+
+  const digest = callDigest(dependencies.current, prepared.value.bytes);
+  if (!digest.ok) return failure(digest.reason);
+  return success(Object.freeze({
+    envelope_version: REVISION_ENVELOPE_VERSION,
+    state_revision: stateRevision,
+    integrity: Object.freeze({
+      algorithm: ALGORITHM,
+      key_id: dependencies.current.key_id,
+      digest: digest.value,
+    }),
+    candidate: prepared.value.candidate,
+  }));
+}
+
+export function verifyPendingHandoffRevisionIntegrityEnvelope(envelope, dependencies) {
+  const dependencyStatus = inspectDependencies(dependencies);
+  if (!dependencyStatus.ok) return failure(dependencyStatus.reason);
+
+  const inspected = inspectExactDataObject(envelope, REVISION_ENVELOPE_KEYS);
+  if (!inspected.ok) return failure("integrity_envelope_invalid");
+  if (inspected.values.envelope_version !== REVISION_ENVELOPE_VERSION) {
+    return failure("integrity_envelope_version_unsupported");
+  }
+  if (!validRevision(inspected.values.state_revision)) {
+    return failure("integrity_revision_invalid");
+  }
+
+  const integrity = inspectExactDataObject(inspected.values.integrity, INTEGRITY_KEYS);
+  if (!integrity.ok
+    || integrity.values.algorithm !== ALGORITHM
+    || !validKeyId(integrity.values.key_id)
+    || !DIGEST_PATTERN.test(integrity.values.digest)) {
+    return failure("integrity_envelope_invalid");
+  }
+
+  const entry = dependencies.verification.find(item => item.key_id === integrity.values.key_id);
+  if (entry === undefined) return failure("integrity_key_not_found");
+
+  const prepared = prepareRevisionState(inspected.values.candidate, inspected.values.state_revision);
+  if (!prepared.ok) return failure(prepared.reason);
+  const digest = callDigest(entry, prepared.value.bytes);
+  if (!digest.ok) return failure(digest.reason);
+  const comparison = callSafeEqual(dependencies.safe_equal, integrity.values.digest, digest.value);
+  if (!comparison.ok) return failure(comparison.reason);
+  if (!comparison.value) return failure("integrity_mismatch");
+  return success(Object.freeze({
+    candidate: prepared.value.candidate,
+    state_revision: inspected.values.state_revision,
+  }));
+}
+
 function prepareCandidate(candidate) {
   let validation;
   try {
@@ -164,6 +239,31 @@ function prepareCandidate(candidate) {
   } catch {
     return failure("integrity_candidate_invalid");
   }
+}
+
+function prepareRevisionState(candidate, stateRevision) {
+  const prepared = prepareCandidate(candidate);
+  if (!prepared.ok) return prepared;
+
+  try {
+    const orderedCandidate = {};
+    for (const field of CANDIDATE_FIELDS) orderedCandidate[field] = prepared.value.candidate[field];
+    const serialized = JSON.stringify({
+      state_revision: stateRevision,
+      candidate: orderedCandidate,
+    });
+    if (typeof serialized !== "string") return failure("integrity_candidate_invalid");
+    return success({
+      candidate: prepared.value.candidate,
+      bytes: new TextEncoder().encode(serialized),
+    });
+  } catch {
+    return failure("integrity_candidate_invalid");
+  }
+}
+
+function validRevision(value) {
+  return Number.isSafeInteger(value) && value >= 0;
 }
 
 function inspectDependencies(value) {

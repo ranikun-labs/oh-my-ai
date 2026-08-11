@@ -26,6 +26,7 @@ const {
   PENDING_HANDOFF_INTEGRITY_FAILURES,
   PENDING_HANDOFF_INTEGRITY_PROVIDER_VERSION,
   PENDING_HANDOFF_INTEGRITY_PURPOSE,
+  PENDING_HANDOFF_REVISION_ENVELOPE_VERSION,
   verifyPendingHandoffIntegrityEnvelope,
 } = integrityModule ?? {};
 
@@ -401,10 +402,11 @@ await group("Store integration and valid envelope", async () => {
       assert.deepEqual(assertSuccess(await store.read(input.candidate_id)), input);
 
       const stored = await readEnvelope(rootDirectory, input.candidate_id);
-      assert.deepEqual(Object.keys(stored), ["envelope_version", "integrity", "candidate"]);
+      assert.deepEqual(Object.keys(stored), ["envelope_version", "state_revision", "integrity", "candidate"]);
+      assert.equal(stored.envelope_version, PENDING_HANDOFF_REVISION_ENVELOPE_VERSION);
+      assert.equal(stored.state_revision, 0);
       assert.deepEqual(Object.keys(stored.integrity), ["algorithm", "key_id", "digest"]);
       assert.deepEqual(Object.keys(stored.candidate), CANDIDATE_FIELDS);
-      assert.equal(Object.hasOwn(stored, "state_revision"), false);
       assert.equal(Object.hasOwn(stored, "cas"), false);
     });
   });
@@ -823,12 +825,13 @@ await group("Static scope and wiring", async () => {
   await test("keeps Integrity separate from Identity and out of future lifecycle scope", () => {
     assert.match(STORE_SOURCE, /pending-handoff-integrity\.mjs/);
     assert.match(INTEGRITY_SOURCE, /hmac-sha256-base64url-v1/);
-    assert.doesNotMatch(INTEGRITY_SOURCE, /state_revision|CAS|compare-and-set|claim|lease|delivery|consumption|session registry|sqlite/i);
-    assert.doesNotMatch(STORE_SOURCE, /state_revision|CAS|compare-and-set|claim|lease|delivery|consumption|session registry|sqlite/i);
+    assert.match(INTEGRITY_SOURCE, /phr-integrity-envelope-v2/);
+    assert.doesNotMatch(INTEGRITY_SOURCE, /\bclaim\b|\blease\b|delivery|consumption|session registry|sqlite/i);
+    assert.doesNotMatch(STORE_SOURCE, /\bclaim\b|\blease\b|delivery|consumption|session registry|sqlite/i);
     assert.doesNotMatch(INTEGRITY_SOURCE, /console|process\.stdout|process\.stderr|fetch/);
   });
 
-  await test("wires one Integrity fixture target after Store in V1.x", () => {
+  await test("wires Integrity before the Revision/CAS fixture in V1.x", () => {
     const makefile = readFileSync(fileURLToPath(new URL("../Makefile", import.meta.url)), "utf8");
     assert.equal((makefile.match(/^test-pending-handoff-integrity-fixtures:/gm) ?? []).length, 1);
     assert.match(
@@ -841,8 +844,9 @@ await group("Static scope and wiring", async () => {
     const declaration = [lines[start]];
     while (declaration.at(-1).endsWith("\\")) declaration.push(lines[start + declaration.length]);
     const targets = declaration.join(" ").replace(/^test-v1x-fixtures:\s*/, "").replaceAll("\\", " ").trim().split(/\s+/);
-    assert.equal(targets.at(-1), "test-pending-handoff-integrity-fixtures");
+    assert.equal(targets.at(-1), "test-pending-handoff-revision-cas-fixtures");
     assert.ok(targets.indexOf("test-pending-handoff-store-fixtures") < targets.indexOf("test-pending-handoff-integrity-fixtures"));
+    assert.ok(targets.indexOf("test-pending-handoff-integrity-fixtures") < targets.indexOf("test-pending-handoff-revision-cas-fixtures"));
   });
 });
 
