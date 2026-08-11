@@ -1,32 +1,33 @@
 ---
 name: jira-work
-description: Use only when a user explicitly invokes $jira-work with an existing Jira Issue Key and Ticket Contract, or explicitly asks to validate that Contract before starting the named work.
+description: Use only when a user explicitly invokes $jira-work for an existing Jira issue and needs the high-risk repository execution-readiness gate before implementation or resume.
 metadata:
   source: born-here
-  summary: 기존 Jira Ticket Contract를 소비해 실행 전 Gate와 Preview만 제공하는 optional workflow
+  summary: Main Contract와 Repository Reality를 검증하는 high-risk execution readiness gate
 ---
 
-# Jira Work — Pure Ticket Gate
+# Jira Work — Execution Readiness Gate
 
 ## Purpose and invocation boundary
 
-`jira-work` consumes an already-existing Ticket Contract. It does not author a
-Ticket, replace an accepted decision, or invoke `work-start`.
+`jira-work` is the risk-based gate between a Main-approved work contract and a
+Worker. It validates execution readiness; it does not author a Ticket, replace
+Main as Planning Owner, or become an implementation orchestrator.
 
-This is an **explicit-only** workflow. The user may invoke `$jira-work <ISSUE-KEY>`,
-or make an unambiguous named start request such as `RPL-42 작업
-시작해`, `RPL-42 착수해`, or `RPL-42 기준으로 작업 계획 검증해`. General
-questions such as `RPL-42가 무슨 작업이야?`, `RPL-42를 지금 하는 게 좋을까?`,
-`RPL-42 Branch 이름 추천해줘`, and `jira-work가 뭐야?` remain read-only or
-suggestion-only; they do not start this workflow.
+This is an **explicit-only** workflow. Require an explicit
+`$jira-work <ISSUE-KEY>` invocation and the same non-empty Issue Key in the
+selected source contract. General questions, branch-name requests, and prose
+such as “start this work” do not invoke the gate. `allow_implicit_invocation`
+remains false.
 
-This PR supplies a Pure Contract and preview only. It performs no Jira or
-Confluence read, Git preflight, branch operation, implementation, verification
-execution, commit, push, Draft PR, Jira comment, or Jira transition.
+The Worker owns implementation, verification, commit, ordinary push, and Draft
+PR after a ready result and the active Execution Policy permits those actions.
+`jira-work` never merges, releases, deploys, runs a migration, changes a secret,
+or expands the approved scope.
 
 ## Best-effort telemetry
 
-At skill start, attempt only the shared, fail-open event. Do not introduce a
+At skill start, attempt only the shared fail-open event. Do not introduce a
 step-level schema.
 
 ```bash
@@ -39,35 +40,76 @@ if [ -x "$HOME/.local/bin/harness-event" ]; then
 fi
 ```
 
-The missing binary or a telemetry failure never blocks the Ticket Gate. Issue Key, Summary, Ticket content를 Telemetry에 기록하지 않는다.
+The missing binary or a telemetry failure never blocks the gate.
+Issue Key, Summary, Ticket content를 Telemetry에 기록하지 않는다.
 
-## Ticket Contract consumption
+## Risk lane
 
-The Contract must have actual, non-empty, non-whitespace values for every
-field below. `jira-work` consumes their meaning; it does not depend on a
-`jira-ticket` runtime or a particular Jira field layout.
+Main classifies the work before invocation.
 
-1. Summary
-2. Context
-3. Goal
-4. Source of Truth
-5. In Scope
-6. Out of Scope
-7. Acceptance Criteria
-8. Repository
-9. Base Branch
-10. Expected Branch Name
-11. Dependencies
-12. Verification
-13. Do Not Touch
-14. Definition of Done
+| Lane | Examples | Route |
+|---|---|---|
+| Fast Lane | General UI, ordinary Feature, Small Bug, simple documentation | Web Main → `git-work-preflight` → Worker. `jira-work` is optional. |
+| Deep Lane | Auth/Security, Secret/Privacy, DB or Schema Migration, Backfill, CAS/Lock/Concurrency, Shared Platform, Cross-repository Contract, Destructive Git, Release/Deploy, Repository Ownership | Web Main → `jira-work` → Worker. The gate is mandatory. |
 
-The following blocking sentinels are Contract Validation Failures: `Decision
-Required`, `Repository Required`, `Base Branch Required`, and `Not Verifiable`.
-Unresolved or unknown placeholders, field contradictions, a Source of Truth,
-Repository, Base Branch, In Scope, Out of Scope, Acceptance Criteria, or
-Verification conflict, multiple repositories, and an incomplete blocking
-dependency also fail the gate.
+An explicit Fast Lane invocation still runs the full gate. Risk classification
+does not weaken any claim once `jira-work` is invoked.
+
+## Source modes
+
+Choose exactly one mode. Never combine modes to fill missing claims.
+
+### CONNECTOR_VERIFIED
+
+Use only when the current session has actual Jira Connector evidence for the
+named Issue. Read and validate live Jira state and the Main Contract against
+the higher-priority sources below. A remembered, pasted, or prior-session Jira
+result is not current Connector evidence. Missing current evidence makes
+`Jira Live State: NOT_VERIFIABLE` and stops the gate.
+
+### MAIN_HANDOFF
+
+Use only a structured `jira-work-main-handoff/v1` envelope containing actual,
+non-empty values for every field:
+
+1. Issue Key
+2. Contract Schema/Version (`jira-work-main-handoff/v1`)
+3. Repository
+4. Base Branch
+5. Expected Base SHA
+6. Goal
+7. In Scope
+8. Out of Scope
+9. Do Not Touch
+10. Acceptance Criteria
+11. Verification
+12. Risk Tier
+13. Jira Freshness Requirement (`OPTIONAL` or `REQUIRED`)
+14. Main Approval Marker (`APPROVED_BY_MAIN`)
+
+`APPROVED_BY_MAIN` is a declarative provenance marker: it states the asserted
+source of the handoff. It is not identity authentication, cryptographic proof,
+or a digital signature, and it does not establish integrity, identity, or trust
+by itself. Schema validation checks structural completeness and consistency;
+it does not authenticate who supplied the envelope. Arbitrary user prose, the
+marker without the complete schema, or a mismatched Issue Key is blocked. A
+separate digest, signature system, and durable machine-verifiable evidence
+handoff are out of scope.
+
+## Contract and source validation
+
+For `CONNECTOR_VERIFIED`, normalize and validate the existing Ticket Contract:
+Summary, Context, Goal, Source of Truth, In Scope, Out of Scope, Acceptance
+Criteria, Repository, Base Branch, Expected Branch Name, Dependencies,
+Verification, Do Not Touch, and Definition of Done. For `MAIN_HANDOFF`, validate
+the v1 envelope above; do not require Jira-only fields that are absent from that
+schema.
+
+Every required value must be non-empty and non-whitespace. `Decision Required`,
+`Repository Required`, `Base Branch Required`, and `Not Verifiable` are blocking
+sentinels. Unknown placeholders, contradictions, multiple repositories,
+incomplete blocking dependencies, and conflicts among Repository, Base, scope,
+Acceptance Criteria, Verification, or Do Not Touch block the gate.
 
 ## Source of Truth Gate
 
@@ -81,46 +123,75 @@ Validate sources in this order:
 6. Current Conversation
 
 A Jira Ticket is an execution contract, not a canonical Product or
-Architecture Decision. A Canonical-versus-Jira conflict is `CONFLICTED` and
-stops before any Branch plan. An unread source is `Not Verifiable`; a URL
-alone is not verified content. Handoff Candidate and Current Conversation are
-not durable facts and do not amend an earlier decision.
+Architecture Decision. A higher-priority source conflict is `CONFLICTED`.
+Unread required material is `NOT_VERIFIABLE`; a URL alone is not verified
+content. `MAIN_HANDOFF` is approved planning provenance, not permission to
+override a higher-priority accepted decision.
 
-Because this PR has no Jira Ticket Connector Read or Confluence connector, an
-unsupplied Ticket body is reported as `Ticket Source Not Verifiable`, never as
-READY.
+## Jira freshness claim
 
-## Ticket Gate result
+Evaluate Jira freshness independently from Repository claims.
 
-| Result | Pure Contract conclusion |
+| Mode / requirement | Jira Live State | Repository gate |
+|---|---|---|
+| `CONNECTOR_VERIFIED` with current evidence | `VERIFIED` or the observed mismatch | Continue only when verified and consistent. |
+| `MAIN_HANDOFF` + `OPTIONAL`, without Connector | `NOT_PERFORMED` | Continue; do not downgrade verifiable Repository claims. |
+| `MAIN_HANDOFF` + `REQUIRED`, without Connector | `NOT_VERIFIABLE` | Stop the execution gate. |
+
+`NOT_PERFORMED` is not `VERIFIED`. It is allowed only because the approved v1
+contract explicitly made Jira freshness optional for that invocation.
+
+## Required Git reality consumption
+
+Run [scripts/git-work-preflight.sh](../../scripts/git-work-preflight.sh) in the
+current `jira-work` invocation with the local Repository, Canonical Repository,
+Push Remote, Base Branch, Expected Base SHA, expected Issue Branch, Issue Key,
+Execution Policy, `--consumer jira-work`, repository-rule evidence, and the
+exact Issue-to-Branch association marker.
+
+The preflight must be actually executed. A pasted report, a prior run, or
+supplied prose is not consumption. `jira-work` may return ready only when the
+current process has `Process Exit Code: 0` and `Preflight Result` is exactly
+`READY_NEW_WORK` or `READY_RESUME`. It must consume the fields rather than
+reimplement Git safety rules.
+
+Map all other preflight results fail-closed:
+
+| Preflight result | Jira-work conclusion |
 |---|---|
-| READY | Contract, sources, dependencies, one Repository, Base Branch, and supplied Existing Work evidence permit a future plan. This is not branch-creation approval. |
-| BLOCKED | Sentinel, missing value, contradiction, multiple Repository, or blocking dependency must be resolved. |
-| NOT_VERIFIABLE | Ticket, source, Repository rule, Base Branch rule, or supplied evidence cannot actually be read. |
-| ALREADY_IN_PROGRESS | Supplied evidence confirms the same Issue Branch or Draft PR; plan a resume, never a duplicate. |
-| ALREADY_MERGED | Supplied evidence confirms merge; implementation is forbidden and only Jira-state alignment may be reported later. |
-| CONFLICTED | Canonical/Jira mismatch, Local and Remote Divergence, or another Issue Key/PR branch collision needs human judgment. |
+| `RECOVERY_REQUIRED` | `JIRA_WORK_BLOCKED`; report recovery evidence. |
+| `BLOCKED_DIRTY_TREE`, `BLOCKED_BASE_MISMATCH`, `BLOCKED_DIVERGENCE` | `JIRA_WORK_BLOCKED`; stop. |
+| `CONFLICTED`, `NOT_VERIFIABLE` | `JIRA_WORK_BLOCKED`; stop. |
+| `ALREADY_MERGED` | `JIRA_WORK_BLOCKED`; implementation forbidden, Jira reconciliation only. |
+| Not executed or non-zero exit | `JIRA_WORK_BLOCKED`; stop. |
 
-A failed gate reports every blocking item, forbids an executable Git Mutation
-plan and Jira state-change plan, and stops. It never guesses Existing Work that
-has not been supplied as verified evidence.
+Repository, Base Branch/SHA, Issue association, Working Tree, local/Push Remote
+branch relation, canonical PR state, other-Issue collision, divergence, and
+already-merged state remain authoritative outputs of `git-work-preflight`.
 
-## Existing Work decision model
+## Gate result and lean output
 
-Use [existing-work-status.md](templates/existing-work-status.md) for the A–H
-model. This PR does not query Local, Remote, or PR state; it maps only supplied
-evidence to a future plan. A permits a new Branch plan; B and E permit a resume
-plan; C and D require recovery or alignment planning without checkout or push;
-F and H hard-stop; and G forbids implementation.
+Return `JIRA_WORK_READY` only when the source contract, source priority, Jira
+freshness claim, and current Git preflight all pass. The next step is
+`PROCEED_TO_IMPLEMENTATION`; it is not proof that implementation occurred.
 
-## Branch candidate
+For a normal ready result use only the lean fields in
+[ticket-gate-report.md](templates/ticket-gate-report.md). For any mismatch,
+return `JIRA_WORK_BLOCKED` and include detailed claim-level Evidence, the exact
+blocking item, and the single safe next step. Do not bury a mismatch in a long
+successful-looking report.
 
-Choose only a candidate, never create it:
+Legacy claim-level conclusions such as READY, BLOCKED, NOT_VERIFIABLE,
+ALREADY_IN_PROGRESS, ALREADY_MERGED, and CONFLICTED may describe Contract or
+Existing Work evidence, but they are not the final execution result.
 
-1. Verified Repository-enforced naming, protection, and Base Branch rules.
-2. Verified Ticket Expected Branch Name that conforms to those rules.
-3. Verified Repository general convention.
-4. Common fallback:
+## Existing Work and branch candidate
+
+Consume the A–H conclusion from `git-work-preflight`; do not reconstruct it
+from prose. See [existing-work-status.md](templates/existing-work-status.md).
+
+When a branch candidate is needed, Repository-enforced rules outrank a Ticket
+name and general convention. Common fallbacks remain:
 
 | Issue Type | Candidate |
 |---|---|
@@ -131,29 +202,23 @@ Choose only a candidate, never create it:
 | Tech Debt | `refactor/<ISSUE-KEY>-<slug>` |
 | Research | `research/<ISSUE-KEY>-<slug>` |
 
-Preserve Issue Key case. A slug is ASCII lowercase; do not invent a Jira Key or
-romanize Korean. With no stable slug use `<prefix>/<ISSUE-KEY>`. An Unknown Custom Issue Type is `Decision Required`. An unverified Repository-enforced
-rule is `NOT_VERIFIABLE`; a violating Expected Branch Name never receives an
-invented fallback.
+Preserve Issue Key case. A slug is ASCII lowercase. `Unknown Custom Issue Type`
+is `Decision Required`. Never invent a replacement for a verified naming
+conflict.
 
-## Execution Policy preview
+## Execution Policy and safety boundary
 
-| Policy | Pure Contract output |
-|---|---|
-| suggest-only | Ticket Gate result plus execution plan Preview; Mutation 0. |
-| patch-with-approval | After a passing Gate, preview a future mutation plan and state that separate approval is required; Mutation 0. |
-| auto-apply | State that the Local Git Lifecycle runtime is not implemented in this PR; Mutation 0. |
+`suggest-only` returns the gate evidence and plan only.
+`patch-with-approval` requires the separate approval defined by the active
+execution policy. `auto-apply` still cannot cross the explicit out-of-scope
+boundaries below.
 
 No mode in this PR can remove a Draft state, Merge, Release, Tag, deploy to
-production, run a migration, or change a secret.
+production, run a migration, or change a secret. `jira-work` does not create a
+Branch, implement code, execute Ticket Verification, commit, push, create a
+Draft PR, comment on Jira, or transition Jira; those are Worker actions after
+readiness and policy gates. Mutation 0 is the gate's own result.
 
-## Output and privacy
-
-Use [ticket-gate-report.md](templates/ticket-gate-report.md). Default Artifact
-creation is prohibited. Never persist a Jira Description, Confluence body, Raw Transcript, Raw Tool Output, Credential, Token, Secret, Cloud ID, or Account ID. A preview uses only the minimum Contract Summary and Source Reference; the Issue Key remains out of telemetry.
-
-## Unavailable runtime capabilities
-
-This PR has no Jira Ticket Connector Read, Git Preflight, Branch Creation,
-Implementation, Verification Execution, Commit and Push, Draft PR, or Jira
-Comment and Transition runtime. Do not claim any of those operations succeeded.
+Never persist a Jira Description, Confluence body, Raw Transcript, Raw Tool Output,
+Credential, Token, Secret, Cloud ID, or Account ID. Default Artifact creation is
+prohibited.

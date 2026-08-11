@@ -1,5 +1,5 @@
 {
-  "contract": "jira-work-pure-contract-gate-v1",
+  "contract": "jira-work-execution-readiness-gate-v1",
   "network": false,
   "git_mutation": false,
   "jira_write": false,
@@ -29,6 +29,20 @@
     { "id": "patch-with-approval", "gate_result": "READY", "blocking": false, "allowed_next_step": "PLAN_ONLY", "mutation": 0, "approval_required": true },
     { "id": "auto-apply-without-runtime", "gate_result": "READY", "blocking": false, "allowed_next_step": "PLAN_ONLY", "mutation": 0 },
     { "id": "telemetry-binary-missing", "gate_result": "READY", "blocking": false, "allowed_next_step": "PLAN_ONLY", "mutation": 0 },
-    { "id": "telemetry-execution-failure", "gate_result": "READY", "blocking": false, "allowed_next_step": "PLAN_ONLY", "mutation": 0 }
+    { "id": "telemetry-execution-failure", "gate_result": "READY", "blocking": false, "allowed_next_step": "PLAN_ONLY", "mutation": 0 },
+    { "id": "connector-verified-ready-new", "source_mode": "CONNECTOR_VERIFIED", "jira_live_state": "VERIFIED", "git_preflight_result": "READY_NEW_WORK", "gate_result": "JIRA_WORK_READY", "blocking": false, "allowed_next_step": "PROCEED_TO_IMPLEMENTATION", "mutation": 0 },
+    { "id": "main-handoff-ready-resume", "source_mode": "MAIN_HANDOFF", "jira_live_state": "NOT_PERFORMED", "git_preflight_result": "READY_RESUME", "gate_result": "JIRA_WORK_READY", "blocking": false, "allowed_next_step": "PROCEED_TO_IMPLEMENTATION", "mutation": 0 },
+    { "id": "rpl-49-equivalent-main-handoff", "source_mode": "MAIN_HANDOFF", "jira_live_state": "NOT_PERFORMED", "git_preflight_result": "READY_RESUME", "gate_result": "JIRA_WORK_READY", "blocking": false, "allowed_next_step": "PROCEED_TO_IMPLEMENTATION", "mutation": 0 },
+    { "id": "main-handoff-required-freshness-no-connector", "source_mode": "MAIN_HANDOFF", "jira_live_state": "NOT_VERIFIABLE", "git_preflight_result": "READY_RESUME", "gate_result": "JIRA_WORK_BLOCKED", "blocking": true, "allowed_next_step": "STOP", "mutation": 0 },
+    { "id": "connector-mode-without-current-evidence", "source_mode": "CONNECTOR_VERIFIED", "jira_live_state": "NOT_VERIFIABLE", "git_preflight_result": "READY_RESUME", "gate_result": "JIRA_WORK_BLOCKED", "blocking": true, "allowed_next_step": "STOP", "mutation": 0 },
+    { "id": "unstructured-user-prose", "source_mode": "MAIN_HANDOFF", "jira_live_state": "NOT_PERFORMED", "git_preflight_result": "NOT_EXECUTED", "gate_result": "JIRA_WORK_BLOCKED", "blocking": true, "allowed_next_step": "STOP", "mutation": 0 },
+    { "id": "wrong-handoff-schema", "source_mode": "MAIN_HANDOFF", "jira_live_state": "NOT_PERFORMED", "git_preflight_result": "NOT_EXECUTED", "gate_result": "JIRA_WORK_BLOCKED", "blocking": true, "allowed_next_step": "STOP", "mutation": 0 },
+    { "id": "missing-main-approval-marker", "source_mode": "MAIN_HANDOFF", "jira_live_state": "NOT_PERFORMED", "git_preflight_result": "NOT_EXECUTED", "gate_result": "JIRA_WORK_BLOCKED", "blocking": true, "allowed_next_step": "STOP", "mutation": 0 },
+    { "id": "repository-claim-mismatch", "source_mode": "MAIN_HANDOFF", "jira_live_state": "NOT_PERFORMED", "git_preflight_result": "CONFLICTED", "gate_result": "JIRA_WORK_BLOCKED", "blocking": true, "allowed_next_step": "STOP", "mutation": 0 },
+    { "id": "base-sha-claim-mismatch", "source_mode": "MAIN_HANDOFF", "jira_live_state": "NOT_PERFORMED", "git_preflight_result": "BLOCKED_BASE_MISMATCH", "gate_result": "JIRA_WORK_BLOCKED", "blocking": true, "allowed_next_step": "STOP", "mutation": 0 },
+    { "id": "git-preflight-not-executed", "source_mode": "MAIN_HANDOFF", "jira_live_state": "NOT_PERFORMED", "git_preflight_result": "NOT_EXECUTED", "gate_result": "JIRA_WORK_BLOCKED", "blocking": true, "allowed_next_step": "STOP", "mutation": 0 },
+    { "id": "git-preflight-not-verifiable", "source_mode": "MAIN_HANDOFF", "jira_live_state": "NOT_PERFORMED", "git_preflight_result": "NOT_VERIFIABLE", "gate_result": "JIRA_WORK_BLOCKED", "blocking": true, "allowed_next_step": "STOP", "mutation": 0 },
+    { "id": "fast-lane-feature", "risk_tier": "FAST_LANE", "jira_work_requirement": "OPTIONAL", "gate_result": "NOT_INVOKED", "blocking": false, "allowed_next_step": "GIT_PREFLIGHT_THEN_WORKER", "mutation": 0 },
+    { "id": "deep-lane-security", "risk_tier": "DEEP_LANE", "jira_work_requirement": "MANDATORY", "gate_result": "JIRA_WORK_BLOCKED", "blocking": true, "allowed_next_step": "RUN_JIRA_WORK_GATE", "mutation": 0 }
   ]
 }

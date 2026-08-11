@@ -1,7 +1,7 @@
 interface:
-  display_name: "Jira Work Gate"
-  short_description: "Validate an existing Ticket Contract before planning work"
-  default_prompt: "Use $jira-work <ISSUE-KEY> to validate an existing Ticket Contract and preview only the allowed next step."
+  display_name: "Jira Work Readiness Gate"
+  short_description: "Verify high-risk Jira contract and repository readiness"
+  default_prompt: "Use $jira-work <ISSUE-KEY> to validate the selected source contract, run the shared Git preflight, and report execution readiness."
 
 policy:
   allow_implicit_invocation: false

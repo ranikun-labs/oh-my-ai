@@ -42,6 +42,43 @@ forbid_text "$SKILL" "disable-model-invocation"
 require_text "$SKILL" "explicit-only"
 require_text "$SKILL" '$jira-work <ISSUE-KEY>'
 
+for text in \
+  "jira-work-main-handoff/v1" \
+  "CONNECTOR_VERIFIED" \
+  "MAIN_HANDOFF" \
+  "APPROVED_BY_MAIN" \
+  "declarative provenance marker" \
+  "NOT_PERFORMED" \
+  "JIRA_WORK_READY" \
+  "JIRA_WORK_BLOCKED" \
+  "PROCEED_TO_IMPLEMENTATION" \
+  "READY_NEW_WORK" \
+  "READY_RESUME" \
+  "Fast Lane" \
+  "Deep Lane"; do
+  require_text "$SKILL" "$text"
+done
+
+for handoff_field in \
+  "Issue Key" "Contract Schema/Version" "Repository" "Base Branch" \
+  "Expected Base SHA" "Goal" "In Scope" "Out of Scope" "Do Not Touch" \
+  "Acceptance Criteria" "Verification" "Risk Tier" \
+  "Jira Freshness Requirement" "Main Approval Marker"; do
+  require_text "$SKILL" "$handoff_field"
+done
+
+require_text "$SKILL" "scripts/git-work-preflight.sh"
+require_text "$SKILL" "Process Exit Code: 0"
+require_text "$SKILL" "actually executed"
+require_text "$SKILL" "cryptographic"
+require_text "$SKILL" "signature"
+require_text "$SKILL" "digest"
+require_text "$SKILL" "does not establish integrity, identity, or trust"
+require_text "$SKILL" "does not authenticate who supplied the envelope"
+require_text "$REPORT" "Jira Live State"
+require_text "$REPORT" "Open PR Collision"
+require_text "$REPORT" "PROCEED_TO_IMPLEMENTATION"
+
 for field in \
   "Summary" "Context" "Goal" "Source of Truth" "In Scope" "Out of Scope" \
   "Acceptance Criteria" "Repository" "Base Branch" "Expected Branch Name" \
@@ -134,6 +171,20 @@ const expectedScenarios = {
   "auto-apply-without-runtime": { gate_result: "READY", blocking: false, allowed_next_step: "PLAN_ONLY", mutation: 0 },
   "telemetry-binary-missing": { gate_result: "READY", blocking: false, allowed_next_step: "PLAN_ONLY", mutation: 0 },
   "telemetry-execution-failure": { gate_result: "READY", blocking: false, allowed_next_step: "PLAN_ONLY", mutation: 0 },
+  "connector-verified-ready-new": { source_mode: "CONNECTOR_VERIFIED", jira_live_state: "VERIFIED", git_preflight_result: "READY_NEW_WORK", gate_result: "JIRA_WORK_READY", blocking: false, allowed_next_step: "PROCEED_TO_IMPLEMENTATION", mutation: 0 },
+  "main-handoff-ready-resume": { source_mode: "MAIN_HANDOFF", jira_live_state: "NOT_PERFORMED", git_preflight_result: "READY_RESUME", gate_result: "JIRA_WORK_READY", blocking: false, allowed_next_step: "PROCEED_TO_IMPLEMENTATION", mutation: 0 },
+  "rpl-49-equivalent-main-handoff": { source_mode: "MAIN_HANDOFF", jira_live_state: "NOT_PERFORMED", git_preflight_result: "READY_RESUME", gate_result: "JIRA_WORK_READY", blocking: false, allowed_next_step: "PROCEED_TO_IMPLEMENTATION", mutation: 0 },
+  "main-handoff-required-freshness-no-connector": { source_mode: "MAIN_HANDOFF", jira_live_state: "NOT_VERIFIABLE", git_preflight_result: "READY_RESUME", gate_result: "JIRA_WORK_BLOCKED", blocking: true, allowed_next_step: "STOP", mutation: 0 },
+  "connector-mode-without-current-evidence": { source_mode: "CONNECTOR_VERIFIED", jira_live_state: "NOT_VERIFIABLE", git_preflight_result: "READY_RESUME", gate_result: "JIRA_WORK_BLOCKED", blocking: true, allowed_next_step: "STOP", mutation: 0 },
+  "unstructured-user-prose": { source_mode: "MAIN_HANDOFF", jira_live_state: "NOT_PERFORMED", git_preflight_result: "NOT_EXECUTED", gate_result: "JIRA_WORK_BLOCKED", blocking: true, allowed_next_step: "STOP", mutation: 0 },
+  "wrong-handoff-schema": { source_mode: "MAIN_HANDOFF", jira_live_state: "NOT_PERFORMED", git_preflight_result: "NOT_EXECUTED", gate_result: "JIRA_WORK_BLOCKED", blocking: true, allowed_next_step: "STOP", mutation: 0 },
+  "missing-main-approval-marker": { source_mode: "MAIN_HANDOFF", jira_live_state: "NOT_PERFORMED", git_preflight_result: "NOT_EXECUTED", gate_result: "JIRA_WORK_BLOCKED", blocking: true, allowed_next_step: "STOP", mutation: 0 },
+  "repository-claim-mismatch": { source_mode: "MAIN_HANDOFF", jira_live_state: "NOT_PERFORMED", git_preflight_result: "CONFLICTED", gate_result: "JIRA_WORK_BLOCKED", blocking: true, allowed_next_step: "STOP", mutation: 0 },
+  "base-sha-claim-mismatch": { source_mode: "MAIN_HANDOFF", jira_live_state: "NOT_PERFORMED", git_preflight_result: "BLOCKED_BASE_MISMATCH", gate_result: "JIRA_WORK_BLOCKED", blocking: true, allowed_next_step: "STOP", mutation: 0 },
+  "git-preflight-not-executed": { source_mode: "MAIN_HANDOFF", jira_live_state: "NOT_PERFORMED", git_preflight_result: "NOT_EXECUTED", gate_result: "JIRA_WORK_BLOCKED", blocking: true, allowed_next_step: "STOP", mutation: 0 },
+  "git-preflight-not-verifiable": { source_mode: "MAIN_HANDOFF", jira_live_state: "NOT_PERFORMED", git_preflight_result: "NOT_VERIFIABLE", gate_result: "JIRA_WORK_BLOCKED", blocking: true, allowed_next_step: "STOP", mutation: 0 },
+  "fast-lane-feature": { risk_tier: "FAST_LANE", jira_work_requirement: "OPTIONAL", gate_result: "NOT_INVOKED", blocking: false, allowed_next_step: "GIT_PREFLIGHT_THEN_WORKER", mutation: 0 },
+  "deep-lane-security": { risk_tier: "DEEP_LANE", jira_work_requirement: "MANDATORY", gate_result: "JIRA_WORK_BLOCKED", blocking: true, allowed_next_step: "RUN_JIRA_WORK_GATE", mutation: 0 },
 };
 
 const expectedSourceList = [
@@ -208,7 +259,7 @@ function assertExactScenario(actual, expected, id) {
 
 function validateContract(input) {
   const { fixture, skill, descriptor, report, existing } = input;
-  invariant(fixture.contract === "jira-work-pure-contract-gate-v1", "unexpected fixture contract");
+  invariant(fixture.contract === "jira-work-execution-readiness-gate-v1", "unexpected fixture contract");
 
   for (const key of ["network", "git_mutation", "jira_write", "artifact_write"]) {
     invariant(Object.hasOwn(fixture, key), `missing safety flag: ${key}`);
@@ -239,8 +290,8 @@ function validateContract(input) {
     "missing exact Merge, Release, Tag, deploy, migration, and secret prohibition"
   );
   invariant(
-    normalizedSkill.includes("This PR has no Jira Ticket Connector Read, Git Preflight, Branch Creation, Implementation, Verification Execution, Commit and Push, Draft PR, or Jira Comment and Transition runtime."),
-    "missing exact unavailable runtime contract"
+    normalizedSkill.includes("The preflight must be actually executed. A pasted report, a prior run, or supplied prose is not consumption."),
+    "missing actual git-work-preflight consumption contract"
   );
   invariant(
     normalizedSkill.includes("Never persist a Jira Description, Confluence body, Raw Transcript, Raw Tool Output, Credential, Token, Secret, Cloud ID, or Account ID."),
