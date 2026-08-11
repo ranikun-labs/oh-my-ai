@@ -185,10 +185,14 @@ supply an explicit Issue-to-Branch association evidence marker. The Runtime
 never infers an Issue Key from a Branch or PR name: a missing Issue Key or
 association evidence is `NOT_VERIFIABLE`, and an evidence marker for another
 Branch is `CONFLICTED`.
-This association gate runs after structural PR parsing but before any Branch,
-PR, or merge conclusion; an unverified association cannot be bypassed by
-ancestry evidence. No Jira association is required for `manual-review` or
-`work-start`.
+This association gate runs before the Canonical PR terminal probe and before
+any merge conclusion; an unverified association cannot be bypassed by ancestry
+evidence. The Canonical PR terminal probe then requests exactly one
+record with `state`, `headRefName`, `baseRefName`, and `headRefOid`; only an
+exact merged head/base with every existing Local or Push Feature tip equal to
+`headRefOid` may return `ALREADY_MERGED`. That terminal probe runs before the
+historical Base/ancestry and Working Tree readiness gates. No Jira association
+is required for `manual-review` or `work-start`.
 No Jira read or write integration is performed here.
 
 ## Execution Policy and output

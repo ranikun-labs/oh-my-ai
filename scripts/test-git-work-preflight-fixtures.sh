@@ -122,7 +122,7 @@ function validate(input) {
   const templateFields = [...new Set([...report.matchAll(/^- ([\p{L}][\p{L}\p{N} –-]+):/gmu)].map(([, field]) => field))].sort();
   const runtimeFields = [...new Set([...runtime.matchAll(/report_field '([^']+)'/g)].map(([, field]) => field))].sort();
   assertExact(runtimeFields, templateFields, "Runtime Report and Template field set");
-  for (const text of ["Repository Required", "Canonical Repository Required", "Push Remote Required", "Base Branch Required", "--repository", "--canonical-repository", "--push-remote", "--expected-base-branch", "--execution-policy", "--consumer", "status --short", "remote get-url", "ls-remote --heads", "Authoritative Canonical Base", "JSON.parse", "result_policy", "Process Exit Code", "pr list --repo", "|| true"]) {
+  for (const text of ["Repository Required", "Canonical Repository Required", "Push Remote Required", "Base Branch Required", "--repository", "--canonical-repository", "--push-remote", "--expected-base-branch", "--execution-policy", "--consumer", "status --short", "remote get-url", "ls-remote --heads", "Authoritative Canonical Base", "JSON.parse", "result_policy", "Process Exit Code", "pr list --repo", "headRefName", "baseRefName", "headRefOid", "Exact Canonical Merged PR terminal", "active gate deferred until PR terminal probe", "|| true"]) {
     invariant(runtime.includes(text), `runtime missing '${text}'`);
   }
   invariant(!runtime.includes("eval "), "runtime must not use eval");
@@ -207,7 +207,7 @@ const fixture = JSON.parse(fs.readFileSync(fixturePath, "utf8"));
 assert.equal(fixture.contract, "git-work-preflight-runtime-fixtures-v2");
 assert.deepEqual(
   fixture.scenarios.map(({ id }) => id),
-  ["actual-pushurl-aligned", "canonical-repository-identity", "redirect-alias-repository-identity", "verified-fork-repository-identity", "unrelated-repository-identity", "malformed-feature-branch", "malformed-base-branch", "multiple-pushurls", "canonical-push-remote-split", "local-only-base-tip", "local-only-unique-commit", "canonical-base-push-cache-mismatch", "canonical-pr-collision", "draft-pr-key-order", "merged-pr", "aligned", "local-ahead", "remote-ahead", "diverged", "candidate-ancestor", "expected-canonical-base-mismatch", "github-unavailable", "multiple-prs", "report-newline-injection", "malformed-pr-json", "jira-association-unavailable", "jira-association-conflict", "remote-ahead-local-tip-already-in-base", "jira-association-unavailable-ancestor", "jira-association-matched-ancestor", "jira-association-conflicted-ancestor", "manual-review-ancestor", "stale-cached-feature-remote-ahead", "jira-work-missing-issue-key", "jira-work-valid-issue-key"],
+  ["actual-pushurl-aligned", "canonical-repository-identity", "redirect-alias-repository-identity", "verified-fork-repository-identity", "unrelated-repository-identity", "malformed-feature-branch", "malformed-base-branch", "multiple-pushurls", "canonical-push-remote-split", "local-only-base-tip", "local-only-unique-commit", "canonical-base-push-cache-mismatch", "canonical-pr-collision", "draft-pr-key-order", "merged-pr", "merged-pr-after-base-advanced", "merged-pr-association-mismatch", "merged-pr-feature-tip-advanced", "merged-pr-base-mismatch", "aligned", "local-ahead", "remote-ahead", "diverged", "candidate-ancestor", "expected-canonical-base-mismatch", "github-unavailable", "multiple-prs", "report-newline-injection", "malformed-pr-json", "jira-association-unavailable", "jira-association-conflict", "remote-ahead-local-tip-already-in-base", "jira-association-unavailable-ancestor", "jira-association-matched-ancestor", "jira-association-conflicted-ancestor", "manual-review-ancestor", "stale-cached-feature-remote-ahead", "jira-work-missing-issue-key", "jira-work-valid-issue-key"],
 );
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "git-work-preflight-runtime-"));
@@ -227,7 +227,7 @@ repo="$PREFLIGHT_REPO"
 base='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 actual="$base"
 case "$scenario" in
-  expected-canonical-base-mismatch|canonical-push-remote-split|canonical-base-push-cache-mismatch) actual='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' ;;
+  expected-canonical-base-mismatch|canonical-push-remote-split|canonical-base-push-cache-mismatch|merged-pr-after-base-advanced) actual='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' ;;
 esac
 candidate='cccccccccccccccccccccccccccccccccccccccc'
 cached_remote_candidate="$candidate"
@@ -252,6 +252,13 @@ case "$scenario" in
     ;;
   stale-cached-feature-remote-ahead)
     actual_remote_candidate='dddddddddddddddddddddddddddddddddddddddd'
+    ;;
+  merged-pr-feature-tip-advanced)
+    candidate='eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
+    cached_remote_candidate="$candidate"
+    actual_remote_candidate="$candidate"
+    local_candidate="$candidate"
+    current_head="$candidate"
     ;;
   actual-pushurl-aligned)
     cached_remote_candidate="$base"
@@ -382,13 +389,14 @@ fi
 case "$PREFLIGHT_SCENARIO" in
   canonical-pr-collision)
     case " $* " in
-      *' --repo ranikun-labs/oh-my-ai '*) printf '%s\n' '[{"headRefName":"feat/shared-git-preflight","isDraft":true,"state":"OPEN"}]' ;;
+      *' --repo ranikun-labs/oh-my-ai '*) printf '%s\n' '[{"headRefName":"feat/shared-git-preflight","baseRefName":"master","headRefOid":"cccccccccccccccccccccccccccccccccccccccc","isDraft":true,"state":"OPEN"}]' ;;
       *) printf '%s\n' '[]' ;;
     esac
     ;;
-  draft-pr-key-order) printf '%s\n' '[{"headRefName":"feat/shared-git-preflight","isDraft":true,"state":"OPEN"}]' ;;
-  merged-pr) printf '%s\n' '[{"isDraft":false,"state":"MERGED","headRefName":"feat/shared-git-preflight"}]' ;;
-  multiple-prs) printf '%s\n' '[{"state":"OPEN","isDraft":true,"headRefName":"feat/shared-git-preflight"},{"state":"OPEN","isDraft":true,"headRefName":"feat/shared-git-preflight"}]' ;;
+  draft-pr-key-order) printf '%s\n' '[{"headRefName":"feat/shared-git-preflight","baseRefName":"master","headRefOid":"cccccccccccccccccccccccccccccccccccccccc","isDraft":true,"state":"OPEN"}]' ;;
+  merged-pr|merged-pr-after-base-advanced|merged-pr-association-mismatch|merged-pr-feature-tip-advanced) printf '%s\n' '[{"isDraft":false,"state":"MERGED","headRefName":"feat/shared-git-preflight","baseRefName":"master","headRefOid":"cccccccccccccccccccccccccccccccccccccccc"}]' ;;
+  merged-pr-base-mismatch) printf '%s\n' '[{"isDraft":false,"state":"MERGED","headRefName":"feat/shared-git-preflight","baseRefName":"release","headRefOid":"cccccccccccccccccccccccccccccccccccccccc"}]' ;;
+  multiple-prs) printf '%s\n' '[{"state":"OPEN","isDraft":true,"headRefName":"feat/shared-git-preflight","baseRefName":"master","headRefOid":"cccccccccccccccccccccccccccccccccccccccc"},{"state":"OPEN","isDraft":true,"headRefName":"feat/shared-git-preflight","baseRefName":"master","headRefOid":"cccccccccccccccccccccccccccccccccccccccc"}]' ;;
   malformed-pr-json) printf '%s\n' '{not-json' ;;
   github-unavailable) exit 1 ;;
   *) printf '%s\n' '[]' ;;
@@ -410,13 +418,14 @@ try {
   for (const scenario of fixture.scenarios) {
     const jiraConsumer = scenario.id.startsWith("jira-association-")
       || scenario.id.startsWith("jira-work-")
+      || scenario.id.startsWith("merged-pr-")
       || scenario.id === "local-only-base-tip"
       || scenario.id === "local-only-unique-commit";
     const evidence = scenario.id === "report-newline-injection"
       ? "repository-naming-rule-verified,evil\n# forged\nBlocking: true"
-      : scenario.id === "jira-association-matched-ancestor" || scenario.id === "jira-work-valid-issue-key" || scenario.id === "local-only-base-tip" || scenario.id === "local-only-unique-commit"
+      : scenario.id === "jira-association-matched-ancestor" || scenario.id === "jira-work-valid-issue-key" || scenario.id === "local-only-base-tip" || scenario.id === "local-only-unique-commit" || scenario.id === "merged-pr-after-base-advanced" || scenario.id === "merged-pr-feature-tip-advanced" || scenario.id === "merged-pr-base-mismatch"
         ? "repository-naming-rule-verified,issue-association-verified:RPL-TEST:feat/shared-git-preflight"
-      : scenario.id === "jira-association-conflict" || scenario.id === "jira-association-conflicted-ancestor"
+      : scenario.id === "jira-association-conflict" || scenario.id === "jira-association-conflicted-ancestor" || scenario.id === "merged-pr-association-mismatch"
         ? "repository-naming-rule-verified,issue-association-verified:RPL-TEST:other-branch"
         : "repository-naming-rule-verified";
     const args = [
@@ -430,7 +439,7 @@ try {
       "--provided-evidence", evidence,
     ];
     if (jiraConsumer && scenario.id !== "jira-work-missing-issue-key") args.push("--issue-key", "RPL-TEST");
-    if (scenario.id === "canonical-base-push-cache-mismatch" || scenario.id === "expected-canonical-base-mismatch") args.push("--expected-base-sha", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    if (scenario.id === "canonical-base-push-cache-mismatch" || scenario.id === "expected-canonical-base-mismatch" || scenario.id === "merged-pr-after-base-advanced") args.push("--expected-base-sha", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
     const result = spawnSync(runtimePath, args, {
       encoding: "utf8",
       env: { ...process.env, HOME: fakeHome, PATH: `${fakeBin}:${process.env.PATH}`, PREFLIGHT_SCENARIO: scenario.id, PREFLIGHT_REPO: repo },
