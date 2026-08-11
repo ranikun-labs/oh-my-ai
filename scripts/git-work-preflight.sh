@@ -40,6 +40,9 @@ ignored_local_state='NOT_CHECKED'
 local_branch_status='NOT_CHECKED'
 remote_branch_status='NOT_CHECKED'
 pr_status='NOT_CHECKED'
+pr_head_ref='NOT_CHECKED'
+pr_base_ref='NOT_CHECKED'
+pr_head_sha='NOT_CHECKED'
 issue_association_status='NOT_REQUIRED'
 ancestry_status='NOT_CHECKED'
 local_branch_tip='NOT_CHECKED'
@@ -49,6 +52,10 @@ unique_feature_commits='NOT_CHECKED'
 existing_work_state='NONE'
 executed_evidence='NOT_CHECKED'
 unexecuted_checks='Required checks not reached; per-field status is authoritative'
+base_gate_status='NOT_CHECKED'
+base_gate_blocking_item='NONE'
+working_tree_gate_status='NOT_CHECKED'
+working_tree_gate_blocking_item='NONE'
 
 usage() {
   cat <<'USAGE'
@@ -387,39 +394,77 @@ else
   cached_remote_tracking_base_sha='NOT_FOUND'
   append_executed 'Cached Push Remote Base=NOT_FOUND'
 fi
-actual_base_output="$(git -C "$repository" ls-remote --heads "$canonical_repository_url" "refs/heads/${expected_base_branch}" 2>/dev/null)" || hard_stop NOT_VERIFIABLE 'Authoritative Canonical Base cannot be queried'
-append_executed 'Authoritative Canonical Base=QUERIED'
-if [ -z "$actual_base_output" ] || [ "$(printf '%s\n' "$actual_base_output" | wc -l | tr -d ' ')" -ne 1 ]; then
+base_gate_status='READY'
+if actual_base_output="$(git -C "$repository" ls-remote --heads "$canonical_repository_url" "refs/heads/${expected_base_branch}" 2>/dev/null)"; then
+  append_executed 'Authoritative Canonical Base=QUERIED'
+  if [ -z "$actual_base_output" ] || [ "$(printf '%s\n' "$actual_base_output" | wc -l | tr -d ' ')" -ne 1 ]; then
+    remote_verification='NOT_VERIFIABLE'
+    base_gate_status='NOT_VERIFIABLE'
+    base_gate_blocking_item='Authoritative Canonical Base must resolve to exactly one ref'
+  else
+    actual_remote_base_sha="${actual_base_output%%$'\t'*}"
+    actual_base_ref="${actual_base_output#*$'\t'}"
+    if ! [[ "$actual_remote_base_sha" =~ ^[0-9a-fA-F]{40,64}$ ]] || [ "$actual_base_ref" != "refs/heads/${expected_base_branch}" ]; then
+      remote_verification='NOT_VERIFIABLE'
+      base_gate_status='NOT_VERIFIABLE'
+      base_gate_blocking_item='Authoritative Canonical Base response is malformed'
+    else
+      remote_verification='VERIFIED'
+      remote_base_sha="$actual_remote_base_sha"
+      if feature_integration_point="$(git -C "$repository" merge-base HEAD "$actual_remote_base_sha" 2>/dev/null)"; then
+        local_base_sha="$feature_integration_point"
+        append_executed 'Feature integration point=VERIFIED'
+      else
+        feature_integration_point='NOT_VERIFIABLE'
+        local_base_sha='NOT_VERIFIABLE'
+        ancestry_status='NOT_VERIFIABLE'
+        base_gate_status='NOT_VERIFIABLE'
+        base_gate_blocking_item='Current HEAD and Actual Remote Base have no verified merge base'
+      fi
+    fi
+  fi
+else
   remote_verification='NOT_VERIFIABLE'
-  hard_stop NOT_VERIFIABLE 'Authoritative Canonical Base must resolve to exactly one ref'
+  base_gate_status='NOT_VERIFIABLE'
+  base_gate_blocking_item='Authoritative Canonical Base cannot be queried'
+  append_executed 'Authoritative Canonical Base=NOT_VERIFIABLE'
 fi
-actual_remote_base_sha="${actual_base_output%%$'\t'*}"
-actual_base_ref="${actual_base_output#*$'\t'}"
-if ! [[ "$actual_remote_base_sha" =~ ^[0-9a-fA-F]{40,64}$ ]] || [ "$actual_base_ref" != "refs/heads/${expected_base_branch}" ]; then
-  remote_verification='NOT_VERIFIABLE'
-  hard_stop NOT_VERIFIABLE 'Authoritative Canonical Base response is malformed'
-fi
-remote_verification='VERIFIED'
-remote_base_sha="$actual_remote_base_sha"
 
-feature_integration_point="$(git -C "$repository" merge-base HEAD "$actual_remote_base_sha" 2>/dev/null)" || hard_stop NOT_VERIFIABLE 'Current HEAD and Actual Remote Base have no verified merge base'
-local_base_sha="$feature_integration_point"
-append_executed 'Feature integration point=VERIFIED'
-if [ -n "$expected_base_sha" ] && { [ "$expected_base_sha" != "$feature_integration_point" ] || [ "$expected_base_sha" != "$actual_remote_base_sha" ]; }; then
+if [ "$base_gate_status" = 'READY' ] && [ -n "$expected_base_sha" ] && { [ "$expected_base_sha" != "$feature_integration_point" ] || [ "$expected_base_sha" != "$actual_remote_base_sha" ]; }; then
   ancestry_status='BASE_SHA_MISMATCH'
-  hard_stop BLOCKED_BASE_MISMATCH 'Expected Base SHA does not match Feature Integration Point and Actual Remote Base'
+  base_gate_status='BLOCKED_BASE_MISMATCH'
+  base_gate_blocking_item='Expected Base SHA does not match Feature Integration Point and Actual Remote Base'
+  append_executed 'Expected Base SHA comparison=MISMATCH (active gate deferred until PR terminal probe)'
 fi
 
-base_counts="$(git -C "$repository" rev-list --left-right --count "${feature_integration_point}...${actual_remote_base_sha}" 2>/dev/null)" || hard_stop NOT_VERIFIABLE 'Base ancestry cannot be verified'
-read -r local_ahead remote_ahead <<< "$base_counts"
-if [ "$local_ahead" != 0 ] || [ "$remote_ahead" != 0 ]; then
-  ancestry_status='BASE_MISMATCH'
-  hard_stop BLOCKED_BASE_MISMATCH 'Feature Integration Point and Actual Remote Base are not aligned'
+if [ "$base_gate_status" = 'READY' ]; then
+  if base_counts="$(git -C "$repository" rev-list --left-right --count "${feature_integration_point}...${actual_remote_base_sha}" 2>/dev/null)"; then
+    read -r local_ahead remote_ahead <<< "$base_counts"
+    if [ "$local_ahead" != 0 ] || [ "$remote_ahead" != 0 ]; then
+      ancestry_status='BASE_MISMATCH'
+      base_gate_status='BLOCKED_BASE_MISMATCH'
+      base_gate_blocking_item='Feature Integration Point and Actual Remote Base are not aligned'
+      append_executed 'Base ancestry=MISMATCH (active gate deferred until PR terminal probe)'
+    else
+      ancestry_status='BASE_ALIGNED'
+      append_executed 'Base ancestry=ALIGNED'
+    fi
+  else
+    ancestry_status='NOT_VERIFIABLE'
+    base_gate_status='NOT_VERIFIABLE'
+    base_gate_blocking_item='Base ancestry cannot be verified'
+    append_executed 'Base ancestry=NOT_VERIFIABLE (active gate deferred until PR terminal probe)'
+  fi
 fi
-ancestry_status='BASE_ALIGNED'
-append_executed 'Base ancestry=ALIGNED'
 
-status_output="$(git -C "$repository" status --short --ignored 2>/dev/null)" || hard_stop NOT_VERIFIABLE 'Working Tree cannot be verified'
+if status_output="$(git -C "$repository" status --short --ignored 2>/dev/null)"; then
+  working_tree_gate_status='READY'
+else
+  status_output=''
+  working_tree_status='NOT_VERIFIABLE'
+  working_tree_gate_status='NOT_VERIFIABLE'
+  working_tree_gate_blocking_item='Working Tree cannot be verified'
+fi
 tracked_count=0
 staged_count=0
 unmerged_count=0
@@ -451,24 +496,34 @@ staged_status="COUNT=${staged_count}"
 unmerged_status="COUNT=${unmerged_count}"
 untracked_local_state="LOCAL_GENERATED=${local_state_count}; UNKNOWN=${unknown_untracked_count}"
 ignored_local_state="COUNT=${ignored_count}"
-append_executed 'Working Tree=VERIFIED'
+if [ "$working_tree_gate_status" = 'READY' ]; then
+  append_executed 'Working Tree=VERIFIED'
+else
+  append_executed 'Working Tree=NOT_VERIFIABLE'
+fi
 if [ "$unmerged_count" -gt 0 ]; then
   working_tree_status='UNMERGED_CONFLICT'
-  hard_stop BLOCKED_DIRTY_TREE 'Unmerged conflict is present'
+  working_tree_gate_status='BLOCKED_DIRTY_TREE'
+  working_tree_gate_blocking_item='Unmerged conflict is present'
 fi
 if [ "$staged_count" -gt 0 ]; then
   working_tree_status='STAGED_DIRTY'
-  hard_stop BLOCKED_DIRTY_TREE 'Staged modification is present'
+  working_tree_gate_status='BLOCKED_DIRTY_TREE'
+  working_tree_gate_blocking_item='Staged modification is present'
 fi
 if [ "$tracked_count" -gt 0 ]; then
   working_tree_status='TRACKED_DIRTY'
-  hard_stop BLOCKED_DIRTY_TREE 'Tracked modification is present'
+  working_tree_gate_status='BLOCKED_DIRTY_TREE'
+  working_tree_gate_blocking_item='Tracked modification is present'
 fi
 if [ "$unknown_untracked_count" -gt 0 ]; then
   working_tree_status='UNTRACKED_UNKNOWN'
-  hard_stop NOT_VERIFIABLE 'Unknown untracked state requires Repository policy evidence'
+  working_tree_gate_status='NOT_VERIFIABLE'
+  working_tree_gate_blocking_item='Unknown untracked state requires Repository policy evidence'
 fi
-if [ "$local_state_count" -gt 0 ]; then
+if [ "$working_tree_gate_status" = 'NOT_VERIFIABLE' ]; then
+  working_tree_status='NOT_VERIFIABLE'
+elif [ "$local_state_count" -gt 0 ]; then
   working_tree_status='UNTRACKED_LOCAL_STATE'
 else
   working_tree_status='CLEAN'
@@ -517,31 +572,6 @@ if [ "$remote_branch_status" = 'PRESENT' ]; then
   actual_remote_feature_sha="$remote_branch_tip"
 fi
 
-pr_json="$(cd "$repository" && gh pr list --repo "$canonical_repository" --head "$expected_branch_name" --state all --json state,isDraft,headRefName 2>/dev/null)" || { pr_status='NOT_VERIFIABLE'; hard_stop NOT_VERIFIABLE 'Canonical GitHub PR state cannot be queried'; }
-append_executed 'GitHub PR JSON=QUERIED'
-pr_status="$(printf '%s' "$pr_json" | node -e '
-let input = "";
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", (chunk) => { input += chunk; });
-process.stdin.on("end", () => {
-  try {
-    const records = JSON.parse(input);
-    if (!Array.isArray(records)) throw new Error("PR response is not an array");
-    if (records.length === 0) return process.stdout.write("NONE");
-    if (records.length !== 1) return process.stdout.write("MULTIPLE");
-    const pr = records[0];
-    if (!pr || typeof pr.state !== "string" || typeof pr.isDraft !== "boolean" || typeof pr.headRefName !== "string") throw new Error("PR record is incomplete");
-    if (pr.headRefName !== process.argv[1]) return process.stdout.write("HEAD_MISMATCH");
-    if (pr.state === "MERGED") return process.stdout.write("MERGED");
-    if (pr.state === "CLOSED") return process.stdout.write("CLOSED_UNMERGED");
-    if (pr.state === "OPEN") return process.stdout.write(pr.isDraft ? "OPEN_DRAFT" : "OPEN_NON_DRAFT");
-    throw new Error("PR state is unsupported");
-  } catch (_) {
-    process.exitCode = 1;
-  }
-});
-' "$expected_branch_name")" || { pr_status='NOT_VERIFIABLE'; hard_stop NOT_VERIFIABLE 'GitHub PR response is malformed or unsupported'; }
-
 # Jira evidence is a mandatory gate for jira-work with an Issue Key.  Do not
 # let a Branch, PR, or ancestry conclusion bypass a missing association.
 if [ "$consumer" = 'jira-work' ] && [ -n "$issue_key" ]; then
@@ -557,6 +587,78 @@ if [ "$consumer" = 'jira-work' ] && [ -n "$issue_key" ]; then
     issue_association_status='NOT_PROVIDED'
     hard_stop NOT_VERIFIABLE 'Jira Issue association evidence is not supplied'
   fi
+fi
+
+pr_json="$(cd "$repository" && gh pr list --repo "$canonical_repository" --head "$expected_branch_name" --state all --json state,isDraft,headRefName,baseRefName,headRefOid 2>/dev/null)" || { pr_status='NOT_VERIFIABLE'; hard_stop NOT_VERIFIABLE 'Canonical GitHub PR state cannot be queried'; }
+append_executed 'GitHub PR metadata JSON=QUERIED (state, headRefName, baseRefName, headRefOid)'
+pr_metadata="$(printf '%s' "$pr_json" | node -e '
+let input = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => { input += chunk; });
+process.stdin.on("end", () => {
+  try {
+    const records = JSON.parse(input);
+    if (!Array.isArray(records)) throw new Error("PR response is not an array");
+    const emit = (status, head = "NOT_FOUND", base = "NOT_FOUND", oid = "NOT_FOUND") => process.stdout.write([status, head, base, oid].join("\t"));
+    if (records.length === 0) return emit("NONE");
+    if (records.length !== 1) return emit("MULTIPLE");
+    const pr = records[0];
+    if (!pr || typeof pr.state !== "string" || typeof pr.isDraft !== "boolean" || typeof pr.headRefName !== "string" || typeof pr.baseRefName !== "string" || typeof pr.headRefOid !== "string") throw new Error("PR record is incomplete");
+    if (!/^[0-9a-fA-F]{40,64}$/.test(pr.headRefOid)) throw new Error("PR headRefOid is malformed");
+    if (pr.headRefName !== process.argv[1]) return emit("HEAD_MISMATCH", pr.headRefName, pr.baseRefName, pr.headRefOid);
+    if (pr.state === "MERGED") {
+      if (pr.baseRefName !== process.argv[2]) return emit("MERGED_BASE_MISMATCH", pr.headRefName, pr.baseRefName, pr.headRefOid);
+      return emit("MERGED", pr.headRefName, pr.baseRefName, pr.headRefOid);
+    }
+    if (pr.state === "CLOSED") return emit("CLOSED_UNMERGED", pr.headRefName, pr.baseRefName, pr.headRefOid);
+    if (pr.state === "OPEN") return emit(pr.isDraft ? "OPEN_DRAFT" : "OPEN_NON_DRAFT", pr.headRefName, pr.baseRefName, pr.headRefOid);
+    throw new Error("PR state is unsupported");
+  } catch (_) {
+    process.exitCode = 1;
+  }
+});
+' "$expected_branch_name" "$expected_base_branch")" || { pr_status='NOT_VERIFIABLE'; hard_stop NOT_VERIFIABLE 'GitHub PR response is malformed or unsupported'; }
+IFS=$'\t' read -r pr_status pr_head_ref pr_base_ref pr_head_sha <<< "$pr_metadata"
+
+if [ "$pr_status" = 'MERGED' ]; then
+  if [ "$local_branch_status" = 'PRESENT' ] && [ "$local_branch_tip" != "$pr_head_sha" ]; then
+    pr_status='MERGED_TIP_MISMATCH'
+  elif [ "$remote_branch_status" = 'PRESENT' ] && [ "$remote_branch_tip" != "$pr_head_sha" ]; then
+    pr_status='MERGED_TIP_MISMATCH'
+  else
+    existing_work_state='G'
+    ancestry_status='HEAD_MERGED'
+    candidate_tip_evidence="MERGED_PR_HEAD SHA=${pr_head_sha}; LOCAL SHA=${local_branch_tip}; PUSH REMOTE SHA=${actual_remote_feature_sha}"
+    append_executed 'Exact Canonical Merged PR terminal=VERIFIED (repository, association, head, base, and tip aligned)'
+    finish ALREADY_MERGED JIRA_RECONCILIATION_ONLY 'Exact merged PR terminal state forbids a new implementation plan'
+  fi
+fi
+
+# A merged PR with unverifiable branch/base identity or a post-merge feature
+# tip is a conflict, never an implementation-ready or terminal success state.
+if [ "$pr_status" = 'MERGED_TIP_MISMATCH' ]; then
+  existing_work_state='H'
+  hard_stop CONFLICTED 'Current Local or Push Remote Feature tip differs from the merged PR head'
+fi
+if [ "$pr_status" = 'MERGED_BASE_MISMATCH' ]; then
+  existing_work_state='H'
+  hard_stop CONFLICTED 'Merged PR base branch does not match the expected Canonical Base Branch'
+fi
+
+# Active-work gates run only after the Canonical PR terminal probe.  This keeps
+# an exact merged lifecycle outcome ahead of the historical execution-start
+# Base Snapshot and current working-tree readiness checks.
+if [ "$base_gate_status" = 'BLOCKED_BASE_MISMATCH' ]; then
+  hard_stop BLOCKED_BASE_MISMATCH "$base_gate_blocking_item"
+fi
+if [ "$base_gate_status" = 'NOT_VERIFIABLE' ]; then
+  hard_stop NOT_VERIFIABLE "$base_gate_blocking_item"
+fi
+if [ "$working_tree_gate_status" = 'BLOCKED_DIRTY_TREE' ]; then
+  hard_stop BLOCKED_DIRTY_TREE "$working_tree_gate_blocking_item"
+fi
+if [ "$working_tree_gate_status" = 'NOT_VERIFIABLE' ]; then
+  hard_stop NOT_VERIFIABLE "$working_tree_gate_blocking_item"
 fi
 
 if [ "$pr_status" = 'OPEN_DRAFT' ] && { [ "$local_branch_status" != 'PRESENT' ] || [ "$remote_branch_status" != 'PRESENT' ]; }; then
@@ -677,11 +779,6 @@ fi
 if [ "$pr_status" = 'HEAD_MISMATCH' ]; then
   existing_work_state='H'
   hard_stop CONFLICTED 'GitHub PR head does not match the expected Branch'
-fi
-if [ "$pr_status" = 'MERGED' ]; then
-  existing_work_state='G'
-  ancestry_status='HEAD_MERGED'
-  finish ALREADY_MERGED JIRA_RECONCILIATION_ONLY 'Merged PR forbids a new implementation plan'
 fi
 if [ "$pr_status" = 'OPEN_NON_DRAFT' ] || [ "$pr_status" = 'CLOSED_UNMERGED' ]; then
   hard_stop CONFLICTED 'Existing non-Draft or closed PR requires human judgment'
