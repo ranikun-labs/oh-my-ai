@@ -12,9 +12,12 @@ import {
 import { join, resolve } from "node:path";
 import { canonicalizePendingHandoffCandidate } from "./pending-handoff-candidate.mjs";
 import {
+  createPendingHandoffClaimIntegrityEnvelope,
   createPendingHandoffIntegrityDependencies,
   createPendingHandoffRevisionIntegrityEnvelope,
+  PENDING_HANDOFF_CLAIM_ENVELOPE_VERSION,
   PENDING_HANDOFF_REVISION_ENVELOPE_VERSION,
+  verifyPendingHandoffClaimIntegrityEnvelope,
   verifyPendingHandoffIntegrityEnvelope,
   verifyPendingHandoffRevisionIntegrityEnvelope,
 } from "./pending-handoff-integrity.mjs";
@@ -98,9 +101,11 @@ export function createPendingHandoffStore(options) {
   const { rootDirectory, fileSystem, integrity } = inspected.value;
   const store = Object.freeze({
     compareAndSet: request => compareAndSet(rootDirectory, fileSystem, integrity, request),
+    compareAndSetState: request => compareAndSetState(rootDirectory, fileSystem, integrity, request),
     write: record => writeRecord(rootDirectory, fileSystem, integrity, record),
     read: candidateId => readRecord(rootDirectory, fileSystem, integrity, candidateId),
     readSnapshot: candidateId => readSnapshot(rootDirectory, fileSystem, integrity, candidateId),
+    readState: candidateId => readState(rootDirectory, fileSystem, integrity, candidateId),
   });
   return success(store);
 }
@@ -200,6 +205,23 @@ async function readSnapshot(rootDirectory, fileSystem, integrity, candidateId) {
   }));
 }
 
+async function readState(rootDirectory, fileSystem, integrity, candidateId) {
+  const loaded = await loadRecord(rootDirectory, fileSystem, candidateId);
+  if (!loaded.ok) return loaded;
+
+  const verified = verifyStoredEnvelope(loaded.value.parsed, integrity, true);
+  if (!verified.ok) return verified;
+  if (verified.value.legacy) return failure("revision_invalid");
+  if (!isRecordIdentityBound(verified.value.candidate, candidateId, loaded.value.key)) {
+    return failure("record_invalid");
+  }
+  return success(Object.freeze({
+    candidate: verified.value.candidate,
+    state_revision: verified.value.state_revision,
+    claim: verified.value.claim,
+  }));
+}
+
 async function compareAndSet(rootDirectory, fileSystem, integrity, request) {
   const inspected = inspectCompareAndSetRequest(request);
   if (!inspected.ok) return failure(inspected.reason);
@@ -238,6 +260,10 @@ async function compareAndSet(rootDirectory, fileSystem, integrity, request) {
     const verified = verifyStoredEnvelope(loaded.value.parsed, integrity, true);
     if (!verified.ok) return failure(mapCasReadFailure(verified.reason));
     if (verified.value.legacy) return failure("revision_invalid");
+    if (verified.value.version !== PENDING_HANDOFF_REVISION_ENVELOPE_VERSION
+      || verified.value.candidate.status !== "candidate") {
+      return failure("record_invalid");
+    }
     if (!isRecordIdentityBound(verified.value.candidate, candidateId, loaded.value.key)) {
       return failure("record_invalid");
     }
@@ -255,6 +281,84 @@ async function compareAndSet(rootDirectory, fileSystem, integrity, request) {
       integrity,
     );
     if (!envelope.ok) return failure(mapCasIntegrityFailure(envelope.reason));
+
+    let serialized;
+    try {
+      serialized = `${JSON.stringify(envelope.value)}\n`;
+    } catch {
+      return failure("cas_publish_failed");
+    }
+    const publication = await publishRecord(
+      recordDirectory,
+      recordPath,
+      fileSystem,
+      serialized,
+      "cas_publish_failed",
+      "cas_publish_failed",
+    );
+    if (!publication.ok) return failure(publication.reason);
+    return success(Object.freeze({ new_revision: nextRevision }));
+  } catch {
+    return failure("cas_read_failed");
+  } finally {
+    await releaseCasLock(lock.value, fileSystem);
+  }
+}
+
+async function compareAndSetState(rootDirectory, fileSystem, integrity, request) {
+  const inspected = inspectStateCompareAndSetRequest(request);
+  if (!inspected.ok) return failure(inspected.reason);
+
+  const { candidateId, expectedRevision, nextState } = inspected.value;
+  const keyResult = derivePendingHandoffRecordKey(candidateId);
+  if (!keyResult.ok) return failure("record_key_invalid");
+
+  const recordDirectory = join(rootDirectory, keyResult.value);
+  const recordPath = join(recordDirectory, RECORD_FILE_NAME);
+  const rootStatus = await inspectDirectory(rootDirectory, fileSystem, "unsafe_store_path");
+  if (rootStatus !== null) return failure(mapCasReadStatus(rootStatus));
+  const directoryStatus = await inspectDirectory(
+    recordDirectory,
+    fileSystem,
+    "unsafe_record_path",
+  );
+  if (directoryStatus !== null) return failure(mapCasReadStatus(directoryStatus));
+
+  const lock = await acquireCasLock(recordDirectory, fileSystem);
+  if (!lock.ok) return failure(lock.reason);
+  try {
+    const loaded = await loadRecord(rootDirectory, fileSystem, candidateId);
+    if (!loaded.ok) return failure(mapCasReadFailure(loaded.reason));
+
+    const verified = verifyStoredEnvelope(loaded.value.parsed, integrity, true);
+    if (!verified.ok) return failure(mapCasReadFailure(verified.reason));
+    if (verified.value.legacy) return failure("revision_invalid");
+    if (!isRecordIdentityBound(verified.value.candidate, candidateId, loaded.value.key)) {
+      return failure("record_invalid");
+    }
+    if (verified.value.state_revision !== expectedRevision) {
+      return failure("revision_conflict");
+    }
+    if (verified.value.state_revision === MAX_REVISION) {
+      return failure("revision_exhausted");
+    }
+
+    const nextRevision = verified.value.state_revision + 1;
+    const envelope = nextState.claim !== null
+      || verified.value.version === PENDING_HANDOFF_CLAIM_ENVELOPE_VERSION
+      || nextState.candidate.status === "expired"
+      ? createPendingHandoffClaimIntegrityEnvelope(
+        nextState.candidate,
+        nextRevision,
+        nextState.claim,
+        integrity,
+      )
+      : createPendingHandoffRevisionIntegrityEnvelope(
+        nextState.candidate,
+        nextRevision,
+        integrity,
+      );
+    if (!envelope.ok) return failure(mapCasStateIntegrityFailure(envelope.reason));
 
     let serialized;
     try {
@@ -317,19 +421,37 @@ async function loadRecord(rootDirectory, fileSystem, candidateId) {
 }
 
 function verifyStoredEnvelope(envelope, integrity, snapshot) {
+  if (envelope?.envelope_version === PENDING_HANDOFF_CLAIM_ENVELOPE_VERSION) {
+    const verified = verifyPendingHandoffClaimIntegrityEnvelope(envelope, integrity);
+    if (!verified.ok) return failure(mapIntegrityReadFailure(verified.reason, snapshot));
+    return success(Object.freeze({
+      candidate: verified.value.candidate,
+      state_revision: verified.value.state_revision,
+      claim: verified.value.claim,
+      legacy: false,
+      version: PENDING_HANDOFF_CLAIM_ENVELOPE_VERSION,
+    }));
+  }
   if (envelope?.envelope_version === PENDING_HANDOFF_REVISION_ENVELOPE_VERSION) {
     const verified = verifyPendingHandoffRevisionIntegrityEnvelope(envelope, integrity);
     if (!verified.ok) return failure(mapIntegrityReadFailure(verified.reason, snapshot));
     return success(Object.freeze({
       candidate: verified.value.candidate,
       state_revision: verified.value.state_revision,
+      claim: null,
       legacy: false,
+      version: PENDING_HANDOFF_REVISION_ENVELOPE_VERSION,
     }));
   }
 
   const verified = verifyPendingHandoffIntegrityEnvelope(envelope, integrity);
   if (!verified.ok) return failure(mapIntegrityReadFailure(verified.reason, snapshot));
-  return success(Object.freeze({ candidate: verified.value, legacy: true }));
+  return success(Object.freeze({
+    candidate: verified.value,
+    claim: null,
+    legacy: true,
+    version: "phr-integrity-envelope-v1",
+  }));
 }
 
 function isRecordIdentityBound(candidate, candidateId, storedKey) {
@@ -355,6 +477,49 @@ function inspectCompareAndSetRequest(request) {
       candidateId: request.candidate_id,
       expectedRevision: request.expected_revision,
       nextState: request.next_state,
+    }));
+  } catch {
+    return failure("record_invalid");
+  }
+}
+
+function inspectStateCompareAndSetRequest(request) {
+  try {
+    if (!isPlainObject(request)) return failure("record_invalid");
+    const keys = Reflect.ownKeys(request);
+    if (keys.length !== 3 || keys.some(key => (
+      typeof key !== "string"
+      || !["candidate_id", "expected_revision", "next_state"].includes(key)
+    ))) return failure("record_invalid");
+    for (const key of ["candidate_id", "expected_revision", "next_state"]) {
+      const descriptor = Object.getOwnPropertyDescriptor(request, key);
+      if (!isEnumerableDataDescriptor(descriptor)) return failure("record_invalid");
+    }
+    if (!validRevision(request.expected_revision)) return failure("revision_invalid");
+    if (!isPlainObject(request.next_state)) return failure("record_invalid");
+    if (!isPlainObject(request.next_state.candidate)
+      || request.next_state.candidate.candidate_id !== request.candidate_id) {
+      return failure("record_invalid");
+    }
+
+    const stateKeys = Reflect.ownKeys(request.next_state);
+    if (stateKeys.length !== 2 || stateKeys.some(key => (
+      typeof key !== "string" || !["candidate", "claim"].includes(key)
+    ))) return failure("record_invalid");
+    for (const key of ["candidate", "claim"]) {
+      const descriptor = Object.getOwnPropertyDescriptor(request.next_state, key);
+      if (!isEnumerableDataDescriptor(descriptor)) return failure("record_invalid");
+    }
+    if (request.next_state.claim !== null && !isPlainObject(request.next_state.claim)) {
+      return failure("record_invalid");
+    }
+    return success(Object.freeze({
+      candidateId: request.candidate_id,
+      expectedRevision: request.expected_revision,
+      nextState: Object.freeze({
+        candidate: request.next_state.candidate,
+        claim: request.next_state.claim,
+      }),
     }));
   } catch {
     return failure("record_invalid");
@@ -743,6 +908,16 @@ function mapWriteIntegrityFailure(reason) {
 function mapCasIntegrityFailure(reason) {
   return reason === "integrity_revision_invalid"
     ? "revision_invalid"
+    : "cas_publish_failed";
+}
+
+function mapCasStateIntegrityFailure(reason) {
+  return [
+    "integrity_revision_invalid",
+    "integrity_candidate_invalid",
+    "integrity_claim_invalid",
+  ].includes(reason)
+    ? reason === "integrity_revision_invalid" ? "revision_invalid" : "record_invalid"
     : "cas_publish_failed";
 }
 

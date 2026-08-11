@@ -310,7 +310,7 @@ await group("API and dependency boundary", async () => {
     ]);
     assert.equal(Object.isFrozen(PENDING_HANDOFF_INTEGRITY_FAILURES), true);
     assert.doesNotMatch(INTEGRITY_SOURCE, /pending-handoff-secret-provider\.mjs/);
-    assert.doesNotMatch(INTEGRITY_SOURCE, /pending-handoff-identity/);
+    assert.match(INTEGRITY_SOURCE, /validateOpaqueIdentity/);
   });
 
   await test("binds the Integrity provider purpose and rejects invalid dependency shapes", () => {
@@ -822,12 +822,12 @@ await group("Malformed digest provider oracles", async () => {
 });
 
 await group("Static scope and wiring", async () => {
-  await test("keeps Integrity separate from Identity and out of future lifecycle scope", () => {
+  await test("keeps Integrity separate from the Identity provider and out of delivery scope", () => {
     assert.match(STORE_SOURCE, /pending-handoff-integrity\.mjs/);
     assert.match(INTEGRITY_SOURCE, /hmac-sha256-base64url-v1/);
     assert.match(INTEGRITY_SOURCE, /phr-integrity-envelope-v2/);
-    assert.doesNotMatch(INTEGRITY_SOURCE, /\bclaim\b|\blease\b|delivery|consumption|session registry|sqlite/i);
-    assert.doesNotMatch(STORE_SOURCE, /\bclaim\b|\blease\b|delivery|consumption|session registry|sqlite/i);
+    assert.doesNotMatch(INTEGRITY_SOURCE, /delivery|consumption|session registry|sqlite/i);
+    assert.doesNotMatch(STORE_SOURCE, /delivery|consumption|session registry|sqlite/i);
     assert.doesNotMatch(INTEGRITY_SOURCE, /console|process\.stdout|process\.stderr|fetch/);
   });
 
@@ -844,7 +844,7 @@ await group("Static scope and wiring", async () => {
     const declaration = [lines[start]];
     while (declaration.at(-1).endsWith("\\")) declaration.push(lines[start + declaration.length]);
     const targets = declaration.join(" ").replace(/^test-v1x-fixtures:\s*/, "").replaceAll("\\", " ").trim().split(/\s+/);
-    assert.equal(targets.at(-1), "test-pending-handoff-revision-cas-fixtures");
+    assert.equal(targets.at(-1), "test-pending-handoff-claim-lease-fixtures");
     assert.ok(targets.indexOf("test-pending-handoff-store-fixtures") < targets.indexOf("test-pending-handoff-integrity-fixtures"));
     assert.ok(targets.indexOf("test-pending-handoff-integrity-fixtures") < targets.indexOf("test-pending-handoff-revision-cas-fixtures"));
   });

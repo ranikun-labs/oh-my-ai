@@ -1,4 +1,6 @@
 import { canonicalizePendingHandoffCandidate } from "./pending-handoff-candidate.mjs";
+import { validateCandidate } from "./pending-handoff-core.mjs";
+import { validateOpaqueIdentity } from "./pending-handoff-identity.mjs";
 
 const PROVIDER_KEYS = Object.freeze([
   "version",
@@ -39,10 +41,26 @@ const CANDIDATE_FIELDS = Object.freeze([
 const PROVIDER_VERSION = "phr-integrity-provider-v1";
 const ENVELOPE_VERSION = "phr-integrity-envelope-v1";
 const REVISION_ENVELOPE_VERSION = "phr-integrity-envelope-v2";
+const CLAIM_ENVELOPE_VERSION = "phr-integrity-envelope-v3";
 const PURPOSE = "pending-handoff-integrity";
 const ALGORITHM = "hmac-sha256-base64url-v1";
 const KEY_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 const DIGEST_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+const CLAIM_ENVELOPE_KEYS = Object.freeze([
+  "envelope_version",
+  "state_revision",
+  "claim",
+  "integrity",
+  "candidate",
+]);
+const CLAIM_KEYS = Object.freeze([
+  "claim_owner_identity",
+  "claim_started_at",
+  "claim_lease_expires_at",
+  "claim_attempt_id",
+]);
+const CLAIM_ATTEMPT_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const CLAIM_STATE_STATUSES = Object.freeze(["pending", "claimed", "expired"]);
 const DEPENDENCY_FAILURES = Object.freeze([
   "integrity_dependency_invalid",
   "integrity_provider_version_unsupported",
@@ -67,9 +85,14 @@ export const PENDING_HANDOFF_INTEGRITY_FAILURES = Object.freeze([
 export const PENDING_HANDOFF_INTEGRITY_PROVIDER_VERSION = PROVIDER_VERSION;
 export const PENDING_HANDOFF_INTEGRITY_PURPOSE = PURPOSE;
 export const PENDING_HANDOFF_REVISION_ENVELOPE_VERSION = REVISION_ENVELOPE_VERSION;
+export const PENDING_HANDOFF_CLAIM_ENVELOPE_VERSION = CLAIM_ENVELOPE_VERSION;
 export const PENDING_HANDOFF_REVISION_INTEGRITY_FAILURES = Object.freeze([
   ...PENDING_HANDOFF_INTEGRITY_FAILURES,
   "integrity_revision_invalid",
+]);
+export const PENDING_HANDOFF_CLAIM_INTEGRITY_FAILURES = Object.freeze([
+  ...PENDING_HANDOFF_REVISION_INTEGRITY_FAILURES,
+  "integrity_claim_invalid",
 ]);
 
 export function createPendingHandoffIntegrityDependencies(provider) {
@@ -218,6 +241,76 @@ export function verifyPendingHandoffRevisionIntegrityEnvelope(envelope, dependen
   }));
 }
 
+export function createPendingHandoffClaimIntegrityEnvelope(
+  candidate,
+  stateRevision,
+  claim,
+  dependencies,
+) {
+  const dependencyStatus = inspectDependencies(dependencies);
+  if (!dependencyStatus.ok) return failure(dependencyStatus.reason);
+  if (!validRevision(stateRevision)) return failure("integrity_revision_invalid");
+
+  const prepared = prepareClaimState(candidate, stateRevision, claim);
+  if (!prepared.ok) return failure(prepared.reason);
+
+  const digest = callDigest(dependencies.current, prepared.value.bytes);
+  if (!digest.ok) return failure(digest.reason);
+  return success(Object.freeze({
+    envelope_version: CLAIM_ENVELOPE_VERSION,
+    state_revision: stateRevision,
+    claim: prepared.value.claim,
+    integrity: Object.freeze({
+      algorithm: ALGORITHM,
+      key_id: dependencies.current.key_id,
+      digest: digest.value,
+    }),
+    candidate: prepared.value.candidate,
+  }));
+}
+
+export function verifyPendingHandoffClaimIntegrityEnvelope(envelope, dependencies) {
+  const dependencyStatus = inspectDependencies(dependencies);
+  if (!dependencyStatus.ok) return failure(dependencyStatus.reason);
+
+  const inspected = inspectExactDataObject(envelope, CLAIM_ENVELOPE_KEYS);
+  if (!inspected.ok) return failure("integrity_envelope_invalid");
+  if (inspected.values.envelope_version !== CLAIM_ENVELOPE_VERSION) {
+    return failure("integrity_envelope_version_unsupported");
+  }
+  if (!validRevision(inspected.values.state_revision)) {
+    return failure("integrity_revision_invalid");
+  }
+
+  const integrity = inspectExactDataObject(inspected.values.integrity, INTEGRITY_KEYS);
+  if (!integrity.ok
+    || integrity.values.algorithm !== ALGORITHM
+    || !validKeyId(integrity.values.key_id)
+    || !DIGEST_PATTERN.test(integrity.values.digest)) {
+    return failure("integrity_envelope_invalid");
+  }
+
+  const entry = dependencies.verification.find(item => item.key_id === integrity.values.key_id);
+  if (entry === undefined) return failure("integrity_key_not_found");
+
+  const prepared = prepareClaimState(
+    inspected.values.candidate,
+    inspected.values.state_revision,
+    inspected.values.claim,
+  );
+  if (!prepared.ok) return failure(prepared.reason);
+  const digest = callDigest(entry, prepared.value.bytes);
+  if (!digest.ok) return failure(digest.reason);
+  const comparison = callSafeEqual(dependencies.safe_equal, integrity.values.digest, digest.value);
+  if (!comparison.ok) return failure(comparison.reason);
+  if (!comparison.value) return failure("integrity_mismatch");
+  return success(Object.freeze({
+    candidate: prepared.value.candidate,
+    state_revision: inspected.values.state_revision,
+    claim: prepared.value.claim,
+  }));
+}
+
 function prepareCandidate(candidate) {
   let validation;
   try {
@@ -242,7 +335,7 @@ function prepareCandidate(candidate) {
 }
 
 function prepareRevisionState(candidate, stateRevision) {
-  const prepared = prepareCandidate(candidate);
+  const prepared = prepareRevisionCandidate(candidate);
   if (!prepared.ok) return prepared;
 
   try {
@@ -262,8 +355,189 @@ function prepareRevisionState(candidate, stateRevision) {
   }
 }
 
+function prepareRevisionCandidate(candidate) {
+  const prepared = prepareStateCandidateSnapshot(
+    candidate,
+    ["candidate", "pending"],
+    "integrity_candidate_invalid",
+  );
+  return prepared.ok ? success({ candidate: prepared.value }) : prepared;
+}
+
+function prepareClaimState(candidate, stateRevision, claim) {
+  const preparedCandidate = prepareStateCandidateSnapshot(
+    candidate,
+    CLAIM_STATE_STATUSES,
+    "integrity_claim_invalid",
+  );
+  if (!preparedCandidate.ok) return preparedCandidate;
+
+  const normalizedClaim = normalizeClaimMetadata(
+    preparedCandidate.value,
+    claim,
+  );
+  if (!normalizedClaim.ok) return normalizedClaim;
+
+  try {
+    const orderedCandidate = {};
+    for (const field of CANDIDATE_FIELDS) {
+      orderedCandidate[field] = preparedCandidate.value[field];
+    }
+    const serialized = JSON.stringify({
+      state_revision: stateRevision,
+      claim: normalizedClaim.value,
+      candidate: orderedCandidate,
+    });
+    if (typeof serialized !== "string") return failure("integrity_claim_invalid");
+    return success({
+      candidate: preparedCandidate.value,
+      claim: normalizedClaim.value,
+      bytes: new TextEncoder().encode(serialized),
+    });
+  } catch {
+    return failure("integrity_claim_invalid");
+  }
+}
+
+function prepareStateCandidateSnapshot(candidate, allowedStatuses, failureReason) {
+  const snapshot = inspectStateCandidate(candidate);
+  if (snapshot === null) return failure(failureReason);
+
+  let validation;
+  try {
+    validation = validateCandidate(snapshot);
+  } catch {
+    return failure(failureReason);
+  }
+  if (!validation.ok || !allowedStatuses.includes(snapshot.status)) {
+    return failure(failureReason);
+  }
+
+  for (const [field, expectedKind] of [
+    ["source_session_identity", "session"],
+    ["repository_identity", "repository"],
+    ["worktree_identity", "worktree"],
+  ]) {
+    let identity;
+    try {
+      identity = validateOpaqueIdentity(snapshot[field]);
+    } catch {
+      return failure(failureReason);
+    }
+    if (!identity.ok || identity.kind !== expectedKind) return failure(failureReason);
+  }
+
+  try {
+    for (const field of CANDIDATE_FIELDS) {
+      if (Array.isArray(snapshot[field])) Object.freeze(snapshot[field]);
+    }
+    Object.freeze(snapshot);
+    return success(snapshot);
+  } catch {
+    return failure(failureReason);
+  }
+}
+
+function inspectStateCandidate(input) {
+  try {
+    const inspected = inspectExactDataObject(input, CANDIDATE_FIELDS);
+    if (!inspected.ok) return null;
+    const snapshot = {};
+    for (const field of CANDIDATE_FIELDS) {
+      const value = inspected.values[field];
+      if (typeof value === "function") return null;
+      if (Array.isArray(value)) {
+        const copied = copyStateArray(value);
+        if (copied === null) return null;
+        snapshot[field] = copied;
+      } else {
+        if (value !== null && typeof value === "object") return null;
+        snapshot[field] = value;
+      }
+    }
+    return snapshot;
+  } catch {
+    return null;
+  }
+}
+
+function copyStateArray(input) {
+  try {
+    if (Object.getPrototypeOf(input) !== Array.prototype) return null;
+    const keys = Reflect.ownKeys(input);
+    const lengthDescriptor = Object.getOwnPropertyDescriptor(input, "length");
+    if (!lengthDescriptor
+      || !Object.hasOwn(lengthDescriptor, "value")
+      || lengthDescriptor.enumerable
+      || lengthDescriptor.configurable
+      || !Number.isSafeInteger(lengthDescriptor.value)
+      || lengthDescriptor.value < 0
+      || keys.length !== lengthDescriptor.value + 1
+      || keys[keys.length - 1] !== "length") return null;
+
+    const copy = [];
+    for (let index = 0; index < lengthDescriptor.value; index += 1) {
+      const key = String(index);
+      if (keys[index] !== key) return null;
+      const descriptor = Object.getOwnPropertyDescriptor(input, key);
+      if (!isEnumerableDataDescriptor(descriptor)) return null;
+      copy.push(descriptor.value);
+    }
+    return copy;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeClaimMetadata(candidate, claim) {
+  if (candidate.status !== "claimed") {
+    return claim === null ? success(null) : failure("integrity_claim_invalid");
+  }
+  const inspected = inspectExactDataObject(claim, CLAIM_KEYS);
+  if (!inspected.ok) return failure("integrity_claim_invalid");
+
+  const owner = validateOpaqueIdentity(inspected.values.claim_owner_identity);
+  if (!owner.ok || owner.kind !== "session") return failure("integrity_claim_invalid");
+  if (typeof inspected.values.claim_attempt_id !== "string"
+    || !CLAIM_ATTEMPT_ID_PATTERN.test(inspected.values.claim_attempt_id)) {
+    return failure("integrity_claim_invalid");
+  }
+  if (!isUtcIsoTimestamp(inspected.values.claim_started_at)
+    || !isUtcIsoTimestamp(inspected.values.claim_lease_expires_at)) {
+    return failure("integrity_claim_invalid");
+  }
+  const startedAt = Date.parse(inspected.values.claim_started_at);
+  const leaseExpiresAt = Date.parse(inspected.values.claim_lease_expires_at);
+  const candidateExpiresAt = Date.parse(candidate.expires_at);
+  if (!(startedAt < leaseExpiresAt) || leaseExpiresAt > candidateExpiresAt) {
+    return failure("integrity_claim_invalid");
+  }
+
+  return success(Object.freeze({
+    claim_owner_identity: inspected.values.claim_owner_identity,
+    claim_started_at: inspected.values.claim_started_at,
+    claim_lease_expires_at: inspected.values.claim_lease_expires_at,
+    claim_attempt_id: inspected.values.claim_attempt_id,
+  }));
+}
+
 function validRevision(value) {
   return Number.isSafeInteger(value) && value >= 0;
+}
+
+function isUtcIsoTimestamp(value) {
+  if (
+    typeof value !== "string"
+    || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value)
+  ) {
+    return false;
+  }
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return false;
+  const normalized = value.includes(".")
+    ? value
+    : value.replace(/Z$/, ".000Z");
+  return new Date(timestamp).toISOString() === normalized;
 }
 
 function inspectDependencies(value) {
@@ -400,6 +674,15 @@ function publicReason(error, fallback) {
   } catch {
     return fallback;
   }
+}
+
+function isEnumerableDataDescriptor(descriptor) {
+  return descriptor !== undefined
+    && descriptor !== null
+    && descriptor.enumerable === true
+    && Object.hasOwn(descriptor, "value")
+    && !Object.hasOwn(descriptor, "get")
+    && !Object.hasOwn(descriptor, "set");
 }
 
 function inspectExactDataObject(value, expectedKeys) {

@@ -376,7 +376,14 @@ await group("API and revision contract", async () => {
 
   await test("keeps read/write and adds only snapshot/CAS methods at the Store boundary", async () => {
     await withStore(async ({ store }) => {
-      assert.deepEqual(Object.keys(store).sort(), ["compareAndSet", "read", "readSnapshot", "write"]);
+      assert.deepEqual(Object.keys(store).sort(), [
+        "compareAndSet",
+        "compareAndSetState",
+        "read",
+        "readSnapshot",
+        "readState",
+        "write",
+      ]);
       for (const method of Object.keys(store)) assert.equal(typeof store[method], "function");
     });
   });

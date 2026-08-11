@@ -112,7 +112,14 @@ function assertFrozenSuccess(result) {
 
 function assertFactorySuccess(result) {
   const store = assertFrozenSuccess(result);
-  assert.deepEqual(Object.keys(store).sort(), ["compareAndSet", "read", "readSnapshot", "write"]);
+  assert.deepEqual(Object.keys(store).sort(), [
+    "compareAndSet",
+    "compareAndSetState",
+    "read",
+    "readSnapshot",
+    "readState",
+    "write",
+  ]);
   assert.equal(typeof store.read, "function");
   assert.equal(typeof store.write, "function");
   assert.equal(typeof store.readSnapshot, "function");
@@ -247,7 +254,14 @@ await group("API contract", async () => {
     assertFrozenFailure(createPendingHandoffStore({}), "store_root_invalid");
     await withStore(async ({ store }) => {
       assert.equal(Object.isFrozen(store), true);
-      assert.deepEqual(Object.keys(store).sort(), ["compareAndSet", "read", "readSnapshot", "write"]);
+      assert.deepEqual(Object.keys(store).sort(), [
+        "compareAndSet",
+        "compareAndSetState",
+        "read",
+        "readSnapshot",
+        "readState",
+        "write",
+      ]);
       assertFrozenFailure(
         createPendingHandoffStore(storeOptions("/tmp/ignored", { fileSystem: {} })),
         "store_dependency_invalid",
@@ -528,14 +542,14 @@ await group("privacy and filesystem exception boundaries", async () => {
 });
 
 await group("static boundary and Makefile wiring", async () => {
-  await test("production exposes only the store boundary and has no logging side effects", () => {
+  await test("production exposes the store boundary without delivery side effects", () => {
     assert.equal((STORE_SOURCE.match(/^export\s+/gm) ?? []).length, 3);
     assert.match(STORE_SOURCE, /export const PENDING_HANDOFF_STORE_FAILURES/);
     assert.match(STORE_SOURCE, /export function derivePendingHandoffRecordKey\(candidateId\)/);
     assert.match(STORE_SOURCE, /export function createPendingHandoffStore\(options\)/);
     assert.doesNotMatch(STORE_SOURCE, /\b(?:console|fetch)\b/);
     assert.match(STORE_SOURCE, /compareAndSet|readSnapshot|state_revision/);
-    assert.doesNotMatch(STORE_SOURCE, /\bclaim\b|\blease\b|delivery|consume|session registry|sqlite/i);
+    assert.doesNotMatch(STORE_SOURCE, /delivery|consume|session registry|sqlite/i);
   });
 
   await test("store target is declared once and included last in V1.x", () => {
@@ -548,7 +562,7 @@ await group("static boundary and Makefile wiring", async () => {
     assert.notEqual(start, -1);
     const declaration = [lines[start]];
     while (declaration.at(-1).endsWith("\\")) declaration.push(lines[start + declaration.length]);
-    assert.equal(declaration.join(" ").replace(/^test-v1x-fixtures:\s*/, "").replaceAll("\\", " ").trim().split(/\s+/).at(-1), "test-pending-handoff-revision-cas-fixtures");
+    assert.equal(declaration.join(" ").replace(/^test-v1x-fixtures:\s*/, "").replaceAll("\\", " ").trim().split(/\s+/).at(-1), "test-pending-handoff-claim-lease-fixtures");
   });
 });
 
