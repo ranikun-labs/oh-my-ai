@@ -41,8 +41,10 @@
     { "id": "repository-claim-mismatch", "source_mode": "MAIN_HANDOFF", "jira_live_state": "NOT_PERFORMED", "git_preflight_result": "CONFLICTED", "gate_result": "JIRA_WORK_BLOCKED", "blocking": true, "allowed_next_step": "STOP", "mutation": 0 },
     { "id": "base-sha-claim-mismatch", "source_mode": "MAIN_HANDOFF", "jira_live_state": "NOT_PERFORMED", "git_preflight_result": "BLOCKED_BASE_MISMATCH", "gate_result": "JIRA_WORK_BLOCKED", "blocking": true, "allowed_next_step": "STOP", "mutation": 0 },
     { "id": "git-preflight-not-executed", "source_mode": "MAIN_HANDOFF", "jira_live_state": "NOT_PERFORMED", "git_preflight_result": "NOT_EXECUTED", "gate_result": "JIRA_WORK_BLOCKED", "blocking": true, "allowed_next_step": "STOP", "mutation": 0 },
+    { "id": "stale-pasted-ready-artifact", "source_mode": "MAIN_HANDOFF", "jira_live_state": "NOT_PERFORMED", "git_preflight_result": "NOT_EXECUTED", "gate_result": "JIRA_WORK_BLOCKED", "blocking": true, "allowed_next_step": "STOP", "mutation": 0 },
     { "id": "git-preflight-not-verifiable", "source_mode": "MAIN_HANDOFF", "jira_live_state": "NOT_PERFORMED", "git_preflight_result": "NOT_VERIFIABLE", "gate_result": "JIRA_WORK_BLOCKED", "blocking": true, "allowed_next_step": "STOP", "mutation": 0 },
     { "id": "fast-lane-feature", "risk_tier": "FAST_LANE", "jira_work_requirement": "OPTIONAL", "gate_result": "NOT_INVOKED", "blocking": false, "allowed_next_step": "GIT_PREFLIGHT_THEN_WORKER", "mutation": 0 },
-    { "id": "deep-lane-security", "risk_tier": "DEEP_LANE", "jira_work_requirement": "MANDATORY", "gate_result": "JIRA_WORK_BLOCKED", "blocking": true, "allowed_next_step": "RUN_JIRA_WORK_GATE", "mutation": 0 }
+    { "id": "deep-lane-security", "risk_tier": "DEEP_LANE", "jira_work_requirement": "PREFERRED", "gate_result": "NOT_INVOKED", "blocking": false, "allowed_next_step": "PREFER_JIRA_WORK_WHEN_RISK_JUSTIFIES", "mutation": 0 },
+    { "id": "deep-lane-invoked-fail-closed", "source_mode": "MAIN_HANDOFF", "jira_live_state": "NOT_PERFORMED", "git_preflight_result": "NOT_VERIFIABLE", "risk_tier": "DEEP_LANE", "jira_work_requirement": "PREFERRED", "gate_result": "JIRA_WORK_BLOCKED", "blocking": true, "allowed_next_step": "STOP", "mutation": 0 }
   ]
 }

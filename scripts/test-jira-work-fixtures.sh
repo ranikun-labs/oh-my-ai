@@ -182,9 +182,11 @@ const expectedScenarios = {
   "repository-claim-mismatch": { source_mode: "MAIN_HANDOFF", jira_live_state: "NOT_PERFORMED", git_preflight_result: "CONFLICTED", gate_result: "JIRA_WORK_BLOCKED", blocking: true, allowed_next_step: "STOP", mutation: 0 },
   "base-sha-claim-mismatch": { source_mode: "MAIN_HANDOFF", jira_live_state: "NOT_PERFORMED", git_preflight_result: "BLOCKED_BASE_MISMATCH", gate_result: "JIRA_WORK_BLOCKED", blocking: true, allowed_next_step: "STOP", mutation: 0 },
   "git-preflight-not-executed": { source_mode: "MAIN_HANDOFF", jira_live_state: "NOT_PERFORMED", git_preflight_result: "NOT_EXECUTED", gate_result: "JIRA_WORK_BLOCKED", blocking: true, allowed_next_step: "STOP", mutation: 0 },
+  "stale-pasted-ready-artifact": { source_mode: "MAIN_HANDOFF", jira_live_state: "NOT_PERFORMED", git_preflight_result: "NOT_EXECUTED", gate_result: "JIRA_WORK_BLOCKED", blocking: true, allowed_next_step: "STOP", mutation: 0 },
   "git-preflight-not-verifiable": { source_mode: "MAIN_HANDOFF", jira_live_state: "NOT_PERFORMED", git_preflight_result: "NOT_VERIFIABLE", gate_result: "JIRA_WORK_BLOCKED", blocking: true, allowed_next_step: "STOP", mutation: 0 },
   "fast-lane-feature": { risk_tier: "FAST_LANE", jira_work_requirement: "OPTIONAL", gate_result: "NOT_INVOKED", blocking: false, allowed_next_step: "GIT_PREFLIGHT_THEN_WORKER", mutation: 0 },
-  "deep-lane-security": { risk_tier: "DEEP_LANE", jira_work_requirement: "MANDATORY", gate_result: "JIRA_WORK_BLOCKED", blocking: true, allowed_next_step: "RUN_JIRA_WORK_GATE", mutation: 0 },
+  "deep-lane-security": { risk_tier: "DEEP_LANE", jira_work_requirement: "PREFERRED", gate_result: "NOT_INVOKED", blocking: false, allowed_next_step: "PREFER_JIRA_WORK_WHEN_RISK_JUSTIFIES", mutation: 0 },
+  "deep-lane-invoked-fail-closed": { source_mode: "MAIN_HANDOFF", jira_live_state: "NOT_PERFORMED", git_preflight_result: "NOT_VERIFIABLE", risk_tier: "DEEP_LANE", jira_work_requirement: "PREFERRED", gate_result: "JIRA_WORK_BLOCKED", blocking: true, allowed_next_step: "STOP", mutation: 0 },
 };
 
 const expectedSourceList = [
@@ -293,6 +295,8 @@ function validateContract(input) {
     normalizedSkill.includes("The preflight must be actually executed. A pasted report, a prior run, or supplied prose is not consumption."),
     "missing actual git-work-preflight consumption contract"
   );
+  invariant(normalizedSkill.includes("Deep Lane is a preferred execution gate, not a mandatory route."), "missing preferred Deep Lane contract");
+  invariant(!normalizedSkill.includes("The gate is mandatory."), "Deep Lane must not be mandatory");
   invariant(
     normalizedSkill.includes("Never persist a Jira Description, Confluence body, Raw Transcript, Raw Tool Output, Credential, Token, Secret, Cloud ID, or Account ID."),
     "missing complete privacy prohibition"

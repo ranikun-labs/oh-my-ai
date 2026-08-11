@@ -1,6 +1,6 @@
 interface:
   display_name: "Jira Work Readiness Gate"
-  short_description: "Verify high-risk Jira contract and repository readiness"
+  short_description: "Verify preferred high-risk Jira and repository readiness"
   default_prompt: "Use $jira-work <ISSUE-KEY> to validate the selected source contract, run the shared Git preflight, and report execution readiness."
 
 policy:

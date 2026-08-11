@@ -1,9 +1,9 @@
 ---
 name: jira-work
-description: Use only when a user explicitly invokes $jira-work for an existing Jira issue and needs the high-risk repository execution-readiness gate before implementation or resume.
+description: Use only when a user explicitly invokes $jira-work for an existing Jira issue and needs the preferred high-risk repository execution-readiness gate before implementation or resume.
 metadata:
   source: born-here
-  summary: Main Contract와 Repository Reality를 검증하는 high-risk execution readiness gate
+  summary: Main Contract와 Repository Reality를 검증하는 preferred high-risk execution readiness gate
 ---
 
 # Jira Work — Execution Readiness Gate
@@ -50,10 +50,11 @@ Main classifies the work before invocation.
 | Lane | Examples | Route |
 |---|---|---|
 | Fast Lane | General UI, ordinary Feature, Small Bug, simple documentation | Web Main → `git-work-preflight` → Worker. `jira-work` is optional. |
-| Deep Lane | Auth/Security, Secret/Privacy, DB or Schema Migration, Backfill, CAS/Lock/Concurrency, Shared Platform, Cross-repository Contract, Destructive Git, Release/Deploy, Repository Ownership | Web Main → `jira-work` → Worker. The gate is mandatory. |
+| Deep Lane | Auth/Security, Secret/Privacy, DB or Schema Migration, Backfill, CAS/Lock/Concurrency, Shared Platform, Cross-repository Contract, Destructive Git, Release/Deploy, Repository Ownership | Web Main should prefer `jira-work` when the risk justifies it, then proceed to the Worker only if an invoked gate passes. |
 
-An explicit Fast Lane invocation still runs the full gate. Risk classification
-does not weaken any claim once `jira-work` is invoked.
+Deep Lane is a preferred execution gate, not a mandatory route. An explicit
+Fast or Deep Lane invocation still runs the full gate. Risk classification does
+not weaken any claim once `jira-work` is invoked.
 
 ## Source modes
 
@@ -154,6 +155,13 @@ supplied prose is not consumption. `jira-work` may return ready only when the
 current process has `Process Exit Code: 0` and `Preflight Result` is exactly
 `READY_NEW_WORK` or `READY_RESUME`. It must consume the fields rather than
 reimplement Git safety rules.
+
+The current Skill architecture has no durable nonce or machine-verifiable
+freshness channel. The semantic fixture rejects a stale or pasted artifact when
+current execution is `NOT_EXECUTED`, but cannot independently authenticate an
+external report as fresh. The Worker must therefore execute the shared runtime
+in the current invocation and inspect its process result. Durable Evidence
+Handoff remains out of scope.
 
 Map all other preflight results fail-closed:
 

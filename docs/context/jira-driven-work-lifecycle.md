@@ -11,7 +11,7 @@ oh-my-ai will model Jira work as two separate, optional skills:
 1. `jira-ticket` authors a Ticket Contract. It collects sources, presents a
    preview, creates the Jira issue only after explicit user approval, reports
    the issue key and URL, and then stops.
-2. `jira-work` is the Deep Lane execution-readiness gate. It validates either
+2. `jira-work` is the preferred Deep Lane execution-readiness gate. It validates either
    current Connector evidence plus the Main Contract, or a structured Main
    Handoff, and must consume the shared Git preflight before the Worker begins.
 
@@ -103,8 +103,10 @@ Digest and durable machine-verifiable evidence handoff remain out of scope.
   Main → Git Preflight → Worker. `jira-work` is optional.
 - Deep Lane: Auth/Security, Secret/Privacy, DB/Schema Migration, Backfill,
   CAS/Lock/Concurrency, Shared Platform, Cross-repository Contract, Destructive
-  Git, Release/Deploy, and Repository Ownership use Web Main → `jira-work` →
-  Worker.
+  Git, Release/Deploy, and Repository Ownership should prefer Web Main →
+  `jira-work` → Worker when the risk justifies the additional gate. The route is
+  recommended, not mandatory; once invoked, every gate claim remains
+  fail-closed.
 
 ## Common Ticket Contract
 
@@ -207,8 +209,17 @@ Ticket-level Verification and repository verification rules are both mandatory.
 If a required check fails, or cannot be executed, the work is not verified:
 commit, push, and draft PR are prohibited. The changed files are preserved, and
 the result must report the failure evidence and a recovery procedure. This
-decision deliberately does not introduce a Ticket-level verification-exception
-format; that is an open follow-up decision.
+preserves fail-closed semantics after `jira-work` has been invoked; it does not
+make Deep Lane invocation mandatory. This decision deliberately does not
+introduce a Ticket-level verification-exception format; that is an open
+follow-up decision.
+
+Current-invocation consumption is procedural in this version: the Worker must
+execute `git-work-preflight` and inspect its process result during the same
+invocation. Semantic fixtures reject a stale or pasted artifact represented as
+`NOT_EXECUTED`, but there is no durable nonce or machine-verifiable freshness
+channel that can authenticate an external report. That evidence system remains
+out of scope.
 
 Partial success is state to preserve, not a reason to issue compensating
 mutations:
