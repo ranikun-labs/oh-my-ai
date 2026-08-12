@@ -680,7 +680,7 @@ await group("static boundary and Makefile wiring", async () => {
     assert.doesNotMatch(STORE_SOURCE, /^export\s+[^\n]*getPort/m);
   });
 
-  await test("store target is declared once and included last in V1.x", () => {
+  await test("store target is declared once before later Pending Handoff fixtures", () => {
     const makefile = readFileSync(fileURLToPath(new URL("../Makefile", import.meta.url)), "utf8");
     assert.equal((makefile.match(/^test-pending-handoff-store-fixtures:/gm) ?? []).length, 1);
     assert.match(makefile, /^test-pending-handoff-store-fixtures:\n\tnode \.\/scripts\/test-pending-handoff-store-fixtures\.mjs$/m);
@@ -690,7 +690,9 @@ await group("static boundary and Makefile wiring", async () => {
     assert.notEqual(start, -1);
     const declaration = [lines[start]];
     while (declaration.at(-1).endsWith("\\")) declaration.push(lines[start + declaration.length]);
-    assert.equal(declaration.join(" ").replace(/^test-v1x-fixtures:\s*/, "").replaceAll("\\", " ").trim().split(/\s+/).at(-1), "test-pending-handoff-delivery-consumption-fixtures");
+    const targets = declaration.join(" ").replace(/^test-v1x-fixtures:\s*/, "").replaceAll("\\", " ").trim().split(/\s+/);
+    assert.ok(targets.indexOf("test-pending-handoff-store-fixtures") < targets.indexOf("test-pending-handoff-session-resolution-fixtures"));
+    assert.equal(targets.at(-1), "test-pending-handoff-session-resolution-fixtures");
   });
 });
 

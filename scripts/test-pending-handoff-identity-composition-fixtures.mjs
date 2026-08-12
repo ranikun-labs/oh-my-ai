@@ -858,7 +858,7 @@ await group("static boundary and Makefile contract", async () => {
     assert.notEqual(start, -1);
     const declaration = [lines[start]];
     while (declaration.at(-1).endsWith("\\")) declaration.push(lines[start + declaration.length]);
-    assert.deepEqual(declaration.join(" ").replace(/^test-v1x-fixtures:\s*/, "").replaceAll("\\", " ").trim().split(/\s+/).slice(-9), [
+    assert.deepEqual(declaration.join(" ").replace(/^test-v1x-fixtures:\s*/, "").replaceAll("\\", " ").trim().split(/\s+/).slice(-10), [
       "test-pending-handoff-identity-fixtures",
       "test-pending-handoff-secret-provider-fixtures",
       "test-pending-handoff-identity-composition-fixtures",
@@ -868,6 +868,7 @@ await group("static boundary and Makefile contract", async () => {
       "test-pending-handoff-revision-cas-fixtures",
       "test-pending-handoff-claim-lease-fixtures",
       "test-pending-handoff-delivery-consumption-fixtures",
+      "test-pending-handoff-session-resolution-fixtures",
     ]);
   });
 });

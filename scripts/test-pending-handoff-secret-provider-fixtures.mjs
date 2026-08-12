@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import {
   compareIdentityScope,
   deriveRepositoryIdentity,
@@ -842,9 +844,8 @@ test("Group 12 Makefile runs the bounded target once after Core and Identity onl
     "test-pending-handoff-revision-cas-fixtures",
     "test-pending-handoff-claim-lease-fixtures",
     "test-pending-handoff-delivery-consumption-fixtures",
+    "test-pending-handoff-session-resolution-fixtures",
   ]);
-  const { spawnSync } = process.getBuiltinModule("node:child_process");
-  const { fileURLToPath } = process.getBuiltinModule("node:url");
   const dryRun = spawnSync("make", ["-n", "test-v1x-fixtures"], {
     cwd: fileURLToPath(new URL("..", import.meta.url)),
     encoding: "utf8",

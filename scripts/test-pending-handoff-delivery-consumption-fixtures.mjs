@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
 import * as fileSystem from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -73,7 +74,7 @@ function readSource(relativePath) {
 }
 
 function requireSource(location) {
-  return process.getBuiltinModule("node:fs").readFileSync(location, "utf8");
+  return readFileSync(location, "utf8");
 }
 
 function assertSuccess(result) {

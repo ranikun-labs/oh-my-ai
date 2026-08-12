@@ -833,7 +833,7 @@ await group("Static scope and wiring", async () => {
     assert.doesNotMatch(INTEGRITY_SOURCE, /console|process\.stdout|process\.stderr|fetch/);
   });
 
-  await test("wires Integrity before the Revision/CAS fixture in V1.x", () => {
+  await test("wires Integrity before the Revision/CAS and Session Resolution fixtures in V1.x", () => {
     const makefile = readFileSync(fileURLToPath(new URL("../Makefile", import.meta.url)), "utf8");
     assert.equal((makefile.match(/^test-pending-handoff-integrity-fixtures:/gm) ?? []).length, 1);
     assert.match(
@@ -846,7 +846,7 @@ await group("Static scope and wiring", async () => {
     const declaration = [lines[start]];
     while (declaration.at(-1).endsWith("\\")) declaration.push(lines[start + declaration.length]);
     const targets = declaration.join(" ").replace(/^test-v1x-fixtures:\s*/, "").replaceAll("\\", " ").trim().split(/\s+/);
-    assert.equal(targets.at(-1), "test-pending-handoff-delivery-consumption-fixtures");
+    assert.equal(targets.at(-1), "test-pending-handoff-session-resolution-fixtures");
     assert.ok(targets.indexOf("test-pending-handoff-store-fixtures") < targets.indexOf("test-pending-handoff-integrity-fixtures"));
     assert.ok(targets.indexOf("test-pending-handoff-integrity-fixtures") < targets.indexOf("test-pending-handoff-revision-cas-fixtures"));
     assert.ok(targets.indexOf("test-pending-handoff-claim-lease-fixtures") < targets.indexOf("test-pending-handoff-delivery-consumption-fixtures"));
