@@ -13,14 +13,19 @@ import { join, resolve } from "node:path";
 import { canonicalizePendingHandoffCandidate } from "./pending-handoff-candidate.mjs";
 import {
   createPendingHandoffClaimIntegrityEnvelope,
+  createPendingHandoffDeliveryIntegrityEnvelope,
   createPendingHandoffIntegrityDependencies,
   createPendingHandoffRevisionIntegrityEnvelope,
   PENDING_HANDOFF_CLAIM_ENVELOPE_VERSION,
+  PENDING_HANDOFF_DELIVERY_ENVELOPE_VERSION,
   PENDING_HANDOFF_REVISION_ENVELOPE_VERSION,
   verifyPendingHandoffClaimIntegrityEnvelope,
+  verifyPendingHandoffDeliveryIntegrityEnvelope,
   verifyPendingHandoffIntegrityEnvelope,
   verifyPendingHandoffRevisionIntegrityEnvelope,
 } from "./pending-handoff-integrity.mjs";
+import { createPendingHandoffClaimLeaseService } from "./pending-handoff-claim-lease.mjs";
+import { createPendingHandoffDeliveryConsumptionService } from "./pending-handoff-delivery-consumption.mjs";
 
 const RECORD_FILE_NAME = "record.json";
 const CAS_LOCK_DIRECTORY_NAME = ".cas-lock";
@@ -50,6 +55,15 @@ const DEFAULT_FILE_SYSTEM = Object.freeze({
   unlink,
   readFile,
 });
+const RUNTIME_REQUIRED_KEYS = Object.freeze([
+  "rootDirectory",
+  "integrityProvider",
+  "leaseDurationMs",
+  "clock",
+  "deliveryCandidateDigest",
+  "deliveryEvidenceVerifier",
+]);
+const RUNTIME_ALLOWED_KEYS = Object.freeze([...RUNTIME_REQUIRED_KEYS, "fileSystem"]);
 
 export const PENDING_HANDOFF_STORE_FAILURES = Object.freeze([
   "store_root_invalid",
@@ -75,6 +89,9 @@ export const PENDING_HANDOFF_STORE_FAILURES = Object.freeze([
   "record_write_failed",
   "record_replace_failed",
 ]);
+export const PENDING_HANDOFF_RUNTIME_FAILURES = Object.freeze([
+  "runtime_dependency_invalid",
+]);
 
 export function derivePendingHandoffRecordKey(candidateId) {
   try {
@@ -98,16 +115,50 @@ export function createPendingHandoffStore(options) {
   const inspected = inspectOptions(options);
   if (!inspected.ok) return failure(inspected.reason);
 
-  const { rootDirectory, fileSystem, integrity } = inspected.value;
+  return success(createStoreComposition(inspected.value).store);
+}
+
+export function createPendingHandoffRuntime(options) {
+  const inspected = inspectRuntimeOptions(options);
+  if (!inspected.ok) return failure(inspected.reason);
+
+  const composition = createStoreComposition(inspected.value.store);
+  const claimLease = createPendingHandoffClaimLeaseService({
+    store: composition.store,
+    mutationPort: composition.mutationPort,
+    leaseDurationMs: inspected.value.leaseDurationMs,
+    clock: inspected.value.clock,
+  });
+  if (!claimLease.ok) return failure("runtime_dependency_invalid");
+
+  const deliveryConsumption = createPendingHandoffDeliveryConsumptionService({
+    store: composition.store,
+    mutationPort: composition.mutationPort,
+    clock: inspected.value.clock,
+    deliveryCandidateDigest: inspected.value.deliveryCandidateDigest,
+    deliveryEvidenceVerifier: inspected.value.deliveryEvidenceVerifier,
+  });
+  if (!deliveryConsumption.ok) return failure("runtime_dependency_invalid");
+
+  return success(Object.freeze({
+    store: composition.store,
+    claimLease: claimLease.value,
+    deliveryConsumption: deliveryConsumption.value,
+  }));
+}
+
+function createStoreComposition({ rootDirectory, fileSystem, integrity }) {
+  const mutationPort = Object.freeze({
+    compareAndSetState: request => compareAndSetState(rootDirectory, fileSystem, integrity, request),
+  });
   const store = Object.freeze({
     compareAndSet: request => compareAndSet(rootDirectory, fileSystem, integrity, request),
-    compareAndSetState: request => compareAndSetState(rootDirectory, fileSystem, integrity, request),
     write: record => writeRecord(rootDirectory, fileSystem, integrity, record),
     read: candidateId => readRecord(rootDirectory, fileSystem, integrity, candidateId),
     readSnapshot: candidateId => readSnapshot(rootDirectory, fileSystem, integrity, candidateId),
     readState: candidateId => readState(rootDirectory, fileSystem, integrity, candidateId),
   });
-  return success(store);
+  return Object.freeze({ store, mutationPort });
 }
 
 async function writeRecord(rootDirectory, fileSystem, integrity, record) {
@@ -219,6 +270,9 @@ async function readState(rootDirectory, fileSystem, integrity, candidateId) {
     candidate: verified.value.candidate,
     state_revision: verified.value.state_revision,
     claim: verified.value.claim,
+    ...(verified.value.version === PENDING_HANDOFF_DELIVERY_ENVELOPE_VERSION
+      ? { delivery: verified.value.delivery }
+      : {}),
   }));
 }
 
@@ -342,10 +396,23 @@ async function compareAndSetState(rootDirectory, fileSystem, integrity, request)
     if (verified.value.state_revision === MAX_REVISION) {
       return failure("revision_exhausted");
     }
+    if (verified.value.version === PENDING_HANDOFF_DELIVERY_ENVELOPE_VERSION
+      && nextState.delivery === undefined) {
+      return failure("record_invalid");
+    }
 
     const nextRevision = verified.value.state_revision + 1;
-    const envelope = nextState.claim !== null
+    const envelope = nextState.delivery !== undefined && nextState.delivery !== null
+      ? createPendingHandoffDeliveryIntegrityEnvelope(
+        nextState.candidate,
+        nextRevision,
+        nextState.claim,
+        nextState.delivery,
+        integrity,
+      )
+      : nextState.claim !== null
       || verified.value.version === PENDING_HANDOFF_CLAIM_ENVELOPE_VERSION
+      || verified.value.version === PENDING_HANDOFF_DELIVERY_ENVELOPE_VERSION
       || nextState.candidate.status === "expired"
       ? createPendingHandoffClaimIntegrityEnvelope(
         nextState.candidate,
@@ -421,6 +488,18 @@ async function loadRecord(rootDirectory, fileSystem, candidateId) {
 }
 
 function verifyStoredEnvelope(envelope, integrity, snapshot) {
+  if (envelope?.envelope_version === PENDING_HANDOFF_DELIVERY_ENVELOPE_VERSION) {
+    const verified = verifyPendingHandoffDeliveryIntegrityEnvelope(envelope, integrity);
+    if (!verified.ok) return failure(mapIntegrityReadFailure(verified.reason, snapshot));
+    return success(Object.freeze({
+      candidate: verified.value.candidate,
+      state_revision: verified.value.state_revision,
+      claim: verified.value.claim,
+      delivery: verified.value.delivery,
+      legacy: false,
+      version: PENDING_HANDOFF_DELIVERY_ENVELOPE_VERSION,
+    }));
+  }
   if (envelope?.envelope_version === PENDING_HANDOFF_CLAIM_ENVELOPE_VERSION) {
     const verified = verifyPendingHandoffClaimIntegrityEnvelope(envelope, integrity);
     if (!verified.ok) return failure(mapIntegrityReadFailure(verified.reason, snapshot));
@@ -503,8 +582,8 @@ function inspectStateCompareAndSetRequest(request) {
     }
 
     const stateKeys = Reflect.ownKeys(request.next_state);
-    if (stateKeys.length !== 2 || stateKeys.some(key => (
-      typeof key !== "string" || !["candidate", "claim"].includes(key)
+    if ((stateKeys.length !== 2 && stateKeys.length !== 3) || stateKeys.some(key => (
+      typeof key !== "string" || !["candidate", "claim", "delivery"].includes(key)
     ))) return failure("record_invalid");
     for (const key of ["candidate", "claim"]) {
       const descriptor = Object.getOwnPropertyDescriptor(request.next_state, key);
@@ -513,12 +592,22 @@ function inspectStateCompareAndSetRequest(request) {
     if (request.next_state.claim !== null && !isPlainObject(request.next_state.claim)) {
       return failure("record_invalid");
     }
+    let delivery;
+    if (Object.hasOwn(request.next_state, "delivery")) {
+      const descriptor = Object.getOwnPropertyDescriptor(request.next_state, "delivery");
+      if (!isEnumerableDataDescriptor(descriptor)) return failure("record_invalid");
+      if (request.next_state.delivery !== null && !isPlainObject(request.next_state.delivery)) {
+        return failure("record_invalid");
+      }
+      delivery = request.next_state.delivery;
+    }
     return success(Object.freeze({
       candidateId: request.candidate_id,
       expectedRevision: request.expected_revision,
       nextState: Object.freeze({
         candidate: request.next_state.candidate,
         claim: request.next_state.claim,
+        delivery,
       }),
     }));
   } catch {
@@ -782,6 +871,53 @@ function isWellFormedUnicode(value) {
   return true;
 }
 
+function inspectRuntimeOptions(options) {
+  try {
+    if (!isPlainObject(options)) return failure("runtime_dependency_invalid");
+    const keys = Reflect.ownKeys(options);
+    if ((keys.length !== RUNTIME_REQUIRED_KEYS.length
+      && keys.length !== RUNTIME_ALLOWED_KEYS.length)
+      || keys.some(key => typeof key !== "string" || !RUNTIME_ALLOWED_KEYS.includes(key))) {
+      return failure("runtime_dependency_invalid");
+    }
+    for (const key of RUNTIME_REQUIRED_KEYS) {
+      if (!isEnumerableDataDescriptor(Object.getOwnPropertyDescriptor(options, key))) {
+        return failure("runtime_dependency_invalid");
+      }
+    }
+    if (Object.hasOwn(options, "fileSystem")
+      && !isEnumerableDataDescriptor(Object.getOwnPropertyDescriptor(options, "fileSystem"))) {
+      return failure("runtime_dependency_invalid");
+    }
+
+    const storeOptions = {
+      rootDirectory: options.rootDirectory,
+      integrityProvider: options.integrityProvider,
+      ...(Object.hasOwn(options, "fileSystem") ? { fileSystem: options.fileSystem } : {}),
+    };
+    const store = inspectOptions(storeOptions);
+    if (!store.ok
+      || !Number.isSafeInteger(options.leaseDurationMs)
+      || options.leaseDurationMs <= 0
+      || typeof options.clock !== "function"
+      || typeof options.deliveryCandidateDigest !== "function"
+      || typeof options.deliveryEvidenceVerifier !== "function"
+      || !Object.isFrozen(options.deliveryCandidateDigest)
+      || !Object.isFrozen(options.deliveryEvidenceVerifier)) {
+      return failure("runtime_dependency_invalid");
+    }
+    return success(Object.freeze({
+      store: store.value,
+      leaseDurationMs: options.leaseDurationMs,
+      clock: options.clock,
+      deliveryCandidateDigest: options.deliveryCandidateDigest,
+      deliveryEvidenceVerifier: options.deliveryEvidenceVerifier,
+    }));
+  } catch {
+    return failure("runtime_dependency_invalid");
+  }
+}
+
 function inspectOptions(options) {
   try {
     if (!isPlainObject(options)) return failure("store_root_invalid");
@@ -916,6 +1052,7 @@ function mapCasStateIntegrityFailure(reason) {
     "integrity_revision_invalid",
     "integrity_candidate_invalid",
     "integrity_claim_invalid",
+    "integrity_delivery_invalid",
   ].includes(reason)
     ? reason === "integrity_revision_invalid" ? "revision_invalid" : "record_invalid"
     : "cas_publish_failed";

@@ -378,7 +378,6 @@ await group("API and revision contract", async () => {
     await withStore(async ({ store }) => {
       assert.deepEqual(Object.keys(store).sort(), [
         "compareAndSet",
-        "compareAndSetState",
         "read",
         "readSnapshot",
         "readState",

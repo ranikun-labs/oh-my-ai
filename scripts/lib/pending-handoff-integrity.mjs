@@ -42,6 +42,7 @@ const PROVIDER_VERSION = "phr-integrity-provider-v1";
 const ENVELOPE_VERSION = "phr-integrity-envelope-v1";
 const REVISION_ENVELOPE_VERSION = "phr-integrity-envelope-v2";
 const CLAIM_ENVELOPE_VERSION = "phr-integrity-envelope-v3";
+const DELIVERY_ENVELOPE_VERSION = "phr-integrity-envelope-v4";
 const PURPOSE = "pending-handoff-integrity";
 const ALGORITHM = "hmac-sha256-base64url-v1";
 const KEY_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
@@ -59,7 +60,47 @@ const CLAIM_KEYS = Object.freeze([
   "claim_lease_expires_at",
   "claim_attempt_id",
 ]);
+const DELIVERY_ENVELOPE_KEYS = Object.freeze([
+  "envelope_version",
+  "state_revision",
+  "claim",
+  "delivery",
+  "integrity",
+  "candidate",
+]);
+const DELIVERY_EVIDENCE_KEYS = Object.freeze([
+  "verification",
+  "evidence_id",
+  "candidate_id",
+  "candidate_digest",
+  "current_session_identity",
+  "claim_attempt_id",
+  "delivery_attempt_id",
+  "runtime",
+  "adapter_version",
+  "injection_surface_accepted",
+  "candidate_available",
+  "confirmed_at",
+]);
+const DELIVERY_ATTEMPT_KEYS = Object.freeze([
+  "delivery_attempt_id",
+  "delivery_attempted_at",
+  "delivery_candidate_digest",
+]);
+const DELIVERY_CONFIRMED_KEYS = Object.freeze([
+  ...DELIVERY_ATTEMPT_KEYS,
+  "evidence",
+  "delivered_at",
+]);
+const DELIVERY_CONSUMED_KEYS = Object.freeze([
+  ...DELIVERY_CONFIRMED_KEYS,
+  "consumed_at",
+]);
 const CLAIM_ATTEMPT_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const DELIVERY_ATTEMPT_ID_PATTERN = CLAIM_ATTEMPT_ID_PATTERN;
+const EVIDENCE_ID_PATTERN = /^ev-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const RUNTIME_ID_PATTERN = /^[a-z][a-z0-9-]{0,31}$/;
+const ADAPTER_VERSION_PATTERN = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 const CLAIM_STATE_STATUSES = Object.freeze(["pending", "claimed", "expired"]);
 const DEPENDENCY_FAILURES = Object.freeze([
   "integrity_dependency_invalid",
@@ -86,6 +127,7 @@ export const PENDING_HANDOFF_INTEGRITY_PROVIDER_VERSION = PROVIDER_VERSION;
 export const PENDING_HANDOFF_INTEGRITY_PURPOSE = PURPOSE;
 export const PENDING_HANDOFF_REVISION_ENVELOPE_VERSION = REVISION_ENVELOPE_VERSION;
 export const PENDING_HANDOFF_CLAIM_ENVELOPE_VERSION = CLAIM_ENVELOPE_VERSION;
+export const PENDING_HANDOFF_DELIVERY_ENVELOPE_VERSION = DELIVERY_ENVELOPE_VERSION;
 export const PENDING_HANDOFF_REVISION_INTEGRITY_FAILURES = Object.freeze([
   ...PENDING_HANDOFF_INTEGRITY_FAILURES,
   "integrity_revision_invalid",
@@ -93,6 +135,10 @@ export const PENDING_HANDOFF_REVISION_INTEGRITY_FAILURES = Object.freeze([
 export const PENDING_HANDOFF_CLAIM_INTEGRITY_FAILURES = Object.freeze([
   ...PENDING_HANDOFF_REVISION_INTEGRITY_FAILURES,
   "integrity_claim_invalid",
+]);
+export const PENDING_HANDOFF_DELIVERY_INTEGRITY_FAILURES = Object.freeze([
+  ...PENDING_HANDOFF_CLAIM_INTEGRITY_FAILURES,
+  "integrity_delivery_invalid",
 ]);
 
 export function createPendingHandoffIntegrityDependencies(provider) {
@@ -176,6 +222,27 @@ export function verifyPendingHandoffIntegrityEnvelope(envelope, dependencies) {
   if (!comparison.ok) return failure(comparison.reason);
   if (!comparison.value) return failure("integrity_mismatch");
   return success(prepared.value.candidate);
+}
+
+export function createPendingHandoffCanonicalCandidateBytes(candidate) {
+  const prepared = prepareStateCandidateSnapshot(
+    candidate,
+    ["candidate", "pending", "claimed", "delivered", "consumed", "expired", "invalid"],
+    "integrity_candidate_invalid",
+  );
+  if (!prepared.ok) return failure(prepared.reason);
+  try {
+    const ordered = {};
+    for (const field of CANDIDATE_FIELDS) ordered[field] = prepared.value[field];
+    const serialized = JSON.stringify(ordered);
+    if (typeof serialized !== "string") return failure("integrity_candidate_invalid");
+    return success({
+      candidate: prepared.value,
+      bytes: new TextEncoder().encode(serialized),
+    });
+  } catch {
+    return failure("integrity_candidate_invalid");
+  }
 }
 
 export function createPendingHandoffRevisionIntegrityEnvelope(
@@ -311,6 +378,80 @@ export function verifyPendingHandoffClaimIntegrityEnvelope(envelope, dependencie
   }));
 }
 
+export function createPendingHandoffDeliveryIntegrityEnvelope(
+  candidate,
+  stateRevision,
+  claim,
+  delivery,
+  dependencies,
+) {
+  const dependencyStatus = inspectDependencies(dependencies);
+  if (!dependencyStatus.ok) return failure(dependencyStatus.reason);
+  if (!validRevision(stateRevision)) return failure("integrity_revision_invalid");
+
+  const prepared = prepareDeliveryState(candidate, stateRevision, claim, delivery);
+  if (!prepared.ok) return failure(prepared.reason);
+
+  const digest = callDigest(dependencies.current, prepared.value.bytes);
+  if (!digest.ok) return failure(digest.reason);
+  return success(Object.freeze({
+    envelope_version: DELIVERY_ENVELOPE_VERSION,
+    state_revision: stateRevision,
+    claim: prepared.value.claim,
+    delivery: prepared.value.delivery,
+    integrity: Object.freeze({
+      algorithm: ALGORITHM,
+      key_id: dependencies.current.key_id,
+      digest: digest.value,
+    }),
+    candidate: prepared.value.candidate,
+  }));
+}
+
+export function verifyPendingHandoffDeliveryIntegrityEnvelope(envelope, dependencies) {
+  const dependencyStatus = inspectDependencies(dependencies);
+  if (!dependencyStatus.ok) return failure(dependencyStatus.reason);
+
+  const inspected = inspectExactDataObject(envelope, DELIVERY_ENVELOPE_KEYS);
+  if (!inspected.ok) return failure("integrity_envelope_invalid");
+  if (inspected.values.envelope_version !== DELIVERY_ENVELOPE_VERSION) {
+    return failure("integrity_envelope_version_unsupported");
+  }
+  if (!validRevision(inspected.values.state_revision)) {
+    return failure("integrity_revision_invalid");
+  }
+
+  const integrity = inspectExactDataObject(inspected.values.integrity, INTEGRITY_KEYS);
+  if (!integrity.ok
+    || integrity.values.algorithm !== ALGORITHM
+    || !validKeyId(integrity.values.key_id)
+    || !DIGEST_PATTERN.test(integrity.values.digest)) {
+    return failure("integrity_envelope_invalid");
+  }
+
+  const entry = dependencies.verification.find(item => item.key_id === integrity.values.key_id);
+  if (entry === undefined) return failure("integrity_key_not_found");
+
+  const prepared = prepareDeliveryState(
+    inspected.values.candidate,
+    inspected.values.state_revision,
+    inspected.values.claim,
+    inspected.values.delivery,
+  );
+  if (!prepared.ok) return failure(prepared.reason);
+  const digest = callDigest(entry, prepared.value.bytes);
+  if (!digest.ok) return failure(digest.reason);
+  const comparison = callSafeEqual(dependencies.safe_equal, integrity.values.digest, digest.value);
+  if (!comparison.ok) return failure(comparison.reason);
+  if (!comparison.value) return failure("integrity_mismatch");
+  return success(Object.freeze({
+    candidate: prepared.value.candidate,
+    state_revision: inspected.values.state_revision,
+    claim: prepared.value.claim,
+    delivery: prepared.value.delivery,
+  }));
+}
+
 function prepareCandidate(candidate) {
   let validation;
   try {
@@ -397,6 +538,229 @@ function prepareClaimState(candidate, stateRevision, claim) {
   } catch {
     return failure("integrity_claim_invalid");
   }
+}
+
+function prepareDeliveryState(candidate, stateRevision, claim, delivery) {
+  const preparedCandidate = prepareStateCandidateSnapshot(
+    candidate,
+    ["claimed", "delivered", "consumed"],
+    "integrity_delivery_invalid",
+  );
+  if (!preparedCandidate.ok) return preparedCandidate;
+
+  const normalizedClaim = normalizeDeliveryClaimMetadata(
+    preparedCandidate.value,
+    claim,
+  );
+  if (!normalizedClaim.ok) return normalizedClaim;
+
+  const normalizedDelivery = normalizeDeliveryMetadata(
+    preparedCandidate.value,
+    normalizedClaim.value,
+    delivery,
+  );
+  if (!normalizedDelivery.ok) return normalizedDelivery;
+
+  try {
+    const orderedCandidate = {};
+    for (const field of CANDIDATE_FIELDS) {
+      orderedCandidate[field] = preparedCandidate.value[field];
+    }
+    const serialized = JSON.stringify({
+      state_revision: stateRevision,
+      claim: normalizedClaim.value,
+      delivery: normalizedDelivery.value,
+      candidate: orderedCandidate,
+    });
+    if (typeof serialized !== "string") return failure("integrity_delivery_invalid");
+    return success({
+      candidate: preparedCandidate.value,
+      claim: normalizedClaim.value,
+      delivery: normalizedDelivery.value,
+      bytes: new TextEncoder().encode(serialized),
+    });
+  } catch {
+    return failure("integrity_delivery_invalid");
+  }
+}
+
+function normalizeDeliveryClaimMetadata(candidate, claim) {
+  const inspected = inspectExactDataObject(claim, CLAIM_KEYS);
+  if (!inspected.ok) return failure("integrity_delivery_invalid");
+
+  let owner;
+  try {
+    owner = validateOpaqueIdentity(inspected.values.claim_owner_identity);
+  } catch {
+    return failure("integrity_delivery_invalid");
+  }
+  if (!owner.ok || owner.kind !== "session") return failure("integrity_delivery_invalid");
+  if (typeof inspected.values.claim_attempt_id !== "string"
+    || !CLAIM_ATTEMPT_ID_PATTERN.test(inspected.values.claim_attempt_id)) {
+    return failure("integrity_delivery_invalid");
+  }
+  if (!isUtcIsoTimestamp(inspected.values.claim_started_at)
+    || !isUtcIsoTimestamp(inspected.values.claim_lease_expires_at)) {
+    return failure("integrity_delivery_invalid");
+  }
+  const startedAt = Date.parse(inspected.values.claim_started_at);
+  const leaseExpiresAt = Date.parse(inspected.values.claim_lease_expires_at);
+  const candidateExpiresAt = Date.parse(candidate.expires_at);
+  if (!(startedAt < leaseExpiresAt) || leaseExpiresAt > candidateExpiresAt) {
+    return failure("integrity_delivery_invalid");
+  }
+
+  return success(Object.freeze({
+    claim_owner_identity: inspected.values.claim_owner_identity,
+    claim_started_at: inspected.values.claim_started_at,
+    claim_lease_expires_at: inspected.values.claim_lease_expires_at,
+    claim_attempt_id: inspected.values.claim_attempt_id,
+  }));
+}
+
+function normalizeDeliveryMetadata(candidate, claim, delivery) {
+  if (!isPlainObject(delivery)) return failure("integrity_delivery_invalid");
+  const expectedKeys = candidate.status === "claimed"
+    ? DELIVERY_ATTEMPT_KEYS
+    : candidate.status === "delivered"
+      ? DELIVERY_CONFIRMED_KEYS
+      : DELIVERY_CONSUMED_KEYS;
+  const inspected = inspectExactDataObject(delivery, expectedKeys);
+  if (!inspected.ok) return failure("integrity_delivery_invalid");
+
+  if (typeof inspected.values.delivery_attempt_id !== "string"
+    || !DELIVERY_ATTEMPT_ID_PATTERN.test(inspected.values.delivery_attempt_id)
+    || !isUtcIsoTimestamp(inspected.values.delivery_attempted_at)
+    || !DIGEST_PATTERN.test(inspected.values.delivery_candidate_digest)) {
+    return failure("integrity_delivery_invalid");
+  }
+  const attemptedAt = Date.parse(inspected.values.delivery_attempted_at);
+  const leaseExpiresAt = Date.parse(claim.claim_lease_expires_at);
+  const candidateExpiresAt = Date.parse(candidate.expires_at);
+  const claimStartedAt = Date.parse(claim.claim_started_at);
+  if (attemptedAt < claimStartedAt || attemptedAt >= leaseExpiresAt || attemptedAt >= candidateExpiresAt) {
+    return failure("integrity_delivery_invalid");
+  }
+
+  const normalized = {
+    delivery_attempt_id: inspected.values.delivery_attempt_id,
+    delivery_attempted_at: inspected.values.delivery_attempted_at,
+    delivery_candidate_digest: inspected.values.delivery_candidate_digest,
+  };
+
+  if (candidate.status !== "claimed") {
+    const evidence = normalizeDeliveryEvidence(
+      candidate,
+      claim,
+      inspected.values.delivery_attempt_id,
+      inspected.values.delivery_candidate_digest,
+      inspected.values.evidence,
+    );
+    if (!evidence.ok) return evidence;
+    if (!isUtcIsoTimestamp(inspected.values.delivered_at)) {
+      return failure("integrity_delivery_invalid");
+    }
+    const deliveredAt = Date.parse(inspected.values.delivered_at);
+    if (inspected.values.delivered_at !== evidence.value.confirmed_at
+      || deliveredAt < attemptedAt
+      || deliveredAt >= leaseExpiresAt
+      || deliveredAt >= candidateExpiresAt) {
+      return failure("integrity_delivery_invalid");
+    }
+    normalized.evidence = evidence.value;
+    normalized.delivered_at = inspected.values.delivered_at;
+    if (candidate.status === "consumed") {
+      if (!isUtcIsoTimestamp(inspected.values.consumed_at)) {
+        return failure("integrity_delivery_invalid");
+      }
+      const consumedAt = Date.parse(inspected.values.consumed_at);
+      if (consumedAt < deliveredAt) return failure("integrity_delivery_invalid");
+      normalized.consumed_at = inspected.values.consumed_at;
+    }
+  }
+
+  return success(Object.freeze(normalized));
+}
+
+function normalizeDeliveryEvidence(
+  candidate,
+  claim,
+  deliveryAttemptId,
+  deliveryCandidateDigest,
+  evidence,
+) {
+  const inspected = inspectExactDataObject(evidence, DELIVERY_EVIDENCE_KEYS);
+  if (!inspected.ok) return failure("integrity_delivery_invalid");
+  const values = inspected.values;
+  if (typeof values.verification !== "string"
+    || typeof values.evidence_id !== "string"
+    || typeof values.candidate_id !== "string"
+    || typeof values.candidate_digest !== "string"
+    || typeof values.current_session_identity !== "string"
+    || typeof values.claim_attempt_id !== "string"
+    || typeof values.delivery_attempt_id !== "string"
+    || typeof values.runtime !== "string"
+    || typeof values.adapter_version !== "string"
+    || typeof values.injection_surface_accepted !== "boolean"
+    || typeof values.candidate_available !== "boolean"
+    || typeof values.confirmed_at !== "string") {
+    return failure("integrity_delivery_invalid");
+  }
+  if (!isSafeEvidenceId(values.evidence_id)
+    || !isSafeRuntimeId(values.runtime)
+    || !isSafeAdapterVersion(values.adapter_version)) {
+    return failure("integrity_delivery_invalid");
+  }
+  let owner;
+  try {
+    owner = validateOpaqueIdentity(values.current_session_identity);
+  } catch {
+    return failure("integrity_delivery_invalid");
+  }
+  if (values.verification !== "passed"
+    || values.candidate_id !== candidate.candidate_id
+    || values.candidate_digest !== deliveryCandidateDigest
+    || !owner.ok
+    || owner.kind !== "session"
+    || values.current_session_identity !== claim.claim_owner_identity
+    || values.claim_attempt_id !== claim.claim_attempt_id
+    || values.delivery_attempt_id !== deliveryAttemptId
+    || values.injection_surface_accepted !== true
+    || values.candidate_available !== true) {
+    return failure("integrity_delivery_invalid");
+  }
+  if (!isUtcIsoTimestamp(values.confirmed_at)) {
+    return failure("integrity_delivery_invalid");
+  }
+  return success(Object.freeze({
+    verification: "passed",
+    evidence_id: values.evidence_id,
+    candidate_id: values.candidate_id,
+    candidate_digest: values.candidate_digest,
+    current_session_identity: values.current_session_identity,
+    claim_attempt_id: values.claim_attempt_id,
+    delivery_attempt_id: values.delivery_attempt_id,
+    runtime: values.runtime,
+    adapter_version: values.adapter_version,
+    injection_surface_accepted: true,
+    candidate_available: true,
+    confirmed_at: values.confirmed_at,
+  }));
+}
+
+function isSafeEvidenceId(value) {
+  return typeof value === "string" && EVIDENCE_ID_PATTERN.test(value);
+}
+
+function isSafeRuntimeId(value) {
+  return typeof value === "string" && RUNTIME_ID_PATTERN.test(value);
+}
+
+function isSafeAdapterVersion(value) {
+  return typeof value === "string"
+    && value.length > 0
+    && value.length <= 64
+    && ADAPTER_VERSION_PATTERN.test(value);
 }
 
 function prepareStateCandidateSnapshot(candidate, allowedStatuses, failureReason) {
@@ -538,6 +902,14 @@ function isUtcIsoTimestamp(value) {
     ? value
     : value.replace(/Z$/, ".000Z");
   return new Date(timestamp).toISOString() === normalized;
+}
+
+function isPlainObject(value) {
+  try {
+    return value !== null && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype;
+  } catch {
+    return false;
+  }
 }
 
 function inspectDependencies(value) {

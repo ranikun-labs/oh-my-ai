@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PENDING_HANDOFF_SCHEMA_VERSION } from "./lib/pending-handoff-core.mjs";
 import {
-  createPendingHandoffStore,
+  createPendingHandoffRuntime,
   derivePendingHandoffRecordKey,
 } from "./lib/pending-handoff-store.mjs";
 import {
@@ -22,7 +22,6 @@ import {
   PENDING_HANDOFF_REVISION_ENVELOPE_VERSION,
   verifyPendingHandoffClaimIntegrityEnvelope,
 } from "./lib/pending-handoff-integrity.mjs";
-
 let claimLeaseModule = null;
 try {
   claimLeaseModule = await import("./lib/pending-handoff-claim-lease.mjs");
@@ -171,11 +170,13 @@ function dependencies(provider = buildProvider()) {
   return assertSuccess(createPendingHandoffIntegrityDependencies(provider));
 }
 
-function serviceFor(store, clock, leaseDurationMs = 1_000) {
-  return assertSuccess(createPendingHandoffClaimLeaseService({
-    store,
-    leaseDurationMs,
+function runtimeFor(rootDirectory, clock, options = {}) {
+  return assertSuccess(createPendingHandoffRuntime({
+    ...storeOptions(rootDirectory, options.store ?? {}),
+    leaseDurationMs: options.leaseDurationMs ?? 1_000,
     clock: () => clock.value,
+    deliveryCandidateDigest: frozenFunction(() => "A".repeat(43)),
+    deliveryEvidenceVerifier: frozenFunction(() => ({})),
   }));
 }
 
@@ -183,9 +184,14 @@ async function withEnvironment(operation, options = {}) {
   const rootDirectory = await fileSystem.mkdtemp(join(tmpdir(), "phr-claim-lease-fixture-"));
   const clock = { value: options.now ?? BASE_NOW };
   try {
-    const store = assertSuccess(createPendingHandoffStore(storeOptions(rootDirectory, options.store ?? {})));
-    const service = serviceFor(store, clock, options.leaseDurationMs ?? 1_000);
-    return await operation({ rootDirectory, store, service, clock });
+    const runtime = assertSuccess(createPendingHandoffRuntime({
+      ...storeOptions(rootDirectory, options.store ?? {}),
+      leaseDurationMs: options.leaseDurationMs ?? 1_000,
+      clock: () => clock.value,
+      deliveryCandidateDigest: frozenFunction(() => "A".repeat(43)),
+      deliveryEvidenceVerifier: frozenFunction(() => ({})),
+    }));
+    return await operation({ rootDirectory, store: runtime.store, service: runtime.claimLease, clock, runtime });
   } finally {
     await fileSystem.rm(rootDirectory, { recursive: true, force: true });
   }
@@ -307,8 +313,9 @@ if (process.argv[2]?.startsWith("--claim-child=")) {
   const owner = process.argv[7];
   const attempt = process.argv[8];
   const now = Number(process.argv[9]);
-  const store = assertSuccess(createPendingHandoffStore(storeOptions(rootDirectory)));
-  const service = serviceFor(store, { value: now });
+  const runtime = runtimeFor(rootDirectory, { value: now });
+  const store = runtime.store;
+  const service = runtime.claimLease;
   await fileSystem.writeFile(
     join(barrierDirectory, `ready-${process.pid}`),
     "ready\n",
@@ -354,6 +361,15 @@ await group("Claim/Lease API and dependency contract", async () => {
       leaseDurationMs: 1_000,
       clock: () => 0,
     }), "claim_dependency_invalid");
+    const unboundStore = Object.freeze({
+      readState: async () => ({ ok: true, value: Object.freeze({}) }),
+      compareAndSetState: async () => ({ ok: true, value: Object.freeze({ new_revision: 1 }) }),
+    });
+    assertFailure(createPendingHandoffClaimLeaseService({
+      store: unboundStore,
+      leaseDurationMs: 1_000,
+      clock: () => 0,
+    }), "claim_dependency_invalid");
   });
 
   await test("exposes only bounded domain operations over the Store state boundary", () => {
@@ -361,15 +377,17 @@ await group("Claim/Lease API and dependency contract", async () => {
       readState: async () => ({ ok: true, value: Object.freeze({}) }),
       compareAndSetState: async () => ({ ok: true, value: Object.freeze({ new_revision: 1 }) }),
     });
+    const mutationPort = Object.freeze({ compareAndSetState: store.compareAndSetState });
     const service = assertSuccess(createPendingHandoffClaimLeaseService({
       store,
+      mutationPort,
       leaseDurationMs: 1_000,
       clock: () => BASE_NOW,
     }));
-    assert.deepEqual(Object.keys(service).sort(), [
+    assert.deepEqual(Reflect.ownKeys(service), [
       "acquireClaim",
-      "recoverClaimLease",
       "registerPending",
+      "recoverClaimLease",
       "releaseClaimBeforeDelivery",
     ]);
   });
@@ -634,6 +652,7 @@ await group("Claim input, identity, and revision gates", async () => {
       }), "claim_input_invalid");
       const invalidClock = assertSuccess(createPendingHandoffClaimLeaseService({
         store,
+        mutationPort: Object.freeze({ compareAndSetState: async () => ({ ok: true, value: Object.freeze({ new_revision: 1 }) }) }),
         leaseDurationMs: 1_000,
         clock: () => NaN,
       }));
@@ -1054,15 +1073,16 @@ await group("State CAS binding and unconditional-write policy", async () => {
       const input = await seedPending(store, service, { candidate_id: "state-candidate-binding" });
       const before = await rawEnvelopeText(rootDirectory, input.candidate_id);
       const state = assertSuccess(await store.readState(input.candidate_id));
-      const wrongCandidate = { ...state.candidate, candidate_id: "different-record" };
-      assertFailure(await store.compareAndSetState({
+      assert.equal(typeof store.compareAndSetState, "undefined");
+      assertFailure(await service.acquireClaim({
         candidate_id: input.candidate_id,
         expected_revision: state.state_revision,
-        next_state: { candidate: wrongCandidate, claim: null },
-      }), "record_invalid");
+        current_session_identity: OWNER_A,
+        claim_attempt_id: CLAIM_ATTEMPT_A,
+        next_state: { candidate: { ...state.candidate, candidate_id: "different-record" } },
+      }), "claim_input_invalid");
       assert.equal(await rawEnvelopeText(rootDirectory, input.candidate_id), before);
       assert.equal(assertSuccess(await store.readState(input.candidate_id)).state_revision, 1);
-      assert.equal(service !== null, true);
     });
   });
 
@@ -1071,12 +1091,13 @@ await group("State CAS binding and unconditional-write policy", async () => {
       const input = await seedPending(store, service, { candidate_id: "state-field-injection" });
       const before = await rawEnvelopeText(rootDirectory, input.candidate_id);
       const state = assertSuccess(await store.readState(input.candidate_id));
-      const injected = { ...state.candidate, state_revision: 99, claim_attempt_id: CLAIM_ATTEMPT_A };
-      assertFailure(await store.compareAndSetState({
+      assertFailure(await service.acquireClaim({
         candidate_id: input.candidate_id,
         expected_revision: state.state_revision,
-        next_state: { candidate: injected, claim: null },
-      }), "record_invalid");
+        current_session_identity: OWNER_A,
+        claim_attempt_id: CLAIM_ATTEMPT_A,
+        state_revision: 99,
+      }), "claim_input_invalid");
       assert.equal(await rawEnvelopeText(rootDirectory, input.candidate_id), before);
     });
   });
@@ -1106,10 +1127,11 @@ await group("Claim CAS publication fault boundaries", async () => {
           return REAL_FILE_SYSTEM.writeFile(location, ...args);
         },
       };
-      const failingStore = assertSuccess(createPendingHandoffStore(storeOptions(rootDirectory, {
-        fileSystem: failingFileSystem,
-      })));
-      const failingService = serviceFor(failingStore, { value: BASE_NOW });
+      const failingRuntime = runtimeFor(rootDirectory, { value: BASE_NOW }, {
+        store: { fileSystem: failingFileSystem },
+      });
+      const failingStore = failingRuntime.store;
+      const failingService = failingRuntime.claimLease;
       assertFailureWithoutLeak(await failingService.acquireClaim({
         candidate_id: input.candidate_id,
         expected_revision: 1,
@@ -1135,10 +1157,11 @@ await group("Claim CAS publication fault boundaries", async () => {
           return REAL_FILE_SYSTEM.rename(source, target);
         },
       };
-      const failingStore = assertSuccess(createPendingHandoffStore(storeOptions(rootDirectory, {
-        fileSystem: failingFileSystem,
-      })));
-      const failingService = serviceFor(failingStore, { value: BASE_NOW });
+      const failingRuntime = runtimeFor(rootDirectory, { value: BASE_NOW }, {
+        store: { fileSystem: failingFileSystem },
+      });
+      const failingStore = failingRuntime.store;
+      const failingService = failingRuntime.claimLease;
       assertFailureWithoutLeak(await failingService.acquireClaim({
         candidate_id: input.candidate_id,
         expected_revision: 1,
@@ -1163,10 +1186,11 @@ await group("Claim CAS publication fault boundaries", async () => {
           return REAL_FILE_SYSTEM.unlink(location);
         },
       };
-      const failingStore = assertSuccess(createPendingHandoffStore(storeOptions(rootDirectory, {
-        fileSystem: failingFileSystem,
-      })));
-      const failingService = serviceFor(failingStore, { value: BASE_NOW });
+      const failingRuntime = runtimeFor(rootDirectory, { value: BASE_NOW }, {
+        store: { fileSystem: failingFileSystem },
+      });
+      const failingStore = failingRuntime.store;
+      const failingService = failingRuntime.claimLease;
       const first = assertSuccess(await failingService.acquireClaim({
         candidate_id: input.candidate_id,
         expected_revision: 1,
@@ -1257,8 +1281,10 @@ await group("Lease configuration, expiry, and privacy boundaries", async () => {
       readState: async () => { throw new Error(`${EXCEPTION_MARKER} ${PRIVATE_MARKER}`); },
       compareAndSetState: async () => { throw new Error(`${EXCEPTION_MARKER} ${PRIVATE_MARKER}`); },
     });
+    const mutationPort = Object.freeze({ compareAndSetState: markerStore.compareAndSetState });
     const service = assertSuccess(createPendingHandoffClaimLeaseService({
       store: markerStore,
+      mutationPort,
       leaseDurationMs: 1_000,
       clock: () => BASE_NOW,
     }));

@@ -18,7 +18,17 @@ try {
   // The API contract assertion below reports the missing boundary without exposing an import path.
 }
 
+let claimLeaseModule = null;
+let deliveryConsumptionModule = null;
+try {
+  claimLeaseModule = await import("./lib/pending-handoff-claim-lease.mjs");
+  deliveryConsumptionModule = await import("./lib/pending-handoff-delivery-consumption.mjs");
+} catch {
+  // The exact module export assertion reports a missing related boundary without exposing a path.
+}
+
 const createPendingHandoffStore = storeModule?.createPendingHandoffStore;
+const createPendingHandoffRuntime = storeModule?.createPendingHandoffRuntime;
 const derivePendingHandoffRecordKey = storeModule?.derivePendingHandoffRecordKey;
 const PENDING_HANDOFF_STORE_FAILURES = storeModule?.PENDING_HANDOFF_STORE_FAILURES;
 let STORE_SOURCE = "";
@@ -30,6 +40,50 @@ try {
 } catch {
   // The API contract assertion reports the missing production boundary.
 }
+
+const STORE_MODULE_EXPORT_KEYS = Object.freeze([
+  "PENDING_HANDOFF_RUNTIME_FAILURES",
+  "PENDING_HANDOFF_STORE_FAILURES",
+  "createPendingHandoffRuntime",
+  "createPendingHandoffStore",
+  "derivePendingHandoffRecordKey",
+  Symbol.toStringTag,
+]);
+const CLAIM_LEASE_MODULE_EXPORT_KEYS = Object.freeze([
+  "PENDING_HANDOFF_CLAIM_LEASE_FAILURES",
+  "createPendingHandoffClaimLeaseService",
+  Symbol.toStringTag,
+]);
+const DELIVERY_CONSUMPTION_MODULE_EXPORT_KEYS = Object.freeze([
+  "PENDING_HANDOFF_DELIVERY_CONSUMPTION_FAILURES",
+  "PENDING_HANDOFF_DELIVERY_DIGEST_PURPOSE",
+  "createPendingHandoffDeliveryConsumptionService",
+  Symbol.toStringTag,
+]);
+const RUNTIME_PUBLIC_KEYS = Object.freeze([
+  "store",
+  "claimLease",
+  "deliveryConsumption",
+]);
+const STORE_PUBLIC_KEYS = Object.freeze([
+  "compareAndSet",
+  "write",
+  "read",
+  "readSnapshot",
+  "readState",
+]);
+const CLAIM_LEASE_PUBLIC_KEYS = Object.freeze([
+  "acquireClaim",
+  "registerPending",
+  "recoverClaimLease",
+  "releaseClaimBeforeDelivery",
+]);
+const DELIVERY_CONSUMPTION_PUBLIC_KEYS = Object.freeze([
+  "beginDeliveryAttempt",
+  "confirmDelivery",
+  "releaseUnconfirmedDelivery",
+  "consumeDelivered",
+]);
 
 const SESSION_IDENTITY = `phr1.session.key_A-1.${"A".repeat(43)}`;
 const REPOSITORY_IDENTITY = `phr1.repository.key_A-1.${"B".repeat(43)}`;
@@ -110,21 +164,51 @@ function assertFrozenSuccess(result) {
   return result.value;
 }
 
+function assertExactOwnKeys(value, expectedKeys, label) {
+  const actualKeys = Reflect.ownKeys(value);
+  assert.equal(actualKeys.length, expectedKeys.length, `${label} own-key count changed`);
+  for (const expectedKey of expectedKeys) {
+    assert.equal(
+      actualKeys.includes(expectedKey),
+      true,
+      `${label} is missing ${String(expectedKey)}`,
+    );
+  }
+  for (const actualKey of actualKeys) {
+    assert.equal(
+      expectedKeys.includes(actualKey),
+      true,
+      `${label} exposes unexpected ${String(actualKey)}`,
+    );
+  }
+}
+
+function assertServiceSurface(service, expectedKeys, label) {
+  assert.equal(Object.isFrozen(service), true);
+  assertExactOwnKeys(service, expectedKeys, label);
+  for (const key of expectedKeys) {
+    assert.equal(typeof service[key], "function", `${label}.${String(key)} must be callable`);
+  }
+  return service;
+}
+
 function assertFactorySuccess(result) {
   const store = assertFrozenSuccess(result);
-  assert.deepEqual(Object.keys(store).sort(), [
-    "compareAndSet",
-    "compareAndSetState",
-    "read",
-    "readSnapshot",
-    "readState",
-    "write",
-  ]);
-  assert.equal(typeof store.read, "function");
-  assert.equal(typeof store.write, "function");
-  assert.equal(typeof store.readSnapshot, "function");
-  assert.equal(typeof store.compareAndSet, "function");
+  assertServiceSurface(store, STORE_PUBLIC_KEYS, "Store");
   return store;
+}
+
+function assertRuntimeSuccess(result) {
+  const runtime = assertFrozenSuccess(result);
+  assertExactOwnKeys(runtime, RUNTIME_PUBLIC_KEYS, "Pending Handoff runtime");
+  assertServiceSurface(runtime.store, STORE_PUBLIC_KEYS, "Runtime Store");
+  assertServiceSurface(runtime.claimLease, CLAIM_LEASE_PUBLIC_KEYS, "Claim/Lease service");
+  assertServiceSurface(
+    runtime.deliveryConsumption,
+    DELIVERY_CONSUMPTION_PUBLIC_KEYS,
+    "Delivery/Consumption service",
+  );
+  return runtime;
 }
 
 function assertNoLeak(value) {
@@ -196,6 +280,26 @@ async function withStore(operation, options = {}) {
   }
 }
 
+function runtimeOptions(rootDirectory) {
+  return {
+    ...storeOptions(rootDirectory),
+    leaseDurationMs: 1_000,
+    clock: () => 0,
+    deliveryCandidateDigest: Object.freeze(() => "A".repeat(43)),
+    deliveryEvidenceVerifier: Object.freeze(() => ({})),
+  };
+}
+
+async function withRuntime(operation) {
+  const rootDirectory = await fileSystem.mkdtemp(join(tmpdir(), "phr-runtime-surface-fixture-"));
+  try {
+    const runtime = assertRuntimeSuccess(createPendingHandoffRuntime(runtimeOptions(rootDirectory)));
+    return await operation({ rootDirectory, runtime });
+  } finally {
+    await fileSystem.rm(rootDirectory, { recursive: true, force: true });
+  }
+}
+
 async function captureOutput(operation) {
   const writes = [];
   const original = {
@@ -221,6 +325,7 @@ async function captureOutput(operation) {
 await group("API contract", async () => {
   await test("exports the runtime-neutral factory, key derivation, and frozen taxonomy", () => {
     assert.equal(typeof createPendingHandoffStore, "function");
+    assert.equal(typeof createPendingHandoffRuntime, "function");
     assert.equal(typeof derivePendingHandoffRecordKey, "function");
     assert.deepEqual(PENDING_HANDOFF_STORE_FAILURES, [
       "store_root_invalid",
@@ -254,14 +359,7 @@ await group("API contract", async () => {
     assertFrozenFailure(createPendingHandoffStore({}), "store_root_invalid");
     await withStore(async ({ store }) => {
       assert.equal(Object.isFrozen(store), true);
-      assert.deepEqual(Object.keys(store).sort(), [
-        "compareAndSet",
-        "compareAndSetState",
-        "read",
-        "readSnapshot",
-        "readState",
-        "write",
-      ]);
+      assertExactOwnKeys(store, STORE_PUBLIC_KEYS, "Store");
       assertFrozenFailure(
         createPendingHandoffStore(storeOptions("/tmp/ignored", { fileSystem: {} })),
         "store_dependency_invalid",
@@ -279,6 +377,40 @@ await group("API contract", async () => {
     assert.notEqual(first, "../traversal-like/private");
     assert.equal(first.includes("/"), false);
     assert.equal(first.includes("\\"), false);
+  });
+});
+
+await group("authority surface oracle", async () => {
+  await test("pins exact module exports so generic accessors cannot become capabilities", () => {
+    assertExactOwnKeys(storeModule, STORE_MODULE_EXPORT_KEYS, "pending-handoff-store module");
+    assertExactOwnKeys(claimLeaseModule, CLAIM_LEASE_MODULE_EXPORT_KEYS, "pending-handoff-claim-lease module");
+    assertExactOwnKeys(
+      deliveryConsumptionModule,
+      DELIVERY_CONSUMPTION_MODULE_EXPORT_KEYS,
+      "pending-handoff-delivery-consumption module",
+    );
+  });
+
+  await test("pins the frozen runtime, Store, and service own-key surfaces", async () => {
+    await withRuntime(async ({ runtime }) => {
+      assert.equal(Object.isFrozen(runtime), true);
+      assert.equal(typeof runtime.store.compareAndSetState, "undefined");
+      assert.equal(Object.hasOwn(runtime, "mutationPort"), false);
+      assert.equal(Object.hasOwn(runtime.store, "mutationPort"), false);
+    });
+  });
+
+  await test("rejects Symbol and non-enumerable capability regressions in the oracle", () => {
+    const regression = {};
+    Object.defineProperty(regression, "getPort", {
+      value: () => undefined,
+      enumerable: false,
+    });
+    Object.defineProperty(regression, Symbol("raw-mutation-port"), {
+      value: () => undefined,
+      enumerable: true,
+    });
+    assert.throws(() => assertExactOwnKeys(regression, RUNTIME_PUBLIC_KEYS, "runtime regression"));
   });
 });
 
@@ -542,14 +674,10 @@ await group("privacy and filesystem exception boundaries", async () => {
 });
 
 await group("static boundary and Makefile wiring", async () => {
-  await test("production exposes the store boundary without delivery side effects", () => {
-    assert.equal((STORE_SOURCE.match(/^export\s+/gm) ?? []).length, 3);
-    assert.match(STORE_SOURCE, /export const PENDING_HANDOFF_STORE_FAILURES/);
-    assert.match(STORE_SOURCE, /export function derivePendingHandoffRecordKey\(candidateId\)/);
-    assert.match(STORE_SOURCE, /export function createPendingHandoffStore\(options\)/);
+  await test("keeps the runtime composition private to the production module", () => {
     assert.doesNotMatch(STORE_SOURCE, /\b(?:console|fetch)\b/);
-    assert.match(STORE_SOURCE, /compareAndSet|readSnapshot|state_revision/);
-    assert.doesNotMatch(STORE_SOURCE, /delivery|consume|session registry|sqlite/i);
+    assert.doesNotMatch(STORE_SOURCE, /^export\s+[^\n]*mutationPort/m);
+    assert.doesNotMatch(STORE_SOURCE, /^export\s+[^\n]*getPort/m);
   });
 
   await test("store target is declared once and included last in V1.x", () => {
@@ -562,7 +690,7 @@ await group("static boundary and Makefile wiring", async () => {
     assert.notEqual(start, -1);
     const declaration = [lines[start]];
     while (declaration.at(-1).endsWith("\\")) declaration.push(lines[start + declaration.length]);
-    assert.equal(declaration.join(" ").replace(/^test-v1x-fixtures:\s*/, "").replaceAll("\\", " ").trim().split(/\s+/).at(-1), "test-pending-handoff-claim-lease-fixtures");
+    assert.equal(declaration.join(" ").replace(/^test-v1x-fixtures:\s*/, "").replaceAll("\\", " ").trim().split(/\s+/).at(-1), "test-pending-handoff-delivery-consumption-fixtures");
   });
 });
 

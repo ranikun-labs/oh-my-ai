@@ -2,8 +2,8 @@ import { transitionCandidate } from "./pending-handoff-core.mjs";
 import { validateOpaqueIdentity } from "./pending-handoff-identity.mjs";
 
 const CLAIM_ATTEMPT_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
-const SERVICE_KEYS = Object.freeze(["store", "leaseDurationMs", "clock"]);
-const STORE_METHODS = Object.freeze(["readState", "compareAndSetState"]);
+const SERVICE_KEYS = Object.freeze(["store", "mutationPort", "leaseDurationMs", "clock"]);
+const STORE_METHODS = Object.freeze(["readState"]);
 
 export const PENDING_HANDOFF_CLAIM_LEASE_FAILURES = Object.freeze([
   "claim_dependency_invalid",
@@ -23,17 +23,17 @@ export function createPendingHandoffClaimLeaseService(options) {
   const inspected = inspectServiceOptions(options);
   if (!inspected.ok) return failure(inspected.reason);
 
-  const { store, leaseDurationMs, clock } = inspected.value;
+  const { store, mutationPort, leaseDurationMs, clock } = inspected.value;
   const service = Object.freeze({
-    acquireClaim: request => acquireClaim(store, leaseDurationMs, clock, request),
-    registerPending: request => registerPending(store, clock, request),
-    recoverClaimLease: request => recoverClaimLease(store, clock, request),
-    releaseClaimBeforeDelivery: request => releaseClaimBeforeDelivery(store, clock, request),
+    acquireClaim: request => acquireClaim(store, mutationPort, leaseDurationMs, clock, request),
+    registerPending: request => registerPending(store, mutationPort, clock, request),
+    recoverClaimLease: request => recoverClaimLease(store, mutationPort, clock, request),
+    releaseClaimBeforeDelivery: request => releaseClaimBeforeDelivery(store, mutationPort, clock, request),
   });
   return success(service);
 }
 
-async function registerPending(store, clock, request) {
+async function registerPending(store, mutationPort, clock, request) {
   const inspected = inspectRequest(request, ["candidate_id", "expected_revision"]);
   if (!inspected.ok) return failure(inspected.reason);
   const now = readClock(clock);
@@ -54,7 +54,7 @@ async function registerPending(store, clock, request) {
       expiration_verified: true,
     });
     if (!expired.ok) return failure("claim_state_invalid");
-    const published = await persistState(store, inspected.value.candidateId, state.state_revision, {
+    const published = await persistState(mutationPort, inspected.value.candidateId, state.state_revision, {
       candidate: expired.value,
       claim: null,
     });
@@ -68,7 +68,7 @@ async function registerPending(store, clock, request) {
     privacy_validation_verified: true,
   });
   if (!pending.ok) return failure("claim_state_invalid");
-  const published = await persistState(store, inspected.value.candidateId, state.state_revision, {
+  const published = await persistState(mutationPort, inspected.value.candidateId, state.state_revision, {
     candidate: pending.value,
     claim: null,
   });
@@ -79,7 +79,7 @@ async function registerPending(store, clock, request) {
   }));
 }
 
-async function acquireClaim(store, leaseDurationMs, clock, request) {
+async function acquireClaim(store, mutationPort, leaseDurationMs, clock, request) {
   const inspected = inspectRequest(request, [
     "candidate_id",
     "expected_revision",
@@ -138,7 +138,7 @@ async function acquireClaim(store, leaseDurationMs, clock, request) {
       expiration_verified: true,
     });
     if (!expired.ok) return failure("claim_state_invalid");
-    const published = await persistState(store, inspected.value.candidateId, state.state_revision, {
+    const published = await persistState(mutationPort, inspected.value.candidateId, state.state_revision, {
       candidate: expired.value,
       claim: null,
     });
@@ -161,7 +161,7 @@ async function acquireClaim(store, leaseDurationMs, clock, request) {
     claim_lease_expires_at: timestamp(leaseExpiresAt),
     claim_attempt_id: inspected.value.claimAttemptId,
   };
-  const published = await persistState(store, state.candidate.candidate_id, state.state_revision, {
+  const published = await persistState(mutationPort, state.candidate.candidate_id, state.state_revision, {
     candidate: claimed.value,
     claim,
   });
@@ -173,7 +173,7 @@ async function acquireClaim(store, leaseDurationMs, clock, request) {
   }));
 }
 
-async function recoverClaimLease(store, clock, request) {
+async function recoverClaimLease(store, mutationPort, clock, request) {
   const inspected = inspectRequest(request, ["candidate_id", "expected_revision"]);
   if (!inspected.ok) return failure(inspected.reason);
   const now = readClock(clock);
@@ -205,9 +205,10 @@ async function recoverClaimLease(store, clock, request) {
       revision_verified: true,
     });
   if (!transition.ok) return failure("claim_state_invalid");
-  const published = await persistState(store, inspected.value.candidateId, state.state_revision, {
+  const published = await persistState(mutationPort, inspected.value.candidateId, state.state_revision, {
     candidate: transition.value,
     claim: null,
+    delivery: null,
   });
   if (!published.ok) return published;
   return success(Object.freeze({
@@ -216,7 +217,7 @@ async function recoverClaimLease(store, clock, request) {
   }));
 }
 
-async function releaseClaimBeforeDelivery(store, clock, request) {
+async function releaseClaimBeforeDelivery(store, mutationPort, clock, request) {
   const inspected = inspectRequest(request, [
     "candidate_id",
     "expected_revision",
@@ -242,6 +243,9 @@ async function releaseClaimBeforeDelivery(store, clock, request) {
   if (state.candidate.status !== "claimed" || state.claim === null) {
     return failure("claim_state_invalid");
   }
+  if (state.delivery !== undefined && state.delivery !== null) {
+    return failure("claim_conflict");
+  }
   const leaseExpiry = Date.parse(state.claim.claim_lease_expires_at);
   const candidateExpiry = readCandidateExpiry(state.candidate);
   if (!Number.isFinite(leaseExpiry) || candidateExpiry === null) {
@@ -262,7 +266,7 @@ async function releaseClaimBeforeDelivery(store, clock, request) {
     delivery_not_confirmed: true,
   });
   if (!pending.ok) return failure("claim_state_invalid");
-  const published = await persistState(store, inspected.value.candidateId, state.state_revision, {
+  const published = await persistState(mutationPort, inspected.value.candidateId, state.state_revision, {
     candidate: pending.value,
     claim: null,
   });
@@ -284,10 +288,10 @@ async function readState(store, candidateId) {
   return failure(mapStoreFailure(result?.reason));
 }
 
-async function persistState(store, candidateId, expectedRevision, nextState) {
+async function persistState(mutationPort, candidateId, expectedRevision, nextState) {
   let result;
   try {
-    result = await store.compareAndSetState({
+    result = await mutationPort.compareAndSetState({
       candidate_id: candidateId,
       expected_revision: expectedRevision,
       next_state: nextState,
@@ -312,6 +316,9 @@ function inspectServiceOptions(options) {
     }
     if (!isPlainObject(options.store)
       || STORE_METHODS.some(method => typeof options.store[method] !== "function")
+      || !isPlainObject(options.mutationPort)
+      || !Object.isFrozen(options.mutationPort)
+      || typeof options.mutationPort.compareAndSetState !== "function"
       || !Number.isSafeInteger(options.leaseDurationMs)
       || options.leaseDurationMs <= 0
       || typeof options.clock !== "function") {
@@ -319,6 +326,7 @@ function inspectServiceOptions(options) {
     }
     return success(Object.freeze({
       store: options.store,
+      mutationPort: options.mutationPort,
       leaseDurationMs: options.leaseDurationMs,
       clock: options.clock,
     }));

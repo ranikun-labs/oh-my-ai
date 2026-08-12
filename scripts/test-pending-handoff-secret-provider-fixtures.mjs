@@ -841,6 +841,7 @@ test("Group 12 Makefile runs the bounded target once after Core and Identity onl
     "test-pending-handoff-integrity-fixtures",
     "test-pending-handoff-revision-cas-fixtures",
     "test-pending-handoff-claim-lease-fixtures",
+    "test-pending-handoff-delivery-consumption-fixtures",
   ]);
   const { spawnSync } = process.getBuiltinModule("node:child_process");
   const { fileURLToPath } = process.getBuiltinModule("node:url");
