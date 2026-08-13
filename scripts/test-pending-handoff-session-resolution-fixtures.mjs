@@ -135,6 +135,27 @@ function captureOutput(operation) {
   }
 }
 
+async function captureAsyncOutput(operation) {
+  const originalStdoutWrite = process.stdout.write;
+  const originalStderrWrite = process.stderr.write;
+  let stdout = "";
+  let stderr = "";
+  process.stdout.write = chunk => {
+    stdout += String(chunk);
+    return true;
+  };
+  process.stderr.write = chunk => {
+    stderr += String(chunk);
+    return true;
+  };
+  try {
+    return { value: await operation(), stdout, stderr };
+  } finally {
+    process.stdout.write = originalStdoutWrite;
+    process.stderr.write = originalStderrWrite;
+  }
+}
+
 function cloneWithPrototype(value, prototype) {
   return Object.assign(Object.create(prototype), value);
 }
@@ -161,20 +182,32 @@ function makeCandidate() {
   };
 }
 
-function group(name, operation) {
-  operation();
+async function group(name, operation) {
+  await operation();
   groups += 1;
   process.stdout.write(`PASS GROUP ${groups} ${name}\n`);
 }
 
-function test(name, operation) {
-  operation();
+async function test(name, operation) {
+  await operation();
   tests += 1;
   process.stdout.write(`PASS ${name}\n`);
 }
 
-group("API oracle", () => {
-  test("exports exactly the public module surface including ESM metadata", () => {
+async function asyncGroup(name, operation) {
+  await operation();
+  groups += 1;
+  process.stdout.write(`PASS GROUP ${groups} ${name}\n`);
+}
+
+async function asyncTest(name, operation) {
+  await operation();
+  tests += 1;
+  process.stdout.write(`PASS ${name}\n`);
+}
+
+await group("API oracle", async () => {
+  await test("exports exactly the public module surface including ESM metadata", async () => {
     assert.deepEqual(Reflect.ownKeys(moduleNamespace), [
       "PENDING_HANDOFF_SESSION_RESOLUTION_FAILURES",
       "createPendingHandoffSessionResolutionPort",
@@ -182,7 +215,7 @@ group("API oracle", () => {
     ]);
   });
 
-  test("freezes the exact failure taxonomy", () => {
+  await test("freezes the exact failure taxonomy", async () => {
     assert.deepEqual(PENDING_HANDOFF_SESSION_RESOLUTION_FAILURES, [
       "session_resolution_dependency_invalid",
       "session_resolution_input_invalid",
@@ -200,7 +233,7 @@ group("API oracle", () => {
     assert.throws(() => PENDING_HANDOFF_SESSION_RESOLUTION_FAILURES.push("native"));
   });
 
-  test("freezes the facade without hidden capabilities", () => {
+  await test("freezes the facade without hidden capabilities", async () => {
     const port = createPort();
     assert.deepEqual(Reflect.ownKeys(port), ["resolveCurrentSession", "resolveTargetSession"]);
     assert.deepEqual(Object.keys(port), ["resolveCurrentSession", "resolveTargetSession"]);
@@ -215,8 +248,8 @@ group("API oracle", () => {
   });
 });
 
-group("Dependency boundary", () => {
-  test("rejects malformed dependency records and never invokes accessors", () => {
+await group("Dependency boundary", async () => {
+  await test("rejects malformed dependency records and never invokes accessors", async () => {
     const valid = {
       resolveCurrentSession: () => rawSuccess(),
       resolveTargetSession: () => rawSuccess(),
@@ -250,7 +283,7 @@ group("Dependency boundary", () => {
     assert.equal(getterCalled, false);
   });
 
-  test("does not require callback Function objects themselves to be frozen", () => {
+  await test("does not require callback Function objects themselves to be frozen", async () => {
     const current = () => rawSuccess();
     const target = () => rawSuccess();
     assert.equal(Object.isFrozen(current), false);
@@ -263,8 +296,8 @@ group("Dependency boundary", () => {
   });
 });
 
-group("Current resolution", () => {
-  test("returns one frozen runtime-neutral observation and invokes once", () => {
+await group("Current resolution", async () => {
+  await test("returns one frozen runtime-neutral observation and invokes once", async () => {
     let calls = 0;
     let received;
     const port = createPort({
@@ -274,7 +307,7 @@ group("Current resolution", () => {
         return rawSuccess(RUNTIME_A, SESSION_A);
       },
     });
-    const result = port.resolveCurrentSession({ runtime_id: RUNTIME_A });
+    const result = await port.resolveCurrentSession({ runtime_id: RUNTIME_A });
     assertPublicSuccess(result, RUNTIME_A, SESSION_A);
     assert.equal(calls, 1);
     assert.deepEqual(Reflect.ownKeys(received), ["runtime_id"]);
@@ -283,16 +316,16 @@ group("Current resolution", () => {
     assertNoLeak(result);
   });
 
-  test("rejects an adapter observation for another runtime", () => {
+  await test("rejects an adapter observation for another runtime", async () => {
     const port = createPort({
       resolveCurrentSession: () => rawSuccess(RUNTIME_B, SESSION_A),
     });
-    assertFailure(port.resolveCurrentSession({ runtime_id: RUNTIME_A }), "session_resolution_runtime_mismatch");
+    assertFailure(await port.resolveCurrentSession({ runtime_id: RUNTIME_A }), "session_resolution_runtime_mismatch");
   });
 });
 
-group("Target resolution binding", () => {
-  test("returns exactly the requested target identity after re-resolution", () => {
+await group("Target resolution binding", async () => {
+  await test("returns exactly the requested target identity after re-resolution", async () => {
     let calls = 0;
     let received;
     const port = createPort({
@@ -303,7 +336,7 @@ group("Target resolution binding", () => {
       },
     });
     const request = { runtime_id: RUNTIME_A, session_identity: SESSION_A };
-    const result = port.resolveTargetSession(request);
+    const result = await port.resolveTargetSession(request);
     assertPublicSuccess(result, RUNTIME_A, SESSION_A);
     assert.equal(calls, 1);
     assert.equal(Object.isFrozen(received), true);
@@ -311,12 +344,12 @@ group("Target resolution binding", () => {
     assert.deepEqual(Reflect.ownKeys(received), ["runtime_id", "session_identity"]);
   });
 
-  test("separates target runtime and identity mismatches without substitution", () => {
+  await test("separates target runtime and identity mismatches without substitution", async () => {
     const runtimeMismatch = createPort({
       resolveTargetSession: () => rawSuccess(RUNTIME_B, SESSION_A),
     });
     assertFailure(
-      runtimeMismatch.resolveTargetSession({ runtime_id: RUNTIME_A, session_identity: SESSION_A }),
+      await runtimeMismatch.resolveTargetSession({ runtime_id: RUNTIME_A, session_identity: SESSION_A }),
       "session_resolution_runtime_mismatch",
     );
 
@@ -324,14 +357,14 @@ group("Target resolution binding", () => {
       resolveTargetSession: () => rawSuccess(RUNTIME_A, SESSION_B),
     });
     assertFailure(
-      identityMismatch.resolveTargetSession({ runtime_id: RUNTIME_A, session_identity: SESSION_A }),
+      await identityMismatch.resolveTargetSession({ runtime_id: RUNTIME_A, session_identity: SESSION_A }),
       "session_resolution_identity_mismatch",
     );
   });
 });
 
-group("Failure separation", () => {
-  test("preserves unsupported, not-found, ambiguous, stale, denied, and unavailable", () => {
+await group("Failure separation", async () => {
+  await test("preserves unsupported, not-found, ambiguous, stale, denied, and unavailable", async () => {
     for (const [adapterReason, publicReason] of [
       ["runtime_unsupported", "session_resolution_runtime_unsupported"],
       ["not_found", "session_resolution_not_found"],
@@ -341,11 +374,11 @@ group("Failure separation", () => {
       ["unavailable", "session_resolution_unavailable"],
     ]) {
       const port = createPort({ resolveCurrentSession: () => rawFailure(adapterReason) });
-      assertFailure(port.resolveCurrentSession({ runtime_id: RUNTIME_A }), publicReason);
+      assertFailure(await port.resolveCurrentSession({ runtime_id: RUNTIME_A }), publicReason);
     }
   });
 
-  test("keeps Core-owned reasons unavailable to adapters", () => {
+  await test("keeps Core-owned reasons unavailable to adapters", async () => {
     for (const reason of [
       "dependency_invalid",
       "input_invalid",
@@ -366,29 +399,29 @@ group("Failure separation", () => {
     ]) {
       const port = createPort({ resolveCurrentSession: () => rawFailure(reason) });
       assertFailure(
-        port.resolveCurrentSession({ runtime_id: RUNTIME_A }),
+        await port.resolveCurrentSession({ runtime_id: RUNTIME_A }),
         "session_resolution_result_invalid",
       );
     }
   });
 
-  test("maps thrown adapter exceptions to unavailable and unknown reasons to result-invalid", () => {
+  await test("maps thrown adapter exceptions to unavailable and unknown reasons to result-invalid", async () => {
     const throwing = createPort({
       resolveCurrentSession: () => {
         throw new Error(`${EXCEPTION_MARKER} ${NATIVE_PATH} ${NATIVE_TOKEN}`);
       },
     });
-    assertFailure(throwing.resolveCurrentSession({ runtime_id: RUNTIME_A }), "session_resolution_unavailable");
+    assertFailure(await throwing.resolveCurrentSession({ runtime_id: RUNTIME_A }), "session_resolution_unavailable");
 
     const unknown = createPort({
       resolveCurrentSession: () => rawFailure(`${EXCEPTION_MARKER}-unknown`),
     });
-    assertFailure(unknown.resolveCurrentSession({ runtime_id: RUNTIME_A }), "session_resolution_result_invalid");
+    assertFailure(await unknown.resolveCurrentSession({ runtime_id: RUNTIME_A }), "session_resolution_result_invalid");
   });
 });
 
-group("Malformed adapter output", () => {
-  test("rejects structural, identity, binding, and thenable violations", () => {
+await group("Malformed adapter output", async () => {
+  await test("rejects structural, identity, binding, and thenable violations", async () => {
     const cases = [
       [null, "session_resolution_result_invalid"],
       [[], "session_resolution_result_invalid"],
@@ -400,11 +433,11 @@ group("Malformed adapter output", () => {
       [rawFailure("unknown-adapter-reason"), "session_resolution_result_invalid"],
       [rawSuccess(RUNTIME_A, "phr1.repository.key_A-1." + "R".repeat(43)), "session_resolution_result_invalid"],
       [rawSuccess(RUNTIME_A, "malformed-session-identity"), "session_resolution_result_invalid"],
-      [Promise.resolve(rawSuccess()), "session_resolution_result_invalid"],
+      [Promise.resolve(null), "session_resolution_result_invalid"],
     ];
     for (const [adapterResult, reason] of cases) {
       const port = createPort({ resolveCurrentSession: () => adapterResult });
-      const result = port.resolveCurrentSession({ runtime_id: RUNTIME_A });
+      const result = await port.resolveCurrentSession({ runtime_id: RUNTIME_A });
       assertFailure(result, reason);
       assertNoLeak(result);
     }
@@ -418,23 +451,23 @@ group("Malformed adapter output", () => {
       configurable: true,
     });
     assertFailure(
-      createPort({ resolveCurrentSession: () => accessor }).resolveCurrentSession({ runtime_id: RUNTIME_A }),
+      await createPort({ resolveCurrentSession: () => accessor }).resolveCurrentSession({ runtime_id: RUNTIME_A }),
       "session_resolution_result_invalid",
     );
   });
 
-  test("normalizes a rejected Promise without leaking its rejection", () => {
+  await test("normalizes a rejected Promise without leaking its rejection", async () => {
     const rejected = Promise.reject(new Error(`${EXCEPTION_MARKER} ${NATIVE_PATH}`));
     rejected.catch(() => {});
     const port = createPort({ resolveCurrentSession: () => rejected });
-    const captured = captureOutput(() => port.resolveCurrentSession({ runtime_id: RUNTIME_A }));
-    assertFailure(captured.value, "session_resolution_result_invalid");
+    const captured = await captureAsyncOutput(() => port.resolveCurrentSession({ runtime_id: RUNTIME_A }));
+    assertFailure(captured.value, "session_resolution_unavailable");
     assert.equal(captured.stdout, "");
     assert.equal(captured.stderr, "");
     assertNoLeak(captured.value);
   });
 
-  test("never reads a synthetic then accessor or permits output side effects", () => {
+  await test("never reads a synthetic then accessor or permits output side effects", async () => {
     let getterCalls = 0;
     const adapterResult = rawSuccess();
     Object.defineProperty(adapterResult, "then", {
@@ -448,7 +481,7 @@ group("Malformed adapter output", () => {
       configurable: true,
     });
     const port = createPort({ resolveCurrentSession: () => adapterResult });
-    const captured = captureOutput(() => port.resolveCurrentSession({ runtime_id: RUNTIME_A }));
+    const captured = await captureAsyncOutput(() => port.resolveCurrentSession({ runtime_id: RUNTIME_A }));
     assertFailure(captured.value, "session_resolution_result_invalid");
     assert.equal(getterCalls, 0);
     assert.equal(captured.stdout, "");
@@ -457,8 +490,8 @@ group("Malformed adapter output", () => {
   });
 });
 
-group("Input and identity confusion", () => {
-  test("requires exact plain current and target inputs", () => {
+await group("Input and identity confusion", async () => {
+  await test("requires exact plain current and target inputs", async () => {
     const port = createPort();
     const currentInputs = [
       null,
@@ -474,7 +507,9 @@ group("Input and identity confusion", () => {
       { runtime_id: "a".repeat(33) },
       { runtime_id: 42 },
     ];
-    for (const input of currentInputs) assertFailure(port.resolveCurrentSession(input), "session_resolution_input_invalid");
+    for (const input of currentInputs) {
+      assertFailure(await port.resolveCurrentSession(input), "session_resolution_input_invalid");
+    }
 
     const targetInputs = [
       { runtime_id: RUNTIME_A },
@@ -485,10 +520,12 @@ group("Input and identity confusion", () => {
       { runtime_id: RUNTIME_A, session_identity: SESSION_A, extra: true },
       Object.assign({ runtime_id: RUNTIME_A, session_identity: SESSION_A }, { [Symbol("extra")]: true }),
     ];
-    for (const input of targetInputs) assertFailure(port.resolveTargetSession(input), "session_resolution_input_invalid");
+    for (const input of targetInputs) {
+      assertFailure(await port.resolveTargetSession(input), "session_resolution_input_invalid");
+    }
   });
 
-  test("does not invoke adapters for invalid input or accessor fields", () => {
+  await test("does not invoke adapters for invalid input or accessor fields", async () => {
     let currentCalls = 0;
     let targetCalls = 0;
     const port = createPort({
@@ -511,7 +548,7 @@ group("Input and identity confusion", () => {
       enumerable: true,
       configurable: true,
     });
-    assertFailure(port.resolveCurrentSession(current), "session_resolution_input_invalid");
+    assertFailure(await port.resolveCurrentSession(current), "session_resolution_input_invalid");
     assert.equal(getterCalled, false);
     assert.equal(currentCalls, 0);
 
@@ -524,13 +561,13 @@ group("Input and identity confusion", () => {
       enumerable: true,
       configurable: true,
     });
-    assertFailure(port.resolveTargetSession(target), "session_resolution_input_invalid");
+    assertFailure(await port.resolveTargetSession(target), "session_resolution_input_invalid");
     assert.equal(targetCalls, 0);
   });
 });
 
-group("Privacy boundary", () => {
-  test("does not expose native values from output, errors, stdout, or stderr", () => {
+await group("Privacy boundary", async () => {
+  await test("does not expose native values from output, errors, stdout, or stderr", async () => {
     const adapterResult = {
       runtime_id: RUNTIME_A,
       session_identity: SESSION_A,
@@ -540,7 +577,7 @@ group("Privacy boundary", () => {
       prompt: PROMPT_MARKER,
     };
     const port = createPort({ resolveCurrentSession: () => adapterResult });
-    const captured = captureOutput(() => port.resolveCurrentSession({ runtime_id: RUNTIME_A }));
+    const captured = await captureAsyncOutput(() => port.resolveCurrentSession({ runtime_id: RUNTIME_A }));
     assertFailure(captured.value, "session_resolution_result_invalid");
     assertNoLeak(captured.value);
     assert.equal(captured.stdout.includes(NATIVE_SESSION_ID), false);
@@ -550,8 +587,8 @@ group("Privacy boundary", () => {
   });
 });
 
-group("Freshness and independence", () => {
-  test("performs one-shot uncached observations", () => {
+await group("Freshness and independence", async () => {
+  await test("performs one-shot uncached observations", async () => {
     let calls = 0;
     const port = createPort({
       resolveCurrentSession: () => {
@@ -559,30 +596,30 @@ group("Freshness and independence", () => {
         return rawSuccess(RUNTIME_A, calls === 1 ? SESSION_A : SESSION_B);
       },
     });
-    assertPublicSuccess(port.resolveCurrentSession({ runtime_id: RUNTIME_A }), RUNTIME_A, SESSION_A);
-    assertPublicSuccess(port.resolveCurrentSession({ runtime_id: RUNTIME_A }), RUNTIME_A, SESSION_B);
+    assertPublicSuccess(await port.resolveCurrentSession({ runtime_id: RUNTIME_A }), RUNTIME_A, SESSION_A);
+    assertPublicSuccess(await port.resolveCurrentSession({ runtime_id: RUNTIME_A }), RUNTIME_A, SESSION_B);
     assert.equal(calls, 2);
   });
 
-  test("keeps reentrant requests independent", () => {
+  await test("keeps reentrant requests independent", async () => {
     let calls = 0;
     let port;
     port = createPort({
-      resolveCurrentSession: input => {
+      resolveCurrentSession: async input => {
         calls += 1;
         if (input.runtime_id === RUNTIME_A) {
-          const nested = port.resolveCurrentSession({ runtime_id: RUNTIME_B });
+          const nested = await port.resolveCurrentSession({ runtime_id: RUNTIME_B });
           assertPublicSuccess(nested, RUNTIME_B, SESSION_B);
           return rawSuccess(RUNTIME_A, SESSION_A);
         }
         return rawSuccess(RUNTIME_B, SESSION_B);
       },
     });
-    assertPublicSuccess(port.resolveCurrentSession({ runtime_id: RUNTIME_A }), RUNTIME_A, SESSION_A);
+    assertPublicSuccess(await port.resolveCurrentSession({ runtime_id: RUNTIME_A }), RUNTIME_A, SESSION_A);
     assert.equal(calls, 2);
   });
 
-  test("performs target observations sequentially without a target cache", () => {
+  await test("performs target observations sequentially without a target cache", async () => {
     let calls = 0;
     const port = createPort({
       resolveTargetSession: input => {
@@ -591,26 +628,26 @@ group("Freshness and independence", () => {
       },
     });
     assertPublicSuccess(
-      port.resolveTargetSession({ runtime_id: RUNTIME_A, session_identity: SESSION_A }),
+      await port.resolveTargetSession({ runtime_id: RUNTIME_A, session_identity: SESSION_A }),
       RUNTIME_A,
       SESSION_A,
     );
     assertPublicSuccess(
-      port.resolveTargetSession({ runtime_id: RUNTIME_A, session_identity: SESSION_B }),
+      await port.resolveTargetSession({ runtime_id: RUNTIME_A, session_identity: SESSION_B }),
       RUNTIME_A,
       SESSION_B,
     );
     assert.equal(calls, 2);
   });
 
-  test("keeps reentrant target requests independent and invokes once per request", () => {
+  await test("keeps reentrant target requests independent and invokes once per request", async () => {
     let calls = 0;
     let port;
     port = createPort({
-      resolveTargetSession: input => {
+      resolveTargetSession: async input => {
         calls += 1;
         if (input.session_identity === SESSION_A) {
-          const nested = port.resolveTargetSession({
+          const nested = await port.resolveTargetSession({
             runtime_id: RUNTIME_B,
             session_identity: SESSION_B,
           });
@@ -621,7 +658,7 @@ group("Freshness and independence", () => {
       },
     });
     assertPublicSuccess(
-      port.resolveTargetSession({ runtime_id: RUNTIME_A, session_identity: SESSION_A }),
+      await port.resolveTargetSession({ runtime_id: RUNTIME_A, session_identity: SESSION_A }),
       RUNTIME_A,
       SESSION_A,
     );
@@ -629,14 +666,14 @@ group("Freshness and independence", () => {
   });
 });
 
-group("Static dependency boundary", () => {
-  test("imports only the runtime-neutral identity seam", () => {
+await group("Static dependency boundary", async () => {
+  await test("imports only the runtime-neutral identity seam", async () => {
     const imports = SOURCE.match(/^import .*$/gm) ?? [];
     assert.deepEqual(imports, [
+      'import { types as utilTypes } from "node:util";',
       'import { validateOpaqueIdentity } from "./pending-handoff-identity.mjs";',
     ]);
     for (const forbidden of [
-      "node:",
       "codex",
       "claude",
       "context-checkpoint",
@@ -654,10 +691,23 @@ group("Static dependency boundary", () => {
     }
   });
 
+  await test("uses intrinsic Promise detection without thenable duck typing", async () => {
+    assert.match(SOURCE, /utilTypes\.isPromise\(adapterResult\)/);
+    assert.match(
+      SOURCE,
+      /if \(utilTypes\.isProxy\(adapterResult\)\) \{\s*return failure\("session_resolution_result_invalid"\);\s*\}\s*if \(utilTypes\.isPromise\(adapterResult\)\) adapterResult = await adapterResult;\s*if \(utilTypes\.isProxy\(adapterResult\)/s,
+    );
+    assert.match(SOURCE, /if \(utilTypes\.isProxy\(value\)\) return \{ ok: false \};/);
+    assert.match(SOURCE, /function hasThenProperty[\s\S]*?utilTypes\.isProxy\(value\)/);
+    assert.doesNotMatch(SOURCE, /(?:adapterResult|value)\.then/);
+    assert.doesNotMatch(SOURCE, /typeof\s+(?:adapterResult|value)\.then/);
+    assert.doesNotMatch(SOURCE, /Promise\.resolve\s*\(/);
+  });
+
 });
 
-group("Mutation boundary", () => {
-  test("does not alter the Candidate 17-field contract or add lifecycle calls", () => {
+await group("Mutation boundary", async () => {
+  await test("does not alter the Candidate 17-field contract or add lifecycle calls", async () => {
     const candidate = makeCandidate();
     assert.equal(validateCandidate(candidate).ok, true);
     assert.equal(Object.keys(candidate).length, 17);
@@ -668,7 +718,7 @@ group("Mutation boundary", () => {
     assert.equal(SOURCE.includes("state_revision"), false);
   });
 
-  test("wires only the dedicated fixture into Pending Handoff verification", () => {
+  await test("wires only the dedicated fixture into Pending Handoff verification", async () => {
     assert.match(
       MAKEFILE_SOURCE,
       /^test-pending-handoff-session-resolution-fixtures:\n\tnode \.\/scripts\/test-pending-handoff-session-resolution-fixtures\.mjs$/m,
@@ -676,6 +726,295 @@ group("Mutation boundary", () => {
     const declaration = MAKEFILE_SOURCE.match(/^test-v1x-fixtures:[\s\S]*?(?=\n\ninstall:)/m)?.[0] ?? "";
     assert.match(declaration, /test-pending-handoff-session-resolution-fixtures/);
     assert.equal(MAKEFILE_SOURCE.includes("completion-notify.*session-resolution"), false);
+  });
+});
+
+await asyncGroup("Async resolution compatibility", async () => {
+  await asyncTest("wraps sync callbacks and input failures in Promises", async () => {
+    const port = createPort();
+    const successResult = port.resolveCurrentSession({ runtime_id: RUNTIME_A });
+    assert.equal(successResult instanceof Promise, true);
+    assertPublicSuccess(await successResult, RUNTIME_A, SESSION_A);
+
+    const inputResult = port.resolveCurrentSession({ runtime_id: INVALID_RUNTIME });
+    assert.equal(inputResult instanceof Promise, true);
+    assertFailure(await inputResult, "session_resolution_input_invalid");
+  });
+
+  await asyncTest("accepts an intrinsic async current-session callback", async () => {
+    let calls = 0;
+    const port = createPort({
+      resolveCurrentSession: async () => {
+        calls += 1;
+        await Promise.resolve();
+        return rawSuccess(RUNTIME_A, SESSION_A);
+      },
+    });
+    const result = port.resolveCurrentSession({ runtime_id: RUNTIME_A });
+    assert.equal(result instanceof Promise, true);
+    assertPublicSuccess(await result, RUNTIME_A, SESSION_A);
+    assert.equal(calls, 1);
+  });
+
+  await asyncTest("accepts an intrinsic async target-session callback", async () => {
+    const port = createPort({
+      resolveTargetSession: async request => {
+        await Promise.resolve();
+        return rawSuccess(request.runtime_id, request.session_identity);
+      },
+    });
+    const result = port.resolveTargetSession({
+      runtime_id: RUNTIME_A,
+      session_identity: SESSION_A,
+    });
+    assert.equal(result instanceof Promise, true);
+    assertPublicSuccess(await result, RUNTIME_A, SESSION_A);
+  });
+
+  await asyncTest("preserves async failure provenance and sanitizes rejection", async () => {
+    const notFound = createPort({
+      resolveCurrentSession: async () => {
+        await Promise.resolve();
+        return rawFailure("not_found");
+      },
+    });
+    assertFailure(
+      await notFound.resolveCurrentSession({ runtime_id: RUNTIME_A }),
+      "session_resolution_not_found",
+    );
+
+    const rejected = createPort({
+      resolveCurrentSession: async () => {
+        throw new Error(`${EXCEPTION_MARKER} ${NATIVE_PATH} ${NATIVE_TOKEN}`);
+      },
+    });
+    const captured = await captureAsyncOutput(
+      () => rejected.resolveCurrentSession({ runtime_id: RUNTIME_A }),
+    );
+    assertFailure(captured.value, "session_resolution_unavailable");
+    assert.equal(captured.stdout, "");
+    assert.equal(captured.stderr, "");
+    assertNoLeak(captured.value);
+  });
+
+  await asyncTest("preserves async adapter failure and Core binding provenance", async () => {
+    for (const [adapterReason, publicReason] of [
+      ["runtime_unsupported", "session_resolution_runtime_unsupported"],
+      ["not_found", "session_resolution_not_found"],
+      ["ambiguous", "session_resolution_ambiguous"],
+      ["stale", "session_resolution_stale"],
+      ["denied", "session_resolution_denied"],
+      ["unavailable", "session_resolution_unavailable"],
+    ]) {
+      const port = createPort({
+        resolveCurrentSession: async () => rawFailure(adapterReason),
+      });
+      assertFailure(
+        await port.resolveCurrentSession({ runtime_id: RUNTIME_A }),
+        publicReason,
+      );
+    }
+
+    const runtimeMismatch = createPort({
+      resolveTargetSession: async () => rawSuccess(RUNTIME_B, SESSION_A),
+    });
+    assertFailure(
+      await runtimeMismatch.resolveTargetSession({
+        runtime_id: RUNTIME_A,
+        session_identity: SESSION_A,
+      }),
+      "session_resolution_runtime_mismatch",
+    );
+
+    const identityMismatch = createPort({
+      resolveTargetSession: async () => rawSuccess(RUNTIME_A, SESSION_B),
+    });
+    assertFailure(
+      await identityMismatch.resolveTargetSession({
+        runtime_id: RUNTIME_A,
+        session_identity: SESSION_A,
+      }),
+      "session_resolution_identity_mismatch",
+    );
+
+    const coreOwnedReason = createPort({
+      resolveCurrentSession: async () => rawFailure("input_invalid"),
+    });
+    assertFailure(
+      await coreOwnedReason.resolveCurrentSession({ runtime_id: RUNTIME_A }),
+      "session_resolution_result_invalid",
+    );
+
+    const malformed = createPort({
+      resolveTargetSession: async () => ({ ok: true, value: null }),
+    });
+    assertFailure(
+      await malformed.resolveTargetSession({
+        runtime_id: RUNTIME_A,
+        session_identity: SESSION_A,
+      }),
+      "session_resolution_result_invalid",
+    );
+  });
+
+  await asyncTest("rejects direct thenables without reading then accessors", async () => {
+    const cases = [];
+    for (const enumerable of [true, false]) {
+      let getterCalls = 0;
+      const result = rawSuccess();
+      Object.defineProperty(result, "then", {
+        get() {
+          getterCalls += 1;
+          process.stdout.write(`${EXCEPTION_MARKER}-stdout`);
+          process.stderr.write(`${EXCEPTION_MARKER}-stderr`);
+          return () => {};
+        },
+        enumerable,
+        configurable: true,
+      });
+      cases.push({ result, getCalls: () => getterCalls });
+    }
+
+    const inheritedGetterCalls = { value: 0 };
+    const hostilePrototype = {};
+    Object.defineProperty(hostilePrototype, "then", {
+      get() {
+        inheritedGetterCalls.value += 1;
+        throw new Error(EXCEPTION_MARKER);
+      },
+      enumerable: false,
+    });
+    cases.push({
+      result: cloneWithPrototype(rawSuccess(), hostilePrototype),
+      getCalls: () => inheritedGetterCalls.value,
+    });
+
+    const ordinaryThenable = rawSuccess();
+    Object.defineProperty(ordinaryThenable, "then", {
+      value: () => {},
+      enumerable: false,
+      configurable: true,
+    });
+    cases.push({ result: ordinaryThenable, getCalls: () => 0 });
+
+    for (const item of cases) {
+      const captured = await captureAsyncOutput(
+        () => createPort({ resolveCurrentSession: () => item.result })
+          .resolveCurrentSession({ runtime_id: RUNTIME_A }),
+      );
+      assertFailure(captured.value, "session_resolution_result_invalid");
+      assert.equal(item.getCalls(), 0);
+      assert.equal(captured.stdout, "");
+      assert.equal(captured.stderr, "");
+      assertNoLeak(captured.value);
+    }
+  });
+
+  await asyncTest("rejects Proxy results before any trap or semantic reflection", async () => {
+    function makeProxy(target, trapName) {
+      let trapCalls = 0;
+      let thenCalls = 0;
+      const mark = () => {
+        trapCalls += 1;
+        process.stdout.write(`${EXCEPTION_MARKER}-proxy-stdout`);
+        process.stderr.write(`${EXCEPTION_MARKER}-proxy-stderr`);
+      };
+      const handler = {};
+      if (trapName === "get") {
+        handler.get = (value, property, receiver) => {
+          mark();
+          if (property === "then") {
+            thenCalls += 1;
+            return () => {};
+          }
+          return Reflect.get(value, property, receiver);
+        };
+      }
+      if (trapName === "ownKeys") {
+        handler.ownKeys = value => {
+          mark();
+          return Reflect.ownKeys(value);
+        };
+      }
+      if (trapName === "getOwnPropertyDescriptor") {
+        handler.getOwnPropertyDescriptor = (value, property) => {
+          mark();
+          return Reflect.getOwnPropertyDescriptor(value, property);
+        };
+      }
+      if (trapName === "getPrototypeOf") {
+        handler.getPrototypeOf = value => {
+          mark();
+          return Reflect.getPrototypeOf(value);
+        };
+      }
+      return {
+        value: new Proxy(target, handler),
+        trapCalls: () => trapCalls,
+        thenCalls: () => thenCalls,
+      };
+    }
+
+    const cases = [
+      ["get synthesizes then", () => makeProxy(rawSuccess(), "get")],
+      ["ownKeys trap", () => makeProxy(rawSuccess(), "ownKeys")],
+      ["descriptor trap", () => makeProxy(rawSuccess(), "getOwnPropertyDescriptor")],
+      ["prototype trap", () => makeProxy(rawSuccess(), "getPrototypeOf")],
+      ["Promise settles to Proxy", () => {
+        const probe = makeProxy(rawSuccess(), "ownKeys");
+        return { ...probe, value: Promise.resolve(probe.value) };
+      }],
+      ["Proxy wraps Promise", () => makeProxy(Promise.resolve(rawSuccess()), "ownKeys")],
+    ];
+
+    for (const phase of ["current", "target"]) {
+      for (const [label, build] of cases) {
+        const probe = build();
+        const port = createPort(phase === "current"
+          ? { resolveCurrentSession: () => probe.value }
+          : { resolveTargetSession: () => probe.value });
+        const captured = await captureAsyncOutput(() => phase === "current"
+          ? port.resolveCurrentSession({ runtime_id: RUNTIME_A })
+          : port.resolveTargetSession({
+            runtime_id: RUNTIME_A,
+            session_identity: SESSION_A,
+          }));
+        assertFailure(captured.value, "session_resolution_result_invalid");
+        assert.equal(probe.trapCalls(), 0, `${phase} ${label}`);
+        assert.equal(probe.thenCalls(), 0, `${phase} ${label} then`);
+        assert.equal(captured.stdout, "", `${phase} ${label} stdout`);
+        assert.equal(captured.stderr, "", `${phase} ${label} stderr`);
+        assertNoLeak(captured.value);
+      }
+    }
+  });
+
+  await asyncTest("keeps concurrent current and target observations isolated", async () => {
+    const wait = delay => new Promise(resolve => setTimeout(resolve, delay));
+    const port = createPort({
+      resolveCurrentSession: async request => {
+        await wait(request.runtime_id === RUNTIME_A ? 5 : 0);
+        return rawSuccess(
+          request.runtime_id,
+          request.runtime_id === RUNTIME_A ? SESSION_A : SESSION_B,
+        );
+      },
+      resolveTargetSession: async request => {
+        await wait(request.session_identity === SESSION_A ? 5 : 0);
+        return rawSuccess(request.runtime_id, request.session_identity);
+      },
+    });
+
+    const [currentA, currentB, targetA, targetB] = await Promise.all([
+      port.resolveCurrentSession({ runtime_id: RUNTIME_A }),
+      port.resolveCurrentSession({ runtime_id: RUNTIME_B }),
+      port.resolveTargetSession({ runtime_id: RUNTIME_A, session_identity: SESSION_A }),
+      port.resolveTargetSession({ runtime_id: RUNTIME_B, session_identity: SESSION_B }),
+    ]);
+    assertPublicSuccess(currentA, RUNTIME_A, SESSION_A);
+    assertPublicSuccess(currentB, RUNTIME_B, SESSION_B);
+    assertPublicSuccess(targetA, RUNTIME_A, SESSION_A);
+    assertPublicSuccess(targetB, RUNTIME_B, SESSION_B);
   });
 });
 

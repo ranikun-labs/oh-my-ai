@@ -27,6 +27,7 @@ const EXCEPTION_MARKER = "manual-resume-exception-marker";
 const NATIVE_ID = "native-session-id-must-not-escape";
 const NATIVE_PATH = "/private/native/manual-resume/session";
 const NATIVE_TOKEN = "token_like_manual_resume_secret";
+const NESTED_PROXY_MARKER = "manual-resume-nested-proxy-marker";
 
 let groups = 0;
 let tests = 0;
@@ -137,6 +138,60 @@ function resolutionSuccess(runtimeId = RUNTIME_A, identity = SESSION_SOURCE) {
   });
 }
 
+function nestedResolutionSuccess(value) {
+  return { ok: true, value };
+}
+
+function makeNestedSemanticProxy(identity) {
+  const target = {
+    runtime_id: RUNTIME_A,
+    session_identity: identity,
+  };
+  return kind => {
+    let trapCalls = 0;
+    let thenCalls = 0;
+    const mark = () => {
+      trapCalls += 1;
+      process.stdout.write(`${NESTED_PROXY_MARKER}-stdout`);
+      process.stderr.write(`${NESTED_PROXY_MARKER}-stderr`);
+    };
+    const handler = {};
+    if (kind === "get") {
+      handler.get = (value, property, receiver) => {
+        mark();
+        if (property === "then") {
+          thenCalls += 1;
+          return () => {};
+        }
+        return Reflect.get(value, property, receiver);
+      };
+    }
+    if (kind === "ownKeys") {
+      handler.ownKeys = value => {
+        mark();
+        return Reflect.ownKeys(value);
+      };
+    }
+    if (kind === "descriptor") {
+      handler.getOwnPropertyDescriptor = (value, property) => {
+        mark();
+        return Reflect.getOwnPropertyDescriptor(value, property);
+      };
+    }
+    if (kind === "prototype") {
+      handler.getPrototypeOf = value => {
+        mark();
+        return Reflect.getPrototypeOf(value);
+      };
+    }
+    const value = new Proxy(target, handler);
+    return {
+      value,
+      counts: () => ({ trapCalls, thenCalls }),
+    };
+  };
+}
+
 function resolutionFailure(reason) {
   return Object.freeze({ ok: false, reason: `session_resolution_${reason}` });
 }
@@ -215,11 +270,13 @@ function createDependencies(options = {}) {
   const sessionResolution = options.sessionResolution ?? {
     resolveCurrentSession: request => {
       calls.push(["resolveCurrentSession", request]);
-      return typeof current === "function" ? current(request) : current;
+      const result = typeof current === "function" ? current(request) : current;
+      return Promise.resolve(result);
     },
     resolveTargetSession: request => {
       calls.push(["resolveTargetSession", request]);
-      return typeof target === "function" ? target(request) : target;
+      const result = typeof target === "function" ? target(request) : target;
+      return Promise.resolve(result);
     },
   };
   const claimLease = options.claimLease ?? {
@@ -335,8 +392,8 @@ await group("dependency boundary", async () => {
       nativeLookup: () => extraCalls.push("store.nativeLookup"),
     };
     const sessionResolution = {
-      resolveCurrentSession: () => resolutionSuccess(RUNTIME_A, SESSION_OWNER_A),
-      resolveTargetSession: () => resolutionSuccess(RUNTIME_A, SESSION_SOURCE),
+      resolveCurrentSession: () => Promise.resolve(resolutionSuccess(RUNTIME_A, SESSION_OWNER_A)),
+      resolveTargetSession: () => Promise.resolve(resolutionSuccess(RUNTIME_A, SESSION_SOURCE)),
       registryLookup: () => extraCalls.push("sessionResolution.registryLookup"),
     };
     const claimLease = {
@@ -677,14 +734,15 @@ await group("resolution and Claim failure provenance", async () => {
       assert.equal(built.calls.filter(([name]) => name === "acquireClaim").length, 0);
     });
   }
-  await test("rejects a current resolver Promise without awaiting or invoking target", async () => {
+  await test("awaits a current resolver Promise before target and Claim", async () => {
     const built = createService({ current: Promise.resolve(resolutionSuccess(RUNTIME_A, SESSION_OWNER_A)) });
-    exactFailure(
-      await built.service.prepareManualResume(request()),
-      "manual_resume_action_request_unavailable",
-    );
-    assert.equal(built.calls.filter(([name]) => name === "resolveTargetSession").length, 0);
-    assert.equal(built.calls.filter(([name]) => name === "acquireClaim").length, 0);
+    assertAction(exactSuccess(await built.service.prepareManualResume(request())));
+    assert.deepEqual(built.calls.map(([name]) => name), [
+      "readState",
+      "resolveCurrentSession",
+      "resolveTargetSession",
+      "acquireClaim",
+    ]);
   });
   const targetFailures = [
     ["not_found", "manual_resume_target_not_found"],
@@ -704,13 +762,15 @@ await group("resolution and Claim failure provenance", async () => {
       assert.equal(built.calls.filter(([name]) => name === "acquireClaim").length, 0);
     });
   }
-  await test("rejects a target resolver Promise without awaiting or acquiring Claim", async () => {
+  await test("awaits a target resolver Promise before acquiring Claim", async () => {
     const built = createService({ target: Promise.resolve(resolutionSuccess(RUNTIME_A, SESSION_SOURCE)) });
-    exactFailure(
-      await built.service.prepareManualResume(request()),
-      "manual_resume_action_request_unavailable",
-    );
-    assert.equal(built.calls.filter(([name]) => name === "acquireClaim").length, 0);
+    assertAction(exactSuccess(await built.service.prepareManualResume(request())));
+    assert.deepEqual(built.calls.map(([name]) => name), [
+      "readState",
+      "resolveCurrentSession",
+      "resolveTargetSession",
+      "acquireClaim",
+    ]);
   });
   await test("normalizes Claim provenance without passing raw reasons", async () => {
     const mappings = [
@@ -785,6 +845,22 @@ await group("static boundary, concurrency, and Makefile", async () => {
     assert.doesNotMatch(SOURCE, /codex|claude|registry|context-checkpoint|compareIdentityScope/i);
     assert.doesNotMatch(SOURCE, /raw_session_id|native_session|process\.env|remote_url|worktree_path/);
   });
+  await test("awaits both Session Resolution phases before Claim", () => {
+    assert.match(SOURCE, /const currentResult = await resolveCurrentSession\(/);
+    assert.match(SOURCE, /const targetResult = await resolveTargetSession\(/);
+    assert.match(SOURCE, /import \{ types as utilTypes \} from "node:util";/);
+    assert.equal((SOURCE.match(/if \(utilTypes\.isProxy\(raw\) \|\| !utilTypes\.isPromise\(raw\)\)/g) ?? []).length, 2);
+    assert.equal((SOURCE.match(/result = await raw/g) ?? []).length, 2);
+    assert.doesNotMatch(SOURCE, /await sessionResolution\.resolve(?:Current|Target)Session\(/);
+    assert.doesNotMatch(SOURCE, /(?:raw|result)\.then/);
+    assert.doesNotMatch(SOURCE, /Promise\.resolve\s*\(/);
+  });
+  await test("checks nested semantic success values before reflection", () => {
+    assert.match(
+      SOURCE,
+      /if \(successResult\.ok && successResult\.values\.ok === true\) \{\s*if \(utilTypes\.isProxy\(successResult\.values\.value\)\) return \{ ok: false \};\s*return \{ ok: true, kind: "success", value: successResult\.values\.value \};/s,
+    );
+  });
   await test("keeps the service call-independent under concurrent requests", async () => {
     const candidateA = candidate({ candidate_id: "manual-resume-a", source_session_identity: SESSION_SOURCE });
     const candidateB = candidate({ candidate_id: "manual-resume-b", source_runtime: RUNTIME_B, source_session_identity: SESSION_OTHER });
@@ -799,11 +875,14 @@ await group("static boundary, concurrency, and Makefile", async () => {
       sessionResolution: {
         resolveCurrentSession: ({ runtime_id }) => {
           calls.push(["current", runtime_id]);
-          return resolutionSuccess(runtime_id, runtime_id === RUNTIME_A ? SESSION_OWNER_A : SESSION_OWNER_B);
+          return Promise.resolve(resolutionSuccess(
+            runtime_id,
+            runtime_id === RUNTIME_A ? SESSION_OWNER_A : SESSION_OWNER_B,
+          ));
         },
         resolveTargetSession: value => {
           calls.push(["target", value]);
-          return resolutionSuccess(value.runtime_id, value.session_identity);
+          return Promise.resolve(resolutionSuccess(value.runtime_id, value.session_identity));
         },
       },
       claimLease: {
@@ -830,6 +909,446 @@ await group("static boundary, concurrency, and Makefile", async () => {
     assert.match(declaration, /test-pending-handoff-session-resolution-fixtures/);
     assert.match(declaration, /test-pending-handoff-manual-resume-fixtures/);
     assert.ok(declaration.indexOf("test-pending-handoff-session-resolution-fixtures") < declaration.indexOf("test-pending-handoff-manual-resume-fixtures"));
+  });
+});
+
+await group("async Session Resolution compatibility", async () => {
+  await test("awaits async current and target resolution before Claim", async () => {
+    const built = createService({
+      current: async () => {
+        await Promise.resolve();
+        return resolutionSuccess(RUNTIME_A, SESSION_OWNER_A);
+      },
+      target: async () => {
+        await Promise.resolve();
+        return resolutionSuccess(RUNTIME_A, SESSION_SOURCE);
+      },
+    });
+    const result = await built.service.prepareManualResume(request());
+    const value = exactSuccess(result);
+    assertAction(value);
+    assert.deepEqual(built.calls.map(([name]) => name), [
+      "readState",
+      "resolveCurrentSession",
+      "resolveTargetSession",
+      "acquireClaim",
+    ]);
+  });
+
+  await test("does not call target or Claim after async current failure", async () => {
+    const built = createService({
+      current: async () => {
+        await Promise.resolve();
+        return resolutionFailure("unavailable");
+      },
+      target: async () => resolutionSuccess(RUNTIME_A, SESSION_SOURCE),
+    });
+    exactFailure(
+      await built.service.prepareManualResume(request()),
+      "manual_resume_current_session_unavailable",
+    );
+    assert.equal(built.calls.filter(([name]) => name === "resolveTargetSession").length, 0);
+    assert.equal(built.calls.filter(([name]) => name === "acquireClaim").length, 0);
+  });
+
+  await test("fails closed when async target rejects without Claim", async () => {
+    const built = createService({
+      current: async () => resolutionSuccess(RUNTIME_A, SESSION_OWNER_A),
+      target: async () => {
+        throw new Error(`${EXCEPTION_MARKER} ${NATIVE_ID} ${NATIVE_TOKEN}`);
+      },
+    });
+    const captured = await captureOutput(() => built.service.prepareManualResume(request()));
+    exactFailure(captured.value, "manual_resume_action_request_unavailable");
+    assert.equal(captured.stdout, "");
+    assert.equal(captured.stderr, "");
+    assertNoLeak(captured.value);
+    assert.equal(built.calls.filter(([name]) => name === "acquireClaim").length, 0);
+  });
+
+  await test("rejects unbranded current resolution values before assimilation", async () => {
+    function makeHostile(kind) {
+      let getterCalls = 0;
+      let thenCalls = 0;
+      let trapCalls = 0;
+      const mark = () => {
+        process.stdout.write(`${EXCEPTION_MARKER}-thenable-stdout`);
+        process.stderr.write(`${EXCEPTION_MARKER}-thenable-stderr`);
+      };
+      const invoke = resolve => {
+        thenCalls += 1;
+        mark();
+        resolve(resolutionSuccess(RUNTIME_A, SESSION_OWNER_A));
+      };
+      if (kind === "thenable") {
+        const value = {};
+        Object.defineProperty(value, "then", {
+          value: invoke,
+          enumerable: true,
+        });
+        return { value, counts: () => ({ getterCalls, thenCalls, trapCalls }) };
+      }
+      if (kind === "getter") {
+        const value = {};
+        Object.defineProperty(value, "then", {
+          get() {
+            getterCalls += 1;
+            mark();
+            return invoke;
+          },
+          enumerable: true,
+        });
+        return { value, counts: () => ({ getterCalls, thenCalls, trapCalls }) };
+      }
+      if (kind === "proxy-then") {
+        const value = new Proxy({}, {
+          get(target, property, receiver) {
+            trapCalls += 1;
+            if (property === "then") return invoke;
+            return Reflect.get(target, property, receiver);
+          },
+        });
+        return { value, counts: () => ({ getterCalls, thenCalls, trapCalls }) };
+      }
+      const promise = Promise.resolve(resolutionSuccess(RUNTIME_A, SESSION_OWNER_A));
+      const value = new Proxy(promise, {
+        get(target, property) {
+          trapCalls += 1;
+          if (property === "then") {
+            thenCalls += 1;
+            mark();
+            return target.then.bind(target);
+          }
+          return Reflect.get(target, property, target);
+        },
+      });
+      return { value, counts: () => ({ getterCalls, thenCalls, trapCalls }) };
+    }
+
+    const plain = createService({
+      sessionResolution: {
+        resolveCurrentSession: () => resolutionSuccess(RUNTIME_A, SESSION_OWNER_A),
+        resolveTargetSession: () => Promise.resolve(resolutionSuccess(RUNTIME_A, SESSION_SOURCE)),
+      },
+    });
+    exactFailure(
+      await plain.service.prepareManualResume(request()),
+      "manual_resume_current_session_unavailable",
+    );
+    assert.equal(plain.calls.filter(([name]) => name === "acquireClaim").length, 0);
+
+    for (const kind of ["thenable", "getter", "proxy-then", "proxy-promise"]) {
+      const probe = makeHostile(kind);
+      let targetCalls = 0;
+      const built = createService({
+        sessionResolution: {
+          resolveCurrentSession: () => probe.value,
+          resolveTargetSession: () => {
+            targetCalls += 1;
+            return Promise.resolve(resolutionSuccess(RUNTIME_A, SESSION_SOURCE));
+          },
+        },
+      });
+      const captured = await captureOutput(() => built.service.prepareManualResume(request()));
+      exactFailure(captured.value, "manual_resume_current_session_unavailable");
+      assert.deepEqual(probe.counts(), { getterCalls: 0, thenCalls: 0, trapCalls: 0 });
+      assert.equal(targetCalls, 0);
+      assert.equal(built.calls.filter(([name]) => name === "acquireClaim").length, 0);
+      assert.equal(captured.stdout, "");
+      assert.equal(captured.stderr, "");
+      assertNoLeak(captured.value);
+    }
+  });
+
+  await test("rejects unbranded target resolution values before assimilation", async () => {
+    function makeHostile(kind) {
+      let getterCalls = 0;
+      let thenCalls = 0;
+      let trapCalls = 0;
+      const mark = () => {
+        process.stdout.write(`${EXCEPTION_MARKER}-target-stdout`);
+        process.stderr.write(`${EXCEPTION_MARKER}-target-stderr`);
+      };
+      const invoke = resolve => {
+        thenCalls += 1;
+        mark();
+        resolve(resolutionSuccess(RUNTIME_A, SESSION_SOURCE));
+      };
+      if (kind === "thenable") {
+        const value = {};
+        Object.defineProperty(value, "then", { value: invoke, enumerable: true });
+        return { value, counts: () => ({ getterCalls, thenCalls, trapCalls }) };
+      }
+      if (kind === "getter") {
+        const value = {};
+        Object.defineProperty(value, "then", {
+          get() {
+            getterCalls += 1;
+            mark();
+            return invoke;
+          },
+          enumerable: true,
+        });
+        return { value, counts: () => ({ getterCalls, thenCalls, trapCalls }) };
+      }
+      if (kind === "proxy-then") {
+        const value = new Proxy({}, {
+          get(target, property, receiver) {
+            trapCalls += 1;
+            if (property === "then") return invoke;
+            return Reflect.get(target, property, receiver);
+          },
+        });
+        return { value, counts: () => ({ getterCalls, thenCalls, trapCalls }) };
+      }
+      const promise = Promise.resolve(resolutionSuccess(RUNTIME_A, SESSION_SOURCE));
+      const value = new Proxy(promise, {
+        get(target, property) {
+          trapCalls += 1;
+          if (property === "then") {
+            thenCalls += 1;
+            mark();
+            return target.then.bind(target);
+          }
+          return Reflect.get(target, property, target);
+        },
+      });
+      return { value, counts: () => ({ getterCalls, thenCalls, trapCalls }) };
+    }
+
+    const plain = createService({
+      sessionResolution: {
+        resolveCurrentSession: () => Promise.resolve(resolutionSuccess(RUNTIME_A, SESSION_OWNER_A)),
+        resolveTargetSession: () => resolutionSuccess(RUNTIME_A, SESSION_SOURCE),
+      },
+    });
+    exactFailure(
+      await plain.service.prepareManualResume(request()),
+      "manual_resume_action_request_unavailable",
+    );
+    assert.equal(plain.calls.filter(([name]) => name === "acquireClaim").length, 0);
+
+    for (const kind of ["thenable", "getter", "proxy-then", "proxy-promise"]) {
+      const probe = makeHostile(kind);
+      let claimCalls = 0;
+      const built = createService({
+        sessionResolution: {
+          resolveCurrentSession: () => Promise.resolve(resolutionSuccess(RUNTIME_A, SESSION_OWNER_A)),
+          resolveTargetSession: () => probe.value,
+        },
+        claimLease: {
+          acquireClaim: async () => {
+            claimCalls += 1;
+            return claimSuccess();
+          },
+        },
+      });
+      const captured = await captureOutput(() => built.service.prepareManualResume(request()));
+      exactFailure(captured.value, "manual_resume_action_request_unavailable");
+      assert.deepEqual(probe.counts(), { getterCalls: 0, thenCalls: 0, trapCalls: 0 });
+      assert.equal(claimCalls, 0);
+      assert.equal(captured.stdout, "");
+      assert.equal(captured.stderr, "");
+      assertNoLeak(captured.value);
+    }
+  });
+
+  await test("rejects current nested semantic Proxies before reflection", async () => {
+    const makeProxy = makeNestedSemanticProxy(SESSION_OWNER_A);
+    for (const kind of ["get", "ownKeys", "descriptor", "prototype"]) {
+      const probe = makeProxy(kind);
+      let targetCalls = 0;
+      let claimCalls = 0;
+      const built = createService({
+        sessionResolution: {
+          resolveCurrentSession: () => Promise.resolve(nestedResolutionSuccess(probe.value)),
+          resolveTargetSession: () => {
+            targetCalls += 1;
+            return Promise.resolve(resolutionSuccess(RUNTIME_A, SESSION_SOURCE));
+          },
+        },
+        claimLease: {
+          acquireClaim: async () => {
+            claimCalls += 1;
+            return claimSuccess();
+          },
+        },
+      });
+      const captured = await captureOutput(() => built.service.prepareManualResume(request()));
+      exactFailure(captured.value, "manual_resume_action_request_unavailable");
+      assert.deepEqual(probe.counts(), { trapCalls: 0, thenCalls: 0 });
+      assert.equal(targetCalls, 0);
+      assert.equal(claimCalls, 0);
+      assert.equal(captured.stdout, "");
+      assert.equal(captured.stderr, "");
+      assertNoLeak(captured.value, [NESTED_PROXY_MARKER]);
+    }
+  });
+
+  await test("rejects target nested semantic Proxies before reflection", async () => {
+    const makeProxy = makeNestedSemanticProxy(SESSION_SOURCE);
+    for (const kind of ["get", "ownKeys", "descriptor", "prototype"]) {
+      const probe = makeProxy(kind);
+      let claimCalls = 0;
+      const built = createService({
+        sessionResolution: {
+          resolveCurrentSession: () => Promise.resolve(resolutionSuccess(RUNTIME_A, SESSION_OWNER_A)),
+          resolveTargetSession: () => Promise.resolve(nestedResolutionSuccess(probe.value)),
+        },
+        claimLease: {
+          acquireClaim: async () => {
+            claimCalls += 1;
+            return claimSuccess();
+          },
+        },
+      });
+      const captured = await captureOutput(() => built.service.prepareManualResume(request()));
+      exactFailure(captured.value, "manual_resume_action_request_unavailable");
+      assert.deepEqual(probe.counts(), { trapCalls: 0, thenCalls: 0 });
+      assert.equal(claimCalls, 0);
+      assert.equal(captured.stdout, "");
+      assert.equal(captured.stderr, "");
+      assertNoLeak(captured.value, [NESTED_PROXY_MARKER]);
+    }
+  });
+
+  await test("preserves plain nested semantic success and accessor privacy", async () => {
+    const plain = createService({
+      sessionResolution: {
+        resolveCurrentSession: () => Promise.resolve(nestedResolutionSuccess({
+          runtime_id: RUNTIME_A,
+          session_identity: SESSION_OWNER_A,
+        })),
+        resolveTargetSession: () => Promise.resolve(nestedResolutionSuccess({
+          runtime_id: RUNTIME_A,
+          session_identity: SESSION_SOURCE,
+        })),
+      },
+    });
+    assertAction(exactSuccess(await plain.service.prepareManualResume(request())));
+
+    let getterCalls = 0;
+    const currentAccessor = {};
+    Object.defineProperty(currentAccessor, "runtime_id", {
+      get() {
+        getterCalls += 1;
+        process.stdout.write(`${NESTED_PROXY_MARKER}-stdout`);
+        process.stderr.write(`${NESTED_PROXY_MARKER}-stderr`);
+        throw new Error(NESTED_PROXY_MARKER);
+      },
+      enumerable: true,
+    });
+    Object.defineProperty(currentAccessor, "session_identity", {
+      value: SESSION_OWNER_A,
+      enumerable: true,
+    });
+    const currentAccessorService = createService({
+      sessionResolution: {
+        resolveCurrentSession: () => Promise.resolve(nestedResolutionSuccess(currentAccessor)),
+        resolveTargetSession: () => Promise.resolve(resolutionSuccess(RUNTIME_A, SESSION_SOURCE)),
+      },
+    });
+    const currentCaptured = await captureOutput(
+      () => currentAccessorService.service.prepareManualResume(request()),
+    );
+    exactFailure(currentCaptured.value, "manual_resume_session_mismatch");
+    assert.equal(getterCalls, 0);
+    assert.equal(currentAccessorService.calls.filter(([name]) => name === "acquireClaim").length, 0);
+    assert.equal(currentCaptured.stdout, "");
+    assert.equal(currentCaptured.stderr, "");
+    assertNoLeak(currentCaptured.value, [NESTED_PROXY_MARKER]);
+
+    let targetGetterCalls = 0;
+    const targetAccessor = {};
+    Object.defineProperty(targetAccessor, "runtime_id", {
+      value: RUNTIME_A,
+      enumerable: true,
+    });
+    Object.defineProperty(targetAccessor, "session_identity", {
+      get() {
+        targetGetterCalls += 1;
+        process.stdout.write(`${NESTED_PROXY_MARKER}-target-stdout`);
+        process.stderr.write(`${NESTED_PROXY_MARKER}-target-stderr`);
+        throw new Error(NESTED_PROXY_MARKER);
+      },
+      enumerable: true,
+    });
+    const targetAccessorService = createService({
+      sessionResolution: {
+        resolveCurrentSession: () => Promise.resolve(resolutionSuccess(RUNTIME_A, SESSION_OWNER_A)),
+        resolveTargetSession: () => Promise.resolve(nestedResolutionSuccess(targetAccessor)),
+      },
+    });
+    const targetCaptured = await captureOutput(
+      () => targetAccessorService.service.prepareManualResume(request()),
+    );
+    exactFailure(targetCaptured.value, "manual_resume_session_mismatch");
+    assert.equal(targetGetterCalls, 0);
+    assert.equal(targetAccessorService.calls.filter(([name]) => name === "acquireClaim").length, 0);
+    assert.equal(targetCaptured.stdout, "");
+    assert.equal(targetCaptured.stderr, "");
+    assertNoLeak(targetCaptured.value, [NESTED_PROXY_MARKER]);
+  });
+
+  await test("keeps delayed concurrent Manual Resume requests isolated", async () => {
+    const candidateA = candidate({ candidate_id: "manual-resume-async-a" });
+    const candidateB = candidate({
+      candidate_id: "manual-resume-async-b",
+      source_runtime: RUNTIME_B,
+      source_session_identity: SESSION_OTHER,
+    });
+    const calls = [];
+    const delay = value => new Promise(resolve => setTimeout(resolve, value));
+    const service = exactSuccess(createPendingHandoffManualResumeService({
+      store: {
+        readState: async candidateId => {
+          await delay(candidateId.endsWith("a") ? 5 : 0);
+          return success(state({ candidate: candidateId.endsWith("a") ? candidateA : candidateB }));
+        },
+      },
+      sessionResolution: {
+        resolveCurrentSession: async ({ runtime_id }) => {
+          await delay(runtime_id === RUNTIME_A ? 5 : 0);
+          calls.push(["current", runtime_id]);
+          return resolutionSuccess(
+            runtime_id,
+            runtime_id === RUNTIME_A ? SESSION_OWNER_A : SESSION_OWNER_B,
+          );
+        },
+        resolveTargetSession: async value => {
+          await delay(value.runtime_id === RUNTIME_A ? 5 : 0);
+          calls.push(["target", value]);
+          return resolutionSuccess(value.runtime_id, value.session_identity);
+        },
+      },
+      claimLease: {
+        acquireClaim: async value => {
+          await delay(value.candidate_id.endsWith("a") ? 5 : 0);
+          calls.push(["claim", value]);
+          return claimSuccess(2, value.claim_attempt_id);
+        },
+      },
+    }));
+
+    const [first, second] = await Promise.all([
+      service.prepareManualResume(request({ candidate_id: candidateA.candidate_id })),
+      service.prepareManualResume(request({
+        candidate_id: candidateB.candidate_id,
+        current_runtime_id: RUNTIME_B,
+      })),
+    ]);
+    assertAction(exactSuccess(first), {
+      candidateId: candidateA.candidate_id,
+      targetRuntime: RUNTIME_A,
+      targetIdentity: SESSION_SOURCE,
+    });
+    assertAction(exactSuccess(second), {
+      candidateId: candidateB.candidate_id,
+      targetRuntime: RUNTIME_B,
+      targetIdentity: SESSION_OTHER,
+      owner: SESSION_OWNER_B,
+    });
+    assert.equal(calls.filter(([name]) => name === "claim").length, 2);
   });
 });
 

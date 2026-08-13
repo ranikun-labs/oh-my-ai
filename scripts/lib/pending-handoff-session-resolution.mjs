@@ -1,3 +1,4 @@
+import { types as utilTypes } from "node:util";
 import { validateOpaqueIdentity } from "./pending-handoff-identity.mjs";
 
 const DEPENDENCY_KEYS = Object.freeze([
@@ -49,26 +50,40 @@ export function createPendingHandoffSessionResolutionPort(options) {
   return success(facade);
 }
 
-function resolveCurrentSession(adapter, request) {
+async function resolveCurrentSession(adapter, request) {
   const inspected = inspectCurrentInput(request);
   if (!inspected.ok) return failure(inspected.reason);
 
   let adapterResult;
   try {
     adapterResult = adapter(inspected.value);
+    if (utilTypes.isProxy(adapterResult)) {
+      return failure("session_resolution_result_invalid");
+    }
+    if (utilTypes.isPromise(adapterResult)) adapterResult = await adapterResult;
+    if (utilTypes.isProxy(adapterResult)) {
+      return failure("session_resolution_result_invalid");
+    }
   } catch {
     return failure("session_resolution_unavailable");
   }
   return normalizeAdapterResult(adapterResult, inspected.value, null);
 }
 
-function resolveTargetSession(adapter, request) {
+async function resolveTargetSession(adapter, request) {
   const inspected = inspectTargetInput(request);
   if (!inspected.ok) return failure(inspected.reason);
 
   let adapterResult;
   try {
     adapterResult = adapter(inspected.value);
+    if (utilTypes.isProxy(adapterResult)) {
+      return failure("session_resolution_result_invalid");
+    }
+    if (utilTypes.isPromise(adapterResult)) adapterResult = await adapterResult;
+    if (utilTypes.isProxy(adapterResult)) {
+      return failure("session_resolution_result_invalid");
+    }
   } catch {
     return failure("session_resolution_unavailable");
   }
@@ -76,6 +91,9 @@ function resolveTargetSession(adapter, request) {
 }
 
 function normalizeAdapterResult(adapterResult, request, expectedIdentity) {
+  if (utilTypes.isProxy(adapterResult)) return failure("session_resolution_result_invalid");
+  if (hasThenProperty(adapterResult)) return failure("session_resolution_result_invalid");
+
   const rejected = inspectExactDataObject(adapterResult, ADAPTER_FAILURE_KEYS);
   if (rejected.ok) {
     if (rejected.values.ok !== false
@@ -102,6 +120,25 @@ function normalizeAdapterResult(adapterResult, request, expectedIdentity) {
     runtime_id: request.runtime_id,
     session_identity: expectedIdentity ?? observed.values.session_identity,
   }));
+}
+
+function hasThenProperty(value) {
+  if (value === null || typeof value !== "object") return false;
+  if (utilTypes.isProxy(value)) return true;
+
+  const visited = new Set();
+  let current = value;
+  try {
+    while (current !== null) {
+      if (visited.has(current)) return true;
+      visited.add(current);
+      if (Object.getOwnPropertyDescriptor(current, "then") !== undefined) return true;
+      current = Object.getPrototypeOf(current);
+    }
+    return false;
+  } catch {
+    return true;
+  }
 }
 
 function inspectDependencies(options) {
@@ -158,6 +195,7 @@ function isSafeRuntimeId(value) {
 
 function inspectExactDataObject(value, expectedKeys) {
   try {
+    if (utilTypes.isProxy(value)) return { ok: false };
     if (value === null
       || typeof value !== "object"
       || Object.getPrototypeOf(value) !== Object.prototype) {

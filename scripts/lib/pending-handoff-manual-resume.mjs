@@ -1,3 +1,4 @@
+import { types as utilTypes } from "node:util";
 import {
   PENDING_HANDOFF_STATUSES,
   validateCandidate,
@@ -119,7 +120,7 @@ async function prepareManualResume(store, sessionResolution, claimLease, request
   );
   if (!eligibility.ok) return failure(eligibility.reason);
 
-  const currentResult = resolveCurrentSession(
+  const currentResult = await resolveCurrentSession(
     sessionResolution,
     input.currentRuntimeId,
   );
@@ -132,7 +133,7 @@ async function prepareManualResume(store, sessionResolution, claimLease, request
     return failure("manual_resume_ownership_conflict");
   }
 
-  const targetResult = resolveTargetSession(
+  const targetResult = await resolveTargetSession(
     sessionResolution,
     candidate.source_runtime,
     candidate.source_session_identity,
@@ -191,24 +192,50 @@ async function readState(store, candidateId) {
   return success(inspected.value);
 }
 
-function resolveCurrentSession(sessionResolution, runtimeId) {
+async function resolveCurrentSession(sessionResolution, runtimeId) {
+  let raw;
+  try {
+    raw = sessionResolution.resolveCurrentSession({ runtime_id: runtimeId });
+  } catch {
+    return failure("manual_resume_current_session_unavailable");
+  }
+  if (utilTypes.isProxy(raw) || !utilTypes.isPromise(raw)) {
+    return failure("manual_resume_current_session_unavailable");
+  }
+
   let result;
   try {
-    result = sessionResolution.resolveCurrentSession({ runtime_id: runtimeId });
+    result = await raw;
   } catch {
+    return failure("manual_resume_current_session_unavailable");
+  }
+  if (utilTypes.isProxy(result)) {
     return failure("manual_resume_current_session_unavailable");
   }
   return normalizeResolutionResult(result, runtimeId, null, "current");
 }
 
-function resolveTargetSession(sessionResolution, runtimeId, sessionIdentity) {
-  let result;
+async function resolveTargetSession(sessionResolution, runtimeId, sessionIdentity) {
+  let raw;
   try {
-    result = sessionResolution.resolveTargetSession({
+    raw = sessionResolution.resolveTargetSession({
       runtime_id: runtimeId,
       session_identity: sessionIdentity,
     });
   } catch {
+    return failure("manual_resume_action_request_unavailable");
+  }
+  if (utilTypes.isProxy(raw) || !utilTypes.isPromise(raw)) {
+    return failure("manual_resume_action_request_unavailable");
+  }
+
+  let result;
+  try {
+    result = await raw;
+  } catch {
+    return failure("manual_resume_action_request_unavailable");
+  }
+  if (utilTypes.isProxy(result)) {
     return failure("manual_resume_action_request_unavailable");
   }
   return normalizeResolutionResult(result, runtimeId, sessionIdentity, "target");
@@ -533,6 +560,7 @@ function inspectInput(value) {
 function inspectResult(value) {
   const successResult = inspectExactDataObject(value, ["ok", "value"]);
   if (successResult.ok && successResult.values.ok === true) {
+    if (utilTypes.isProxy(successResult.values.value)) return { ok: false };
     return { ok: true, kind: "success", value: successResult.values.value };
   }
   const failureResult = inspectExactDataObject(value, ["ok", "reason"]);
@@ -546,6 +574,7 @@ function inspectResult(value) {
 
 function inspectExactDataObject(value, expectedKeys, options = {}) {
   try {
+    if (utilTypes.isProxy(value)) return { ok: false };
     if (!isPlainObject(value)) return { ok: false };
     const optional = new Set(options.optional ?? []);
     const allowed = new Set([...expectedKeys, ...optional]);
@@ -665,6 +694,7 @@ function isPlainObject(value) {
   try {
     return value !== null
       && typeof value === "object"
+      && !utilTypes.isProxy(value)
       && Object.getPrototypeOf(value) === Object.prototype;
   } catch {
     return false;
