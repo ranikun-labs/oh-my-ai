@@ -847,6 +847,8 @@ test("Group 12 Makefile runs the bounded target once after Core and Identity onl
     "test-pending-handoff-session-resolution-fixtures",
     "test-pending-handoff-manual-resume-fixtures",
     "test-pending-handoff-codex-runtime-adapter-fixtures",
+    "test-pending-handoff-claude-runtime-adapter-fixtures",
+    "test-pending-handoff-manual-resume-runtime-composition-fixtures",
   ]);
   const dryRun = spawnSync("make", ["-n", "test-v1x-fixtures"], {
     cwd: fileURLToPath(new URL("..", import.meta.url)),

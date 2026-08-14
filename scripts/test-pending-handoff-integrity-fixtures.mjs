@@ -846,8 +846,10 @@ await group("Static scope and wiring", async () => {
     const declaration = [lines[start]];
     while (declaration.at(-1).endsWith("\\")) declaration.push(lines[start + declaration.length]);
     const targets = declaration.join(" ").replace(/^test-v1x-fixtures:\s*/, "").replaceAll("\\", " ").trim().split(/\s+/);
-    assert.equal(targets.at(-1), "test-pending-handoff-codex-runtime-adapter-fixtures");
+    assert.equal(targets.at(-1), "test-pending-handoff-manual-resume-runtime-composition-fixtures");
     assert.ok(targets.indexOf("test-pending-handoff-manual-resume-fixtures") < targets.indexOf("test-pending-handoff-codex-runtime-adapter-fixtures"));
+    assert.ok(targets.indexOf("test-pending-handoff-codex-runtime-adapter-fixtures") < targets.indexOf("test-pending-handoff-claude-runtime-adapter-fixtures"));
+    assert.ok(targets.indexOf("test-pending-handoff-claude-runtime-adapter-fixtures") < targets.indexOf("test-pending-handoff-manual-resume-runtime-composition-fixtures"));
     assert.ok(targets.indexOf("test-pending-handoff-store-fixtures") < targets.indexOf("test-pending-handoff-integrity-fixtures"));
     assert.ok(targets.indexOf("test-pending-handoff-integrity-fixtures") < targets.indexOf("test-pending-handoff-revision-cas-fixtures"));
     assert.ok(targets.indexOf("test-pending-handoff-claim-lease-fixtures") < targets.indexOf("test-pending-handoff-delivery-consumption-fixtures"));

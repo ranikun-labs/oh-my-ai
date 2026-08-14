@@ -692,8 +692,10 @@ await group("static boundary and Makefile wiring", async () => {
     while (declaration.at(-1).endsWith("\\")) declaration.push(lines[start + declaration.length]);
     const targets = declaration.join(" ").replace(/^test-v1x-fixtures:\s*/, "").replaceAll("\\", " ").trim().split(/\s+/);
     assert.ok(targets.indexOf("test-pending-handoff-store-fixtures") < targets.indexOf("test-pending-handoff-session-resolution-fixtures"));
-    assert.equal(targets.at(-1), "test-pending-handoff-codex-runtime-adapter-fixtures");
+    assert.equal(targets.at(-1), "test-pending-handoff-manual-resume-runtime-composition-fixtures");
     assert.ok(targets.indexOf("test-pending-handoff-manual-resume-fixtures") < targets.indexOf("test-pending-handoff-codex-runtime-adapter-fixtures"));
+    assert.ok(targets.indexOf("test-pending-handoff-codex-runtime-adapter-fixtures") < targets.indexOf("test-pending-handoff-claude-runtime-adapter-fixtures"));
+    assert.ok(targets.indexOf("test-pending-handoff-claude-runtime-adapter-fixtures") < targets.indexOf("test-pending-handoff-manual-resume-runtime-composition-fixtures"));
   });
 });
 

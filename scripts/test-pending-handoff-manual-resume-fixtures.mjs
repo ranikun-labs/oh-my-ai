@@ -909,8 +909,11 @@ await group("static boundary, concurrency, and Makefile", async () => {
     assert.match(declaration, /test-pending-handoff-session-resolution-fixtures/);
     assert.match(declaration, /test-pending-handoff-manual-resume-fixtures/);
     assert.match(declaration, /test-pending-handoff-codex-runtime-adapter-fixtures/);
+    assert.match(declaration, /test-pending-handoff-claude-runtime-adapter-fixtures/);
+    assert.match(declaration, /test-pending-handoff-manual-resume-runtime-composition-fixtures/);
     assert.ok(declaration.indexOf("test-pending-handoff-session-resolution-fixtures") < declaration.indexOf("test-pending-handoff-manual-resume-fixtures"));
     assert.ok(declaration.indexOf("test-pending-handoff-manual-resume-fixtures") < declaration.indexOf("test-pending-handoff-codex-runtime-adapter-fixtures"));
+    assert.ok(declaration.indexOf("test-pending-handoff-codex-runtime-adapter-fixtures") < declaration.indexOf("test-pending-handoff-claude-runtime-adapter-fixtures"));
   });
 });
 

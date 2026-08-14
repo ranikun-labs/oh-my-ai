@@ -10,6 +10,18 @@
 import fs from "node:fs";
 
 const ALLOWED_STATUS = new Set(["supported", "unsupported", "conditional", "unknown"]);
+const CANONICAL_SESSION_CAPABILITIES = Object.freeze({
+  claude: Object.freeze({
+    implementation_runtime_id: "claude-code",
+    resolve: "supported",
+    resume: "unsupported",
+  }),
+  codex: Object.freeze({
+    implementation_runtime_id: "codex-cli",
+    resolve: "supported",
+    resume: "supported",
+  }),
+});
 
 // FX-CAP-010 / FX-CAP-016: Human Approval and Authentication state are
 // Execution Policy / Availability concerns, not Capability facts. If either
@@ -178,6 +190,58 @@ function validateRuntime(name, runtime, errors) {
   }
 }
 
+function validateCanonicalSessionCapabilities(doc, errors) {
+  for (const [semanticRuntimeId, expected] of Object.entries(CANONICAL_SESSION_CAPABILITIES)) {
+    const runtime = doc.runtimes[semanticRuntimeId];
+    const runtimePath = `runtimes.${semanticRuntimeId}`;
+    if (!runtime || typeof runtime !== "object") {
+      fail(errors, runtimePath, "canonical session capability runtime is required");
+      continue;
+    }
+
+    if (runtime.runtime_id !== expected.implementation_runtime_id) {
+      fail(
+        errors,
+        runtimePath,
+        `canonical session capability requires semantic runtime ${semanticRuntimeId} to use implementation runtime_id ${expected.implementation_runtime_id}`,
+      );
+    }
+
+    const capabilities = Array.isArray(runtime.capabilities) ? runtime.capabilities : [];
+    for (const [capabilityName, expectedStatus] of Object.entries({
+      resolve: expected.resolve,
+      resume: expected.resume,
+    })) {
+      const capabilityId = `capability.session.${capabilityName}`;
+      const capabilityPath = `${runtimePath}.capabilities.${capabilityId}`;
+      const capability = capabilities.find(item => item && item.capability_id === capabilityId);
+      if (!capability) {
+        fail(errors, capabilityPath, "canonical session capability is required");
+        continue;
+      }
+      if (capability.declared_status !== expectedStatus
+        || capability.effective_status !== expectedStatus) {
+        fail(
+          errors,
+          capabilityPath,
+          `canonical session capability must be declared/effective ${expectedStatus}`,
+        );
+      }
+      if (!Array.isArray(capability.evidence_refs) || capability.evidence_refs.length === 0) {
+        fail(errors, capabilityPath, "canonical session capability requires evidence_refs");
+      }
+      if (expectedStatus === "unsupported") {
+        if (!Array.isArray(capability.limitations) || capability.limitations.length === 0) {
+          fail(errors, capabilityPath, "canonical session capability requires unsupported limitations");
+        }
+        if (typeof capability.safe_fallback !== "string" || capability.safe_fallback.length === 0) {
+          fail(errors, capabilityPath, "canonical session capability requires unsupported safe_fallback");
+        }
+      }
+    }
+  }
+}
+
 function validate(doc) {
   const errors = [];
   if (doc.schema_version !== 1) errors.push("root: unsupported or missing schema_version");
@@ -188,6 +252,7 @@ function validate(doc) {
   for (const [name, runtime] of Object.entries(doc.runtimes)) {
     validateRuntime(name, runtime, errors);
   }
+  validateCanonicalSessionCapabilities(doc, errors);
   return errors;
 }
 
