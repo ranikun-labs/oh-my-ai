@@ -5,7 +5,7 @@ PROFILE ?=
 #   make install-completion-notify PYTHON=/opt/homebrew/bin/python3.11
 PYTHON  ?= python3
 
-.PHONY: install install-shared install-completion-notify completion-notify-status test-completion-notify doctor-completion-notify uninstall-completion-notify init-profile install-profile doctor doctor-strict instructions update work-start test-install-fixtures test-completion-notify-fixtures test-routing-fixtures test-work-start-fixtures test-notice-fixtures test-capability-fixtures test-result-fixtures test-truthfulness-fixtures test-jira-ticket-fixtures test-jira-work-fixtures test-git-work-preflight-fixtures test-context-checkpoint-codex-fixtures test-context-checkpoint-fixtures test-v1-fixtures test-v1x-fixtures
+.PHONY: install install-shared install-completion-notify completion-notify-status test-completion-notify doctor-completion-notify uninstall-completion-notify init-profile install-profile doctor doctor-strict instructions update work-start test-install-fixtures test-completion-notify-fixtures test-routing-fixtures test-work-start-fixtures test-notice-fixtures test-capability-fixtures test-result-fixtures test-truthfulness-fixtures test-jira-ticket-fixtures test-jira-work-fixtures test-git-work-preflight-fixtures test-context-checkpoint-codex-fixtures test-context-checkpoint-fixtures test-pending-handoff-core-fixtures test-pending-handoff-identity-fixtures test-pending-handoff-secret-provider-fixtures test-pending-handoff-identity-composition-fixtures test-pending-handoff-candidate-fixtures test-pending-handoff-store-fixtures test-pending-handoff-integrity-fixtures test-pending-handoff-revision-cas-fixtures test-pending-handoff-claim-lease-fixtures test-pending-handoff-delivery-consumption-fixtures test-pending-handoff-session-resolution-fixtures test-pending-handoff-manual-resume-fixtures test-pending-handoff-codex-runtime-adapter-fixtures test-pending-handoff-claude-runtime-adapter-fixtures test-pending-handoff-manual-resume-runtime-composition-fixtures test-v1-fixtures test-v1x-fixtures
 
 instructions:
 	./scripts/render-instructions.sh
@@ -56,9 +56,71 @@ test-context-checkpoint-fixtures:
 	node ./scripts/test-context-checkpoint-fixtures.mjs
 	node ./scripts/test-context-checkpoint-codex-fixtures.mjs
 
+test-pending-handoff-core-fixtures:
+	node ./scripts/test-pending-handoff-core-fixtures.mjs
+
+test-pending-handoff-identity-fixtures:
+	node ./scripts/test-pending-handoff-identity-fixtures.mjs
+
+test-pending-handoff-secret-provider-fixtures:
+	node ./scripts/test-pending-handoff-secret-provider-fixtures.mjs
+
+test-pending-handoff-identity-composition-fixtures:
+	node ./scripts/test-pending-handoff-identity-composition-fixtures.mjs
+
+test-pending-handoff-candidate-fixtures:
+	node ./scripts/test-pending-handoff-candidate-fixtures.mjs
+
+test-pending-handoff-store-fixtures:
+	node ./scripts/test-pending-handoff-store-fixtures.mjs
+
+test-pending-handoff-integrity-fixtures:
+	node ./scripts/test-pending-handoff-integrity-fixtures.mjs
+
+test-pending-handoff-revision-cas-fixtures:
+	node ./scripts/test-pending-handoff-revision-cas-fixtures.mjs
+
+test-pending-handoff-claim-lease-fixtures:
+	node ./scripts/test-pending-handoff-claim-lease-fixtures.mjs
+
+test-pending-handoff-delivery-consumption-fixtures:
+	node ./scripts/test-pending-handoff-delivery-consumption-fixtures.mjs
+
+test-pending-handoff-session-resolution-fixtures:
+	node ./scripts/test-pending-handoff-session-resolution-fixtures.mjs
+
+test-pending-handoff-manual-resume-fixtures:
+	node ./scripts/test-pending-handoff-manual-resume-fixtures.mjs
+
+test-pending-handoff-codex-runtime-adapter-fixtures:
+	node ./scripts/test-pending-handoff-codex-runtime-adapter-fixtures.mjs
+
+test-pending-handoff-claude-runtime-adapter-fixtures:
+	node ./scripts/test-pending-handoff-claude-runtime-adapter-fixtures.mjs
+
+test-pending-handoff-manual-resume-runtime-composition-fixtures:
+	node ./scripts/test-pending-handoff-manual-resume-runtime-composition-fixtures.mjs
+
 test-v1-fixtures: test-install-fixtures test-completion-notify-fixtures test-routing-fixtures test-work-start-fixtures test-notice-fixtures test-capability-fixtures test-result-fixtures test-truthfulness-fixtures
 
-test-v1x-fixtures: test-v1-fixtures test-context-checkpoint-fixtures
+test-v1x-fixtures: \
+	test-v1-fixtures \
+	test-context-checkpoint-fixtures \
+	test-pending-handoff-core-fixtures \
+	test-pending-handoff-identity-fixtures \
+	test-pending-handoff-secret-provider-fixtures \
+	test-pending-handoff-identity-composition-fixtures \
+	test-pending-handoff-candidate-fixtures \
+	test-pending-handoff-store-fixtures \
+	test-pending-handoff-integrity-fixtures \
+	test-pending-handoff-revision-cas-fixtures \
+	test-pending-handoff-claim-lease-fixtures \
+	test-pending-handoff-delivery-consumption-fixtures \
+	test-pending-handoff-session-resolution-fixtures \
+	test-pending-handoff-manual-resume-fixtures \
+	test-pending-handoff-codex-runtime-adapter-fixtures \
+	test-pending-handoff-claude-runtime-adapter-fixtures \
+	test-pending-handoff-manual-resume-runtime-composition-fixtures
 
 install: install-shared
 	@if [ "$(ENABLE_COMPLETION_NOTIFY)" = "1" ]; then ENABLE_COMPLETION_NOTIFY=1 $(PYTHON) ./scripts/completion-notify.py install --yes; else printf '%s\n' 'completion notify: skipped (explicit ENABLE_COMPLETION_NOTIFY=1 required)'; fi

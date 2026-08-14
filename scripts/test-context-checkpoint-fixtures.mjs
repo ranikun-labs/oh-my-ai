@@ -450,29 +450,167 @@ try {
   assert.equal(malformedHook.status, 0);
   assert.match(malformedHook.stdout, /unavailable|Manual Context Checkpoint/);
 
+  const serialRepo = makeRepository("serial-events");
+  const serialEnv = {
+    ...fixtureEnv,
+    XDG_STATE_HOME: path.join(sandbox, "serial-state"),
+  };
+  const serialPayloads = Array.from({ length: 8 }, (_, index) => ({
+    session_id: "serial-session",
+    cwd: serialRepo,
+    hook_event_name: "PostToolUse",
+    tool_name: "Write",
+    tool_input: { file_path: path.join(serialRepo, `${index}.txt`), content: "private" },
+    tool_response: { success: true },
+    tool_use_id: `serial-${index}`,
+  }));
+  const serialResults = [];
+  for (const payload of serialPayloads) {
+    serialResults.push(await runEntryAsync(
+      serialRepo,
+      serialEnv,
+      ["hook", "claude", "PostToolUse"],
+      payload,
+    ));
+  }
+  const serialOutcomes = serialResults.map((result, index) => classifyChildOutcome(
+    result,
+    childLabel(index, serialPayloads[index]),
+  ));
+  assert.ok(serialOutcomes.every(outcome => outcome.kind === "available"));
+  const serialStatus = checkpointStatus({ cwd: serialRepo, env: serialEnv });
+  const serialStored = readStoredActivityForRepository(
+    serialEnv.XDG_STATE_HOME,
+    serialStatus.repository_hash,
+  );
+  assert.equal(serialStatus.activity_revision, 8);
+  assert.equal(serialStored.activity_revision, 8);
+  assert.equal(serialStored.seen_event_hashes.length, 8);
+  assert.equal(new Set(serialStored.seen_event_hashes).size, 8);
+  pass("FX-CCG-007 serial unique activities persist to revision 8");
+
+  const lockExhaustionRepo = makeRepository("lock-exhaustion");
+  const lockExhaustionEnv = {
+    ...fixtureEnv,
+    XDG_STATE_HOME: path.join(sandbox, "lock-exhaustion-state"),
+  };
+  const lockSeed = recordCheckpointActivity({
+    cwd: lockExhaustionRepo,
+    runtime: "claude",
+    sessionId: "lock-session",
+    eventId: "lock-seed",
+    signalKind: "file_mutation",
+    env: lockExhaustionEnv,
+  });
+  assert.equal(lockSeed.availability, "available");
+  const lockStateFile = findStateFileForHash(
+    lockExhaustionEnv.XDG_STATE_HOME,
+    lockSeed.repository_hash,
+  );
+  const lockPath = `${lockStateFile}.lock`;
+  const lockBefore = readStoredActivityState(lockStateFile);
+  let lockCreated = false;
+  try {
+    fs.mkdirSync(lockPath, { mode: 0o700 });
+    lockCreated = true;
+
+    const directLockFailure = recordCheckpointActivity({
+      cwd: lockExhaustionRepo,
+      runtime: "claude",
+      sessionId: "lock-session",
+      eventId: "lock-direct-failure",
+      signalKind: "file_mutation",
+      env: lockExhaustionEnv,
+    });
+    assert.equal(directLockFailure.availability, "unavailable");
+    assert.equal(directLockFailure.reason_code, "state_lock_failed");
+    assert.equal(directLockFailure.changed, false);
+    assert.equal(directLockFailure.manual_checkpoint_required, true);
+
+    const publicLockPayload = {
+      session_id: "lock-session",
+      cwd: lockExhaustionRepo,
+      hook_event_name: "PostToolUse",
+      tool_name: "Write",
+      tool_input: {
+        file_path: path.join(lockExhaustionRepo, "public-lock-failure.txt"),
+        content: "private",
+      },
+      tool_response: { success: true },
+      tool_use_id: "lock-public-failure",
+    };
+    const publicLockResult = await runEntryAsync(
+      lockExhaustionRepo,
+      lockExhaustionEnv,
+      ["hook", "claude", "PostToolUse"],
+      publicLockPayload,
+    );
+    const publicLockOutcome = classifyChildOutcome(
+      publicLockResult,
+      childLabel(0, publicLockPayload),
+    );
+    assert.equal(publicLockOutcome.kind, "unavailable");
+    const lockAfter = readStoredActivityState(lockStateFile);
+    assert.equal(lockAfter.activity_revision, lockBefore.activity_revision);
+    assert.deepEqual(lockAfter.seen_event_hashes, lockBefore.seen_event_hashes);
+    assert.equal(
+      checkpointStatus({ cwd: lockExhaustionRepo, env: lockExhaustionEnv }).activity_revision,
+      1,
+    );
+  } finally {
+    if (lockCreated) fs.rmSync(lockPath, { recursive: true, force: true });
+  }
+  pass("FX-CCG-007 lock exhaustion remains fail-open and observable");
+
   const concurrentRepo = makeRepository("concurrent-events");
   const concurrentEnv = {
     ...fixtureEnv,
     XDG_STATE_HOME: path.join(sandbox, "concurrent-state"),
   };
-  const concurrentRuns = Array.from({ length: 8 }, (_, index) => runEntryAsync(
+  const concurrentPayloads = Array.from({ length: 8 }, (_, index) => ({
+    session_id: "concurrent-session",
+    cwd: concurrentRepo,
+    hook_event_name: "PostToolUse",
+    tool_name: "Write",
+    tool_input: { file_path: path.join(concurrentRepo, `${index}.txt`), content: "private" },
+    tool_response: { success: true },
+    tool_use_id: `concurrent-${index}`,
+  }));
+  const concurrentRuns = concurrentPayloads.map(payload => runEntryAsync(
     concurrentRepo,
     concurrentEnv,
     ["hook", "claude", "PostToolUse"],
-    {
-      session_id: "concurrent-session",
-      cwd: concurrentRepo,
-      hook_event_name: "PostToolUse",
-      tool_name: "Write",
-      tool_input: { file_path: path.join(concurrentRepo, `${index}.txt`), content: "private" },
-      tool_response: { success: true },
-      tool_use_id: `concurrent-${index}`,
-    },
+    payload,
   ));
   const concurrentResults = await Promise.all(concurrentRuns);
-  assert.ok(concurrentResults.every(result => result.status === 0));
-  assert.equal(checkpointStatus({ cwd: concurrentRepo, env: concurrentEnv }).activity_revision, 8);
-  pass("FX-CCG-007 실패·동시 Event는 non-blocking unavailable 또는 직렬화");
+  const concurrentOutcomes = concurrentResults.map((result, index) => classifyChildOutcome(
+    result,
+    childLabel(index, concurrentPayloads[index]),
+  ));
+  const concurrentAvailableCount = concurrentOutcomes.filter(
+    outcome => outcome.kind === "available",
+  ).length;
+  const concurrentUnavailableCount = concurrentOutcomes.filter(
+    outcome => outcome.kind === "unavailable",
+  ).length;
+  assert.equal(concurrentAvailableCount + concurrentUnavailableCount, 8);
+  assert.equal(
+    concurrentOutcomes.filter(outcome => outcome.reason_code === "state_lock_failed").length,
+    concurrentUnavailableCount,
+  );
+  const concurrentStatus = checkpointStatus({ cwd: concurrentRepo, env: concurrentEnv });
+  const concurrentStored = readStoredActivityForRepository(
+    concurrentEnv.XDG_STATE_HOME,
+    concurrentStatus.repository_hash,
+  );
+  assert.equal(concurrentStatus.activity_revision, concurrentAvailableCount);
+  assert.equal(concurrentStored.activity_revision, concurrentAvailableCount);
+  assert.equal(concurrentStored.seen_event_hashes.length, concurrentAvailableCount);
+  assert.equal(
+    new Set(concurrentStored.seen_event_hashes).size,
+    concurrentAvailableCount,
+  );
+  pass("FX-CCG-007 concurrent persistence outcome is reconciled with available writes");
 
   const existingStateRepo = makeRepository("existing-state-write-failure");
   const existingStateEnv = {
@@ -644,7 +782,11 @@ try {
       },
     ),
   ]);
-  assert.ok(concurrentSessions.every(result => result.status === 0));
+  const concurrentSessionOutcomes = concurrentSessions.map((result, index) => classifyChildOutcome(
+    result,
+    `session-scope-child-${index}`,
+  ));
+  assert.ok(concurrentSessionOutcomes.every(outcome => outcome.kind === "available"));
   const concurrentSessionStatus = checkpointStatus({
     cwd: concurrentSessionRepo,
     env: concurrentSessionEnv,
@@ -825,20 +967,153 @@ function runEntry(cwd, env, args, payload) {
 
 function runEntryAsync(cwd, env, args, payload) {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [publicEntry, ...args], {
-      cwd,
-      env,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
+    let child;
+    try {
+      child = spawn(process.execPath, [publicEntry, ...args], {
+        cwd,
+        env,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+    } catch (error) {
+      resolve({
+        pid: null,
+        code: null,
+        signal: null,
+        stdout: "",
+        stderr: "",
+        spawnError: error,
+      });
+      return;
+    }
     let stdout = "";
     let stderr = "";
+    let spawnError = null;
+    let exitCode = null;
+    let exitSignal = null;
+    let settled = false;
+    const settle = () => {
+      if (settled) return;
+      settled = true;
+      resolve({
+        pid: child.pid ?? null,
+        code: exitCode,
+        signal: exitSignal,
+        stdout,
+        stderr,
+        spawnError,
+      });
+    };
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", chunk => { stdout += chunk; });
     child.stderr.on("data", chunk => { stderr += chunk; });
-    child.on("close", status => resolve({ status, stdout, stderr }));
-    child.stdin.end(JSON.stringify(payload));
+    child.on("error", error => { spawnError = error; });
+    child.on("close", (code, signal) => {
+      exitCode = code;
+      exitSignal = signal;
+      settle();
+    });
+    try {
+      child.stdin.end(JSON.stringify(payload));
+    } catch (error) {
+      spawnError = error;
+      try { child.kill(); } catch { /* close event carries the final evidence */ }
+    }
   });
+}
+
+function classifyChildOutcome(result, label) {
+  const evidence = childEvidence(result);
+  assert.ok(result && typeof result === "object", `${label}: missing child result; ${evidence}`);
+  assert.equal(
+    typeof result.pid === "number" && result.pid > 0,
+    true,
+    `${label}: missing PID; ${evidence}`,
+  );
+  assert.equal(result.code, 0, `${label}: non-zero exit; ${evidence}`);
+  assert.equal(result.signal, null, `${label}: unexpected signal; ${evidence}`);
+  assert.equal(result.spawnError, null, `${label}: spawn error; ${evidence}`);
+  assert.equal(result.stderr, "", `${label}: unexpected stderr; ${evidence}`);
+  assert.equal(typeof result.stdout, "string", `${label}: invalid stdout; ${evidence}`);
+
+  if (result.stdout === "") {
+    return { kind: "available", availability: "available", reason_code: null };
+  }
+
+  let diagnostic;
+  try {
+    diagnostic = JSON.parse(result.stdout);
+  } catch {
+    assert.fail(`${label}: invalid stdout diagnostic; ${evidence}`);
+  }
+  assert.ok(
+    diagnostic && typeof diagnostic === "object" && !Array.isArray(diagnostic),
+    `${label}: stdout diagnostic is not an object; ${evidence}`,
+  );
+  assert.deepEqual(
+    Object.keys(diagnostic).sort(),
+    ["systemMessage"],
+    `${label}: unknown stdout diagnostic fields; ${evidence}`,
+  );
+  assert.equal(
+    typeof diagnostic.systemMessage === "string",
+    true,
+    `${label}: diagnostic message missing; ${evidence}`,
+  );
+  assert.equal(
+    diagnostic.systemMessage.includes("availability: unavailable (state_lock_failed)"),
+    true,
+    `${label}: unknown unavailable reason; ${evidence}`,
+  );
+  assert.equal(
+    diagnostic.systemMessage.includes("Manual Context Checkpoint"),
+    true,
+    `${label}: manual checkpoint guidance missing; ${evidence}`,
+  );
+  return {
+    kind: "unavailable",
+    availability: "unavailable",
+    reason_code: "state_lock_failed",
+    diagnostic,
+  };
+}
+
+function childLabel(index, payload) {
+  return `child index=${index} tool_use_id=${String(payload?.tool_use_id || "unknown")}`;
+}
+
+function childEvidence(result) {
+  const spawnError = result?.spawnError;
+  return JSON.stringify({
+    pid: typeof result?.pid === "number" ? result.pid : null,
+    exit_code: result?.code ?? null,
+    signal: result?.signal ?? null,
+    stdout_bytes: typeof result?.stdout === "string" ? Buffer.byteLength(result.stdout) : null,
+    stderr_bytes: typeof result?.stderr === "string" ? Buffer.byteLength(result.stderr) : null,
+    spawn_error: spawnError
+      ? { name: spawnError.name || "Error", code: spawnError.code || null }
+      : null,
+  });
+}
+
+function readStoredActivityForRepository(root, repositoryHash) {
+  const files = allFiles(root)
+    .filter(file => file.includes(repositoryHash) && file.endsWith(".json"));
+  assert.equal(files.length <= 1, true, "unexpected multiple state files for repository");
+  return files.length === 0
+    ? { activity_revision: 0, seen_event_hashes: [] }
+    : readStoredActivityState(files[0]);
+}
+
+function readStoredActivityState(stateFile) {
+  const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+  assert.equal(Array.isArray(state.unresolved_epochs), true, "stored state epochs missing");
+  assert.equal(state.unresolved_epochs.length, 1, "expected one stored activity epoch");
+  const epoch = state.unresolved_epochs[0];
+  return {
+    activity_revision: epoch.activity_revision,
+    seen_event_hashes: [...epoch.seen_event_hashes],
+  };
 }
 
 function findOnlyStateFile(root) {

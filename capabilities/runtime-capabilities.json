@@ -43,23 +43,50 @@
           "required_for_advertised_support": true
         },
         {
-          "capability_id": "capability.session.resume",
-          "declared_status": "unknown",
+          "capability_id": "capability.session.resolve",
+          "declared_status": "supported",
           "drift_status": "current",
-          "effective_status": "unknown",
+          "effective_status": "supported",
           "conditions": [],
-          "limitations": [],
-          "unknown_reason": "oh-my-ai does not invoke or test Runtime session-resume behavior; Work-start/Handoff/Result are designed as artifact-based, not session-based",
-          "verification_needed": "Manual test of session-resume interaction with a Work-start Candidate Artifact across two separate Claude Code sessions",
-          "safe_fallback": "Treat each Work-start / Handoff / Result cycle as a fresh session; do not rely on Runtime session memory across the Human Review boundary",
+          "limitations": [
+            "Resolution is observation-only and does not imply a native manual-resume action"
+          ],
+          "unknown_reason": null,
           "required_manual_step": [],
           "source": {
-            "type": "not_verified",
-            "reference": null
+            "type": "manual_fixture",
+            "reference": "scripts/test-pending-handoff-claude-runtime-adapter-fixtures.mjs"
           },
-          "evidence_refs": [],
-          "last_verified_at": "2026-07-20T00:00:00Z",
+          "evidence_refs": [
+            "CAP-E-CLAUDE-SESSION-RESOLUTION-01"
+          ],
+          "last_verified_at": "2026-08-14T00:00:00Z",
           "notes": [],
+          "required_for_advertised_support": false
+        },
+        {
+          "capability_id": "capability.session.resume",
+          "declared_status": "unsupported",
+          "drift_status": "current",
+          "effective_status": "unsupported",
+          "conditions": [],
+          "limitations": [
+            "The verified Claude Agent SDK cannot provide positive exact-session promptless resume binding without activating a user message or model turn"
+          ],
+          "unknown_reason": null,
+          "safe_fallback": "Return manual_resume_runtime_unsupported before Claim; do not synthesize a prompt or mutate the transcript",
+          "required_manual_step": [],
+          "source": {
+            "type": "explicit_verification_record",
+            "reference": "RPL-89 Slice 14 Claude Agent SDK runtime proof and capability composition"
+          },
+          "evidence_refs": [
+            "CAP-E-CLAUDE-SESSION-RESUME-UNSUPPORTED-01"
+          ],
+          "last_verified_at": "2026-08-14T00:00:00Z",
+          "notes": [
+            "No startup({ resume }) or query workaround is used by Slice 14"
+          ],
           "required_for_advertised_support": false
         },
         {
@@ -448,23 +475,50 @@
           "required_for_advertised_support": true
         },
         {
-          "capability_id": "capability.session.resume",
-          "declared_status": "unknown",
+          "capability_id": "capability.session.resolve",
+          "declared_status": "supported",
           "drift_status": "current",
-          "effective_status": "unknown",
+          "effective_status": "supported",
           "conditions": [],
-          "limitations": [],
-          "unknown_reason": "oh-my-ai does not invoke or test Runtime session-resume behavior for any Runtime",
-          "verification_needed": "Manual test of session-resume interaction with a Work-start Candidate Artifact across two separate Codex sessions",
-          "safe_fallback": "Treat each Work-start / Handoff / Result cycle as a fresh session",
+          "limitations": [
+            "Resolution is observation-only until a runtime action is selected"
+          ],
+          "unknown_reason": null,
           "required_manual_step": [],
           "source": {
-            "type": "not_verified",
-            "reference": null
+            "type": "manual_fixture",
+            "reference": "scripts/test-pending-handoff-codex-runtime-adapter-fixtures.mjs"
           },
-          "evidence_refs": [],
-          "last_verified_at": "2026-07-20T00:00:00Z",
+          "evidence_refs": [
+            "CAP-E-CODEX-SESSION-RESOLUTION-01"
+          ],
+          "last_verified_at": "2026-08-14T00:00:00Z",
           "notes": [],
+          "required_for_advertised_support": false
+        },
+        {
+          "capability_id": "capability.session.resume",
+          "declared_status": "supported",
+          "drift_status": "current",
+          "effective_status": "supported",
+          "conditions": [],
+          "limitations": [
+            "The approved action is resume_accepted only; it does not start a model turn or claim delivery"
+          ],
+          "unknown_reason": null,
+          "safe_fallback": null,
+          "required_manual_step": [],
+          "source": {
+            "type": "manual_fixture",
+            "reference": "scripts/test-pending-handoff-codex-runtime-adapter-fixtures.mjs"
+          },
+          "evidence_refs": [
+            "CAP-E-CODEX-SESSION-RESUME-01"
+          ],
+          "last_verified_at": "2026-08-14T00:00:00Z",
+          "notes": [
+            "thread/resume is the only native action used by Slice 13; fork and turn/start remain outside the action"
+          ],
           "required_for_advertised_support": false
         },
         {

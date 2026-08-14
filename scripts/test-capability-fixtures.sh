@@ -128,6 +128,57 @@ NODE
   echo "passed: FX-CAP-003-jira-mcp-runtime-binding-and-swap-detection"
 }
 
+# --- Canonical session capability split (Negative) -------------------------
+
+fx_canonical_session_capability_invariants() {
+  local d out
+  d="$(sandbox)"
+
+  mutate 'doc.runtimes.claude.capabilities = doc.runtimes.claude.capabilities.filter(c => c.capability_id !== "capability.session.resolve");' "$d/missing-claude-resolve.json"
+  expect_invalid "$d/missing-claude-resolve.json" "canonical-missing-claude-resolve" "canonical session capability"
+
+  mutate 'doc.runtimes.claude.capabilities.find(c => c.capability_id === "capability.session.resolve").declared_status = "unsupported";' "$d/claude-resolve-unsupported.json"
+  expect_invalid "$d/claude-resolve-unsupported.json" "canonical-claude-resolve-status" "canonical session capability"
+
+  mutate 'doc.runtimes.claude.capabilities = doc.runtimes.claude.capabilities.filter(c => c.capability_id !== "capability.session.resume");' "$d/missing-claude-resume.json"
+  expect_invalid "$d/missing-claude-resume.json" "canonical-missing-claude-resume" "canonical session capability"
+
+  mutate 'doc.runtimes.claude.capabilities.find(c => c.capability_id === "capability.session.resume").declared_status = "supported";' "$d/claude-resume-supported.json"
+  expect_invalid "$d/claude-resume-supported.json" "canonical-claude-resume-status" "canonical session capability"
+
+  mutate 'doc.runtimes.codex.capabilities = doc.runtimes.codex.capabilities.filter(c => c.capability_id !== "capability.session.resolve");' "$d/missing-codex-resolve.json"
+  expect_invalid "$d/missing-codex-resolve.json" "canonical-missing-codex-resolve" "canonical session capability"
+
+  mutate 'doc.runtimes.codex.capabilities.find(c => c.capability_id === "capability.session.resolve").declared_status = "unknown"; doc.runtimes.codex.capabilities.find(c => c.capability_id === "capability.session.resolve").effective_status = "unknown"; doc.runtimes.codex.capabilities.find(c => c.capability_id === "capability.session.resolve").unknown_reason = "synthetic"; doc.runtimes.codex.capabilities.find(c => c.capability_id === "capability.session.resolve").verification_needed = "synthetic"; doc.runtimes.codex.capabilities.find(c => c.capability_id === "capability.session.resolve").safe_fallback = "synthetic"; doc.runtimes.codex.capabilities.find(c => c.capability_id === "capability.session.resolve").source = { type: "not_verified", reference: null }; doc.runtimes.codex.capabilities.find(c => c.capability_id === "capability.session.resolve").evidence_refs = [];' "$d/codex-resolve-unknown.json"
+  expect_invalid "$d/codex-resolve-unknown.json" "canonical-codex-resolve-status" "canonical session capability"
+
+  mutate 'doc.runtimes.codex.capabilities = doc.runtimes.codex.capabilities.filter(c => c.capability_id !== "capability.session.resume");' "$d/missing-codex-resume.json"
+  expect_invalid "$d/missing-codex-resume.json" "canonical-missing-codex-resume" "canonical session capability"
+
+  mutate 'doc.runtimes.codex.capabilities.find(c => c.capability_id === "capability.session.resume").declared_status = "unknown"; doc.runtimes.codex.capabilities.find(c => c.capability_id === "capability.session.resume").effective_status = "unknown"; doc.runtimes.codex.capabilities.find(c => c.capability_id === "capability.session.resume").unknown_reason = "synthetic"; doc.runtimes.codex.capabilities.find(c => c.capability_id === "capability.session.resume").verification_needed = "synthetic"; doc.runtimes.codex.capabilities.find(c => c.capability_id === "capability.session.resume").safe_fallback = "synthetic"; doc.runtimes.codex.capabilities.find(c => c.capability_id === "capability.session.resume").source = { type: "not_verified", reference: null }; doc.runtimes.codex.capabilities.find(c => c.capability_id === "capability.session.resume").evidence_refs = [];' "$d/codex-resume-unknown.json"
+  expect_invalid "$d/codex-resume-unknown.json" "canonical-codex-resume-status" "canonical session capability"
+
+  mutate 'doc.runtimes.claude.runtime_id = "claude";' "$d/claude-semantic-runtime-confusion.json"
+  expect_invalid "$d/claude-semantic-runtime-confusion.json" "canonical-runtime-id-confusion" "canonical session capability"
+
+  mutate 'doc.runtimes.codex.runtime_id = "codex";' "$d/codex-semantic-runtime-confusion.json"
+  expect_invalid "$d/codex-semantic-runtime-confusion.json" "canonical-runtime-id-confusion" "canonical session capability"
+
+  mutate 'doc.runtimes.claude.capabilities.find(c => c.capability_id === "capability.session.resolve").evidence_refs = [];' "$d/missing-session-evidence.json"
+  expect_invalid "$d/missing-session-evidence.json" "canonical-session-evidence" "canonical session capability"
+
+  mutate 'doc.runtimes.claude.capabilities.find(c => c.capability_id === "capability.session.resume").evidence_refs = [];' "$d/missing-unsupported-evidence.json"
+  expect_invalid "$d/missing-unsupported-evidence.json" "canonical-unsupported-evidence" "canonical session capability"
+
+  mutate 'doc.runtimes.claude.capabilities.find(c => c.capability_id === "capability.session.resume").limitations = [];' "$d/missing-unsupported-limitation.json"
+  expect_invalid "$d/missing-unsupported-limitation.json" "canonical-unsupported-limitation" "canonical session capability"
+
+  mutate 'doc.runtimes.claude.capabilities.find(c => c.capability_id === "capability.session.resume").safe_fallback = null;' "$d/missing-unsupported-fallback.json"
+  expect_invalid "$d/missing-unsupported-fallback.json" "canonical-unsupported-fallback" "canonical session capability"
+
+  echo "passed: CAPABILITY_RESOLVE_RESUME_SPLIT_GATE_PASS"
+}
+
 # --- FX-CAP-010 Approval Mixed into Capability (Negative) ------------------
 
 fx_cap_010() {
@@ -179,7 +230,14 @@ fx_cap_013() {
   local d out
   d="$(sandbox)"; out="$d/mutated.json"
   mutate '
-    const cap = doc.runtimes.codex.capabilities.find(c => c.capability_id === "capability.session.resume");
+    const cap = doc.runtimes.codex.capabilities.find(c => c.capability_id === "capability.session.resolve");
+    cap.declared_status = "unknown";
+    cap.effective_status = "unknown";
+    cap.unknown_reason = "synthetic unknown for FX-CAP-013";
+    cap.verification_needed = "synthetic verification for FX-CAP-013";
+    cap.safe_fallback = "synthetic fallback for FX-CAP-013";
+    cap.source = { type: "not_verified", reference: null };
+    cap.evidence_refs = [];
     cap.required_manual_step = ["Just trust it works"];
   ' "$out"
   expect_invalid "$out" "FX-CAP-013" "would imply a verified manual-step promotion"
@@ -255,7 +313,14 @@ fx_supplementary_unknown_with_evidence() {
   local d out
   d="$(sandbox)"; out="$d/mutated.json"
   mutate '
-    const cap = doc.runtimes.codex.capabilities.find(c => c.capability_id === "capability.session.resume");
+    const cap = doc.runtimes.codex.capabilities.find(c => c.capability_id === "capability.session.resolve");
+    cap.declared_status = "unknown";
+    cap.effective_status = "unknown";
+    cap.unknown_reason = "synthetic unknown for evidence negative fixture";
+    cap.verification_needed = "synthetic verification for evidence negative fixture";
+    cap.safe_fallback = "synthetic fallback for evidence negative fixture";
+    cap.source = { type: "not_verified", reference: null };
+    cap.required_manual_step = [];
     cap.evidence_refs = ["should-not-be-here"];
   ' "$out"
   expect_invalid "$out" "unknown-with-evidence" "must not carry evidence_refs"
@@ -295,6 +360,7 @@ require_file "$REAL_FILE"
 fx_cap_001
 fx_cap_002
 fx_cap_003
+fx_canonical_session_capability_invariants
 fx_cap_010
 fx_cap_011
 fx_cap_012
