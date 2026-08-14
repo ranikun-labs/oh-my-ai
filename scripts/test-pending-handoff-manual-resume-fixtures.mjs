@@ -908,7 +908,9 @@ await group("static boundary, concurrency, and Makefile", async () => {
     const declaration = MAKEFILE_SOURCE.match(/^test-v1x-fixtures:[\s\S]*?(?=\n\ninstall:)/m)?.[0] ?? "";
     assert.match(declaration, /test-pending-handoff-session-resolution-fixtures/);
     assert.match(declaration, /test-pending-handoff-manual-resume-fixtures/);
+    assert.match(declaration, /test-pending-handoff-codex-runtime-adapter-fixtures/);
     assert.ok(declaration.indexOf("test-pending-handoff-session-resolution-fixtures") < declaration.indexOf("test-pending-handoff-manual-resume-fixtures"));
+    assert.ok(declaration.indexOf("test-pending-handoff-manual-resume-fixtures") < declaration.indexOf("test-pending-handoff-codex-runtime-adapter-fixtures"));
   });
 });
 
