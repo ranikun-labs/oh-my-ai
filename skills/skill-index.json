@@ -449,6 +449,65 @@
       }
     },
     {
+      "name": "spec-to-implementation",
+      "path": "skills/spec-to-implementation/SKILL.md",
+      "description": "Use for substantial feature requests or architecture changes that need explicit requirements, acceptance criteria, repository source-of-truth review, Owner decisions, approved implementation, independent review, and a PR gate. Do not impose this workflow on small fixes or simple questions. A Work-start Candidate is never an approved specification.",
+      "summary": "큰 변경을 승인 가능한 명세부터 독립 검수와 PR Gate까지 이끄는 구현 절차",
+      "routing": {
+        "visibility": "contextual",
+        "risk_level": "medium",
+        "task_types": [
+          "feature-planning",
+          "architecture-change",
+          "implementation-workflow"
+        ],
+        "triggers": [
+          {
+            "kind": "intent",
+            "values": [
+              "plan_and_implement_substantial_change",
+              "define_acceptance_criteria_before_implementation"
+            ]
+          },
+          {
+            "kind": "keyword",
+            "values": [
+              "spec-to-implementation",
+              "추상 요구",
+              "명세부터 구현",
+              "승인된 명세",
+              "요구사항과 인수 기준"
+            ]
+          }
+        ],
+        "keywords": {
+          "ko": [
+            "요구사항",
+            "인수 기준",
+            "승인된 명세",
+            "독립 검수"
+          ],
+          "en": [
+            "acceptance criteria",
+            "approved specification",
+            "independent review",
+            "implementation plan"
+          ]
+        },
+        "use_when": [
+          "새 기능이나 구조 변경처럼 여러 파일·계약·책임이 걸리고 구현 전 합의가 필요한 경우",
+          "사용자가 요구사항 정리, 승인, 구현, 독립 검수까지 이어지는 작업을 요청한 경우"
+        ],
+        "do_not_use_when": [
+          "단순 질문, 문구 변경, 작은 국소 수정처럼 별도 명세 절차가 과한 경우",
+          "사용자가 아직 아이디어 탐색만 원하고 구현 준비를 요청하지 않은 경우"
+        ],
+        "requires": [
+          "substantial_change_or_explicit_workflow_request"
+        ]
+      }
+    },
+    {
       "name": "springboot-patterns",
       "path": "skills/springboot-patterns/SKILL.md",
       "description": "Spring Boot architecture patterns, REST API design, layered services, data access, caching, async processing, and logging. Use for Java Spring Boot backend work.",
