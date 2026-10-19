@@ -34,7 +34,7 @@
 | 독립 Review | PASS / CHANGES_REQUIRED / NOT_RUN | Reviewed HEAD: |
 
 - **검증 대상 HEAD:** `<commit sha>`
-- **SKIP / NOT_RUN 및 제한:** 
+- **SKIP / NOT_RUN 및 제한:**
 
 ## 4. Finding·위험·의존성
 - **남은 BLOCKER / MAJOR / MINOR:** 해당 없음
