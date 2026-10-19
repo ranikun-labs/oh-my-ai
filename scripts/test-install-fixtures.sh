@@ -40,7 +40,7 @@ clone_fixture_repo() {
   local clone="$TEMP_ROOT/$name/repo"
 
   mkdir -p "$(dirname "$clone")"
-  git clone --quiet --local "$REPO" "$clone"
+  git clone --quiet --local --no-hardlinks "$REPO" "$clone"
 
   # Let the runner validate the current working tree before its changes are committed.
   if ! git diff --quiet HEAD --; then
@@ -48,7 +48,11 @@ clone_fixture_repo() {
   fi
   git ls-files --others --exclude-standard -z | while IFS= read -r -d '' file; do
     mkdir -p "$clone/$(dirname "$file")"
-    cp "$REPO/$file" "$clone/$file"
+    if [ -L "$REPO/$file" ]; then
+      ln -s "$(readlink "$REPO/$file")" "$clone/$file"
+    else
+      cp "$REPO/$file" "$clone/$file"
+    fi
   done
   printf '%s\n' "$clone"
 }
@@ -142,6 +146,8 @@ assert_shared_install() {
     || fail "Codex managed hooks are not ready"
   assert_managed_hooks_once codex "$home_dir/.codex/hooks.json"
   assert_link "$home_dir/.agents/skills/work-start" "$clone/skills/work-start"
+  assert_link "$home_dir/.agents/skills/spec-to-implementation" "$clone/skills/spec-to-implementation"
+  assert_link "$clone/.agents/skills/spec-to-implementation" "../../skills/spec-to-implementation"
   assert_link "$home_dir/.local/bin/oh-my-ai" "$clone/scripts/oh-my-ai.mjs"
   assert_resolved_link "$home_dir/.local/bin/harness-event" "$clone/scripts/harness-event.mjs"
 }
@@ -536,6 +542,28 @@ check_work_start_conflict() {
   require_fixed "user-owned work-start skill" "$(cat "$home_dir/.claude/skills/work-start/SKILL.md")"
 
   echo "passed: FX-INS-070 work-start-conflict"
+}
+
+check_spec_to_implementation_conflict() {
+  local fixture="$FIXTURE_ROOT/FX-INS-110-spec-to-implementation-conflict"
+  local clone home_dir output status
+
+  check_fixture_metadata "$fixture"
+  clone="$(clone_fixture_repo spec-to-implementation-conflict)"
+  home_dir="$TEMP_ROOT/spec-to-implementation-conflict/home"
+  mkdir -p "$home_dir/.agents/skills/spec-to-implementation"
+  printf '%s\n' 'user-owned spec-to-implementation skill' >"$home_dir/.agents/skills/spec-to-implementation/SKILL.md"
+
+  set +e
+  output="$(run_setup "$clone" "$home_dir" --install-shared 2>&1)"
+  status=$?
+  set -e
+  [ "$status" -eq 1 ] || fail "spec-to-implementation collision install exit code was $status, expected 1"
+  require_fixed "Codex spec-to-implementation skill exists and does not point to this repository" "$output"
+  require_fixed "Codex: conflict" "$output"
+  require_fixed "user-owned spec-to-implementation skill" "$(cat "$home_dir/.agents/skills/spec-to-implementation/SKILL.md")"
+
+  echo "passed: FX-INS-110 spec-to-implementation-conflict"
 }
 
 check_invalid_existing_json() {
@@ -1231,6 +1259,7 @@ run_isolated_check check_dangling_link_recovery
 run_isolated_check check_existing_claude_settings_merge
 run_isolated_check check_existing_skill_directories
 run_isolated_check check_work_start_conflict
+run_isolated_check check_spec_to_implementation_conflict
 run_isolated_check check_invalid_existing_json
 run_isolated_check check_semantic_hook_dedup
 run_isolated_check check_legacy_customization_preservation
