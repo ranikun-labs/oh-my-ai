@@ -11,6 +11,7 @@ import {
   applyJiraPreviewApproval,
   applyJiraSearchResult,
   beginJiraTicketCreateWorkflow,
+  runJiraTicketCreateWorkflow,
 } from "./lib/jira-ticket-create-workflow.mjs";
 import { normalizeJiraRuntimeResult } from "./lib/jira-ticket-runtime-normalization.mjs";
 
@@ -447,5 +448,65 @@ assert.equal(malformedResult.report.origin_status, "UNKNOWN_ORIGIN");
 console.log("passed: incomplete-Target-protocol-state-fails-closed");
 
 
+
+
+let adapterSteps = [];
+const workingTargetAdapter = {
+  runtime: "codex", capabilities: targetCapabilities, runtime_evidence: runtimeEvidence,
+  async search() { adapterSteps.push("search"); return searchNone; },
+  async persistIntent(request) {
+    adapterSteps.push("intent");
+    return { status: "persisted", durable: true, created_new: true, tool_call_count: 1,
+      create_request_id: request.create_request_id, ledger_ref: request.ledger_ref,
+      approved_preview_id: request.approved_preview_id, activation_ref: request.activation_ref };
+  },
+  async create(request) {
+    adapterSteps.push("create");
+    assert.equal(request.fields.customfield_10108.id, "10027");
+    return fakeIssueResult();
+  },
+  async read() { adapterSteps.push("read"); return verifiedTargetRead(); },
+  async persistOrigin(request) {
+    adapterSteps.push("origin");
+    return { status: "persisted", durable: true, tool_call_count: 1,
+      issue_key: request.issue_key, create_request_id: request.create_request_id,
+      ledger_ref: request.ledger_ref, phase: request.phase, read_authority: request.read_authority,
+      write_authority: request.write_authority, origin: request.origin,
+      cutover_approval_ref: request.cutover_approval_ref,
+      create_activation_ref: request.create_activation_ref };
+  },
+};
+let fullTarget = await runJiraTicketCreateWorkflow({
+  adapter: workingTargetAdapter, contract,
+  metadata: { ...metadata, target_create: targetConfig() }, approval: { current: true },
+});
+assert.deepEqual(adapterSteps, ["search", "intent", "create", "read", "origin"]);
+assert.equal(fullTarget.verification_status, "verified");
+assert.equal(fullTarget.mutation_status, "applied");
+
+adapterSteps = [];
+fullTarget = await runJiraTicketCreateWorkflow({
+  adapter: { ...workingTargetAdapter, async persistIntent(request) {
+    adapterSteps.push("intent"); throw new Error("store unavailable");
+  } },
+  contract, metadata: { ...metadata, target_create: targetConfig() },
+  approval: { current: true },
+});
+assert.deepEqual(adapterSteps, ["search", "intent"], "Intent failure must block Create");
+assert.equal(fullTarget.create_attempted, false);
+
+adapterSteps = [];
+fullTarget = await runJiraTicketCreateWorkflow({
+  adapter: { ...workingTargetAdapter, async persistOrigin(request) {
+    adapterSteps.push("origin"); throw new Error("ledger timeout");
+  } },
+  contract, metadata: { ...metadata, target_create: targetConfig() },
+  approval: { current: true },
+});
+assert.deepEqual(adapterSteps, ["search", "intent", "create", "read", "origin"]);
+assert.equal(fullTarget.origin_status, "UNKNOWN_ORIGIN");
+assert.equal(fullTarget.mutation_status, "possibly_applied");
+assert.equal(fullTarget.automatic_retry, false);
+console.log("passed: full-Target-adapter-simulation-and-failures");
 
 console.log("jira-ticket runtime protocol fixtures passed");
