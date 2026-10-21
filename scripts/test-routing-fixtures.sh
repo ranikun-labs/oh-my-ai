@@ -267,4 +267,39 @@ for task in "What are the approaches for monitoring retries across several servi
 done
 echo "passed: FX-RT-052 no false-positive on cross-service / concept question"
 
+
+# Multi-line requirements, reversed phrasing, explicit no-implementation and
+# explanatory requests test recommendation only, never Skill execution/consent.
+for task in \
+  
+Design a payment platform.\nWrite the requirements and acceptance criteria before coding.' \
+  "Implement the billing module after reviewing the acceptance criteria and requirements."; do
+  work_json="$(run_work_start_consumer "$real_index" "$task")"
+  prompt_json="$(run_prompt_consumer "$real_index" "$task")"
+  for json in "$work_json" "$prompt_json"; do
+    assert_field "FX-RT-053/positive" "$json" routing_status matched
+    assert_field "FX-RT-053/positive" "$json" skill_candidates 1
+    printf '%s' "$json" | node -e '
+      const d = JSON.parse(require("fs").readFileSync(0, "utf8"));
+      if (d.skill_candidates?.[0]?.name !== "spec-to-implementation") process.exit(1);
+    ' || fail "FX-RT-053: expected spec-to-implementation candidate"
+  done
+  assert_consumer_parity "FX-RT-053" "$real_index" "$task"
+done
+echo "passed: FX-RT-053 multiline-and-order-reversal"
+
+for task in \
+  "Please do not implement a billing system; instead explain requirements and acceptance criteria." \
+  "Do not build a billing system. Write the requirements and acceptance criteria?" \
+  "Could you walk me through how to build a module with requirements and acceptance criteria?"; do
+  work_json="$(run_work_start_consumer "$real_index" "$task")"
+  prompt_json="$(run_prompt_consumer "$real_index" "$task")"
+  for json in "$work_json" "$prompt_json"; do
+    assert_field "FX-RT-054/negative" "$json" routing_status no_match
+    assert_field "FX-RT-054/negative" "$json" skill_candidates 0
+  done
+  assert_consumer_parity "FX-RT-054" "$real_index" "$task"
+done
+echo "passed: FX-RT-054 explicit-negation-and-explanatory-question"
+
 echo "all routing fixtures passed"
