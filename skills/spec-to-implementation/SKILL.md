@@ -25,7 +25,7 @@ metadata:
           - 요구사항과 인수 기준
       - kind: pattern
         values:
-          - '(?=.*\b(?:build|implement|develop|create|add|design|plan)\b)(?=.*\brequirements and acceptance criteria\b)^(?!\s*(?:what|why|how|explain|tell me|can you explain|could you explain)\b)[\s\S]{1,2000}
+          - (?=.*\b(?:build|implement|develop|create|add|design|plan)\b)(?=.*\brequirements and acceptance criteria\b)^(?!\s*(?:what|why|how|explain|tell me|can you explain|could you explain)\b)[\s\S]{1,2000}$
     keywords:
       ko:
         - 요구사항
