@@ -288,7 +288,7 @@ function approvedTarget() {
 function storedIntent(s) {
   const t = s.state.approved_snapshot.target_create;
   return applyJiraIntentResult(s.state, { status: "persisted", durable: true, tool_call_count: 1,
-    create_request_id: t.request_id, ledger_ref: t.ledger_ref,
+    create_request_id: t.request_id, ledger_ref: t.ledger_ref, created_new: true,
     approved_preview_id: s.state.preview_id, activation_ref: t.cutover.activation_ref });
 }
 function fakeIssueResult() {
@@ -347,6 +347,7 @@ assert.equal(tg.required_action.request.fields.customfield_10044, undefined);
 tg = applyJiraCreateResult(tg.state, fakeIssueResult());
 assert.equal(tg.required_action.type, "jira.read_required");
 assert.notEqual(tg.report.verification_status, "verified", "Create identity alone is not Target verification");
+assert.equal(tg.report.mutation_status, "possibly_applied", "After a real Create the mutation must not read zero");
 tg = applyJiraReadResult(tg.state, verifiedTargetRead());
 assert.equal(tg.required_action.type, "jira.origin_persist_required");
 assert.equal(tg.report.verification_status, "not_verifiable");
@@ -354,7 +355,7 @@ tg = applyJiraOriginResult(tg.state, { status: "persisted", durable: true, tool_
   issue_key: "RPL-201", create_request_id: targetConfig().request_id, ledger_ref: targetConfig().ledger_ref,
   phase: "create_ready", read_authority: "target", write_authority: "target",
   cutover_approval_ref: targetConfig().cutover.approval_ref,
-  create_activation_ref: targetConfig().cutover.activation_ref });
+  create_activation_ref: targetConfig().cutover.activation_ref, origin: "target_create" });
 assert.equal(tg.required_action, null);
 assert.equal(tg.report.verification_status, "verified");
 assert.equal(tg.report.target_create_status, "create_ready");
@@ -377,6 +378,12 @@ tg = applyJiraReadResult(tg.state, verifiedTargetRead());
 tg = applyJiraOriginResult(tg.state, { status: "timeout", durable: false });
 assert.equal(tg.report.origin_status, "UNKNOWN_ORIGIN");
 assert.equal(tg.report.verification_status, "not_verifiable");
+tg = storedIntent(approvedTarget());
+tg.state.target_mode = false;
+tg = applyJiraCreateResult(tg.state, fakeIssueResult());
+assert.equal(tg.required_action, null);
+assert.equal(tg.report.origin_status, "UNKNOWN_ORIGIN", "target flag must not permit Legacy verified bypass");
+assert.equal(tg.report.mutation_status, "possibly_applied");
 console.log("passed: target-uncertain-result-quarantine-no-auto-retry");
 
 // The JSON/CLI semantic bridge must preserve intermediate Target stage identity.
@@ -384,7 +391,7 @@ tg = approvedTarget();
 let roundTripped = invokeRuntime({ event: "intent_result", state: JSON.parse(JSON.stringify(tg.state)),
   result: { status: "persisted", durable: true, tool_call_count: 1,
     create_request_id: targetConfig().request_id, ledger_ref: targetConfig().ledger_ref,
-    approved_preview_id: tg.state.preview_id,
+    created_new: true, approved_preview_id: tg.state.preview_id,
     activation_ref: targetConfig().cutover.activation_ref } });
 assert.equal(roundTripped.required_action.type, "jira.create_required");
 console.log("passed: target-runtime-bridge-intent-event");
@@ -400,8 +407,16 @@ assert.equal(repeatedIntent.required_action, null, "blocked Intent cannot resume
 tg = approvedTarget();
 let mismatchedReceipt = applyJiraIntentResult(tg.state, { status: "persisted", durable: true, tool_call_count: 1,
   create_request_id: targetConfig().request_id, ledger_ref: targetConfig().ledger_ref,
-  approved_preview_id: "unapproved-preview", activation_ref: targetConfig().cutover.activation_ref });
+  approved_preview_id: "unapproved-preview", activation_ref: targetConfig().cutover.activation_ref, created_new: true });
 assert.equal(mismatchedReceipt.required_action, null, "Intent must match approved Preview SHA");
+tg = approvedTarget();
+let reusedIntent = applyJiraIntentResult(tg.state, {
+  status: "persisted", durable: true, created_new: false, prior_issue_key: "RPL-201", tool_call_count: 1,
+  create_request_id: targetConfig().request_id, ledger_ref: targetConfig().ledger_ref,
+  approved_preview_id: tg.state.preview_id, activation_ref: targetConfig().cutover.activation_ref,
+});
+assert.equal(reusedIntent.required_action, null, "reusing an existing request ID must not create twice");
+assert.equal(reusedIntent.report.create_attempted, false);
 console.log("passed: target-replayed-approval-and-intent-blocked");
 
 
