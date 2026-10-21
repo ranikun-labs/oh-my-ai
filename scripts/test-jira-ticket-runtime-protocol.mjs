@@ -379,5 +379,16 @@ let roundTripped = invokeRuntime({ event: "intent_result", state: JSON.parse(JSO
     create_request_id: targetConfig().request_id, ledger_ref: targetConfig().ledger_ref } });
 assert.equal(roundTripped.required_action.type, "jira.create_required");
 console.log("passed: target-runtime-bridge-intent-event");
+tg = approvedTarget();
+const repeatedApproval = applyJiraPreviewApproval(tg.state, { status: "approved", preview_id: tg.state.preview_id });
+assert.equal(repeatedApproval.required_action, null, "duplicated approval must not issue another Intent");
+tg = approvedTarget();
+let failedIntent = applyJiraIntentResult(tg.state, { status: "timeout" });
+assert.equal(failedIntent.required_action, null);
+let repeatedIntent = applyJiraIntentResult(failedIntent.state, { status: "persisted", durable: true, tool_call_count: 1,
+  create_request_id: targetConfig().request_id, ledger_ref: targetConfig().ledger_ref });
+assert.equal(repeatedIntent.required_action, null, "blocked Intent cannot resume to Create");
+console.log("passed: target-replayed-approval-and-intent-blocked");
+
 
 console.log("jira-ticket runtime protocol fixtures passed");
