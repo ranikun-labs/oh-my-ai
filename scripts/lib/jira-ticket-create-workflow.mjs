@@ -294,6 +294,9 @@ export function applyJiraSearchResult(state, search) {
 
 /** Approval is valid only for the exact canonical Preview emitted above. */
 export function applyJiraPreviewApproval(state, approval) {
+  if (state.target_mode && state.stage) return terminal(state, {
+    approval_status: "blocked", allowed_next_step: "Duplicate Target approval stage; no additional Create allowed",
+  });
   const currentSnapshot = state.search ? previewPayload(state, state.search) : null;
   const currentPreviewId = currentSnapshot ? previewId(currentSnapshot) : null;
   // state.preview is untrusted protocol state after it leaves the renderer.
@@ -369,13 +372,17 @@ export function applyJiraIntentResult(state, result) {
   if (!state.target_mode || state.stage !== "await_intent") return terminal(state, {
     approval_status: "blocked", allowed_next_step: "Unexpected Intent result; Create forbidden",
   });
-  if (previewId(state.approved_snapshot) !== state.preview_id)
+  if (previewId(state.approved_snapshot) !== state.preview_id) {
+    state.stage = "intent_blocked";
     return terminal(state, { target_create_status: "intent_blocked", allowed_next_step: "Approved Preview integrity mismatch" });
+  }
   const t = state.approved_snapshot.target_create;
   if (result?.status !== "persisted" || result?.durable !== true || result?.tool_call_count !== 1
-    || result?.create_request_id !== t.request_id || result?.ledger_ref !== t.ledger_ref)
+    || result?.create_request_id !== t.request_id || result?.ledger_ref !== t.ledger_ref) {
+    state.stage = "intent_blocked";
     return terminal(state, { target_create_status: "intent_blocked",
       allowed_next_step: "Durable pre-Create Intent not verified; Create forbidden" });
+  }
   state.stage = "await_create";
   return { state, report: state.report, required_action: {
     type: "jira.create_required", preview_id: state.preview_id,
