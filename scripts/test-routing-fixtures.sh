@@ -233,4 +233,38 @@ for prompt in "$simple_concept_question" "$small_fix_request"; do
   echo "passed: $fixture_id"
 done
 
+# Regressions for multi-signal English requests: the old one-phrase
+# "across several services" keyword missed common large-feature requests and
+# incorrectly routed conceptual questions mentioning cross-service systems.
+english_build_request="Build a multi-tenant billing platform. First establish its requirements and acceptance criteria, then implement it."
+english_design_request="Before coding, the requirements and acceptance criteria need review; please design a new identity feature."
+for task in "$english_build_request" "$english_design_request"; do
+  work_json="$(run_work_start_consumer "$real_index" "$task")"
+  prompt_json="$(run_prompt_consumer "$real_index" "$task")"
+  for json in "$work_json" "$prompt_json"; do
+    assert_field "FX-RT-051/english-substantial-without-across" "$json" routing_status matched
+    assert_field "FX-RT-051/english-substantial-without-across" "$json" skill_candidates 1
+    printf '%s' "$json" | node -e '
+      const input = JSON.parse(require("fs").readFileSync(0, "utf8"));
+      if (input.skill_candidates?.[0]?.name !== "spec-to-implementation") process.exit(1);
+    ' || fail "FX-RT-051: expected spec-to-implementation"
+  done
+  assert_consumer_parity "FX-RT-051" "$real_index" "$task"
+done
+echo "passed: FX-RT-051 english multi-signal substantial change"
+
+for task in "What are the approaches for monitoring retries across several services?" \
+            "How should I handle retries across several services?" \
+            "What are requirements and acceptance criteria for designing a system?" \
+            "Can you explain requirements and acceptance criteria for building an app?"; do
+  work_json="$(run_work_start_consumer "$real_index" "$task")"
+  prompt_json="$(run_prompt_consumer "$real_index" "$task")"
+  for json in "$work_json" "$prompt_json"; do
+    assert_field "FX-RT-052/false-positive-prevention" "$json" routing_status no_match
+    assert_field "FX-RT-052/false-positive-prevention" "$json" skill_candidates 0
+  done
+  assert_consumer_parity "FX-RT-052" "$real_index" "$task"
+done
+echo "passed: FX-RT-052 no false-positive on cross-service / concept question"
+
 echo "all routing fixtures passed"
