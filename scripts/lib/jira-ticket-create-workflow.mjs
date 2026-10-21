@@ -366,7 +366,8 @@ export function applyJiraCreateResult(state, created) {
   if (targetExpected && state.target_mode !== true)
     return targetQuarantine(state, "Target classification stage flag tampered");
   if (state.target_mode) {
-    if (state.stage !== "await_create" || previewId(state.approved_snapshot) !== state.preview_id)
+    if (state.stage !== "await_create" || !state.approved_snapshot?.target_create
+      || !state.preview_id || previewId(state.approved_snapshot) !== state.preview_id)
       return targetQuarantine(state, "Create result outside approved Intent or immutable Preview stage");
     if (!verified) return targetQuarantine(state, "Target Create identity not verified");
     state.created_issue = { key: created.key, url: created.url };
@@ -388,7 +389,7 @@ export function applyJiraCreateResult(state, created) {
 
 /** Target mode: a durable, matching pre-Create Intent is mandatory. */
 export function applyJiraIntentResult(state, result) {
-  if (!state.target_mode || state.stage !== "await_intent") return terminal(state, {
+  if (!state.target_mode || state.stage !== "await_intent" || !state.approved_snapshot?.target_create) return terminal(state, {
     approval_status: "blocked", allowed_next_step: "Unexpected Intent result; Create forbidden",
   });
   if (targetCreateError(state.metadata?.target_create, state.metadata)) {
@@ -418,8 +419,9 @@ export function applyJiraIntentResult(state, result) {
 
 /** Compare the actual Jira GET with the exact approved option snapshot. */
 export function applyJiraReadResult(state, result) {
-  if (!state.target_mode || state.stage !== "await_read")
-    return targetQuarantine(state, "Unexpected post-Create read");
+  if (!state.target_mode || state.stage !== "await_read" || !state.created_issue?.key
+    || !state.approved_snapshot?.target_create)
+    return targetQuarantine(state, "Unexpected or incomplete post-Create read");
   const t = state.approved_snapshot.target_create;
   const expected = t.selection, f = result?.fields;
   const expectedConcern = expected.concerns.map(v => v.id).sort();
@@ -444,8 +446,9 @@ export function applyJiraReadResult(state, result) {
 
 /** Report successful Target Create only after durable per-Issue Origin registration. */
 export function applyJiraOriginResult(state, result) {
-  if (!state.target_mode || state.stage !== "await_origin")
-    return targetQuarantine(state, "Unexpected Origin confirmation");
+  if (!state.target_mode || state.stage !== "await_origin" || !state.created_issue?.key
+    || !state.approved_snapshot?.target_create)
+    return targetQuarantine(state, "Unexpected or incomplete Origin confirmation");
   const t = state.approved_snapshot.target_create;
   if (result?.tool_call_count !== 1 || result?.status !== "persisted" || result?.durable !== true
     || result?.issue_key !== state.created_issue.key || result?.create_request_id !== t.request_id
