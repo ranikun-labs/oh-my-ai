@@ -271,8 +271,8 @@ echo "passed: FX-RT-052 no false-positive on cross-service / concept question"
 # Multi-line requirements, reversed phrasing, explicit no-implementation and
 # explanatory requests test recommendation only, never Skill execution/consent.
 for task in \
-  
-Design a payment platform.\nWrite the requirements and acceptance criteria before coding.' \
+  "Design a payment platform.
+Write the requirements and acceptance criteria before coding." \
   "Implement the billing module after reviewing the acceptance criteria and requirements."; do
   work_json="$(run_work_start_consumer "$real_index" "$task")"
   prompt_json="$(run_prompt_consumer "$real_index" "$task")"
