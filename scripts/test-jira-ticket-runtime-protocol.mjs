@@ -233,6 +233,7 @@ assert.deepEqual(codexCreate, claudeCreate, "create results share Core semantic 
 
 /* Target Create is opt-in; these are local synthetic protocol fixtures only.
  * No Jira calls, Admin changes, or G3 activation occur in this test. */
+const targetFixtureNow = Date.now(); // frozen fixture clock; no Jira interaction
 const targetConfig = () => ({
   mode: "single_supervised",
   request_id: "g3-fixture-request-0001",
@@ -241,12 +242,12 @@ const targetConfig = () => ({
   cutover: {
     status: "approved", approval_ref: "fixture-only-owner-approval",
     activation_ref: "fixture-only-g3-activation",
-    effective_from: "2030-01-01T00:00:00Z", effective_to: "2030-01-02T00:00:00Z",
-    request_time: "2030-01-01T12:00:00Z", rollback_ref: "fixture-only-rollback",
+    effective_from: new Date(targetFixtureNow - 3600_000).toISOString(), effective_to: new Date(targetFixtureNow + 3600_000).toISOString(),
+    request_time: new Date(targetFixtureNow).toISOString(), rollback_ref: "fixture-only-rollback",
   },
   create_metadata: {
     source: "live_jira_create_metadata", project: "RPL", issue_type: "Task", issue_type_id: "10010",
-    observed_at: "2030-01-01T11:55:00Z",
+    observed_at: new Date(targetFixtureNow - 300_000).toISOString(),
     fields: {
       customfield_10042: { required: false, hasDefaultValue: false },
       customfield_10043: { required: false, hasDefaultValue: false },
@@ -320,6 +321,9 @@ let metadataChanged = startTarget();
 metadataChanged.state.metadata.target_create.selection.product.id = "99999";
 metadataChanged = applyJiraSearchResult(metadataChanged.state, searchNone);
 assert.equal(metadataChanged.required_action, null, "Target metadata changed between Search stages");
+let spoofedTime = startTarget({ ...targetConfig(), cutover: {
+  ...targetConfig().cutover, request_time: "2030-01-01T12:00:00Z" } });
+assert.equal(spoofedTime.required_action, null, "untrusted caller time cannot be the activation clock");
 console.log("passed: target-g3-eligibility-fails-closed");
 
 let tg = approvedTarget();
