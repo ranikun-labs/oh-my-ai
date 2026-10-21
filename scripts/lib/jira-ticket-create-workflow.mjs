@@ -112,7 +112,7 @@ function targetCreateError(target, metadata) {
     ["concern", chosen.concerns]]) {
     const field = fields[TARGET_FIELDS[kind]];
     if (!Array.isArray(field.allowedValues)) return "실제 Target 허용 옵션 목록 미확인";
-    if (values.some(v => !v || !/^\\d+$/.test(v.id ?? "") || !normalizedText(v.value)
+    if (values.some(v => !v || !/^\d+$/.test(v.id ?? "") || !normalizedText(v.value)
       || !field.allowedValues.some(a => a.id === v.id && a.value === v.value)))
       return "선택한 Target 옵션 ID/값이 Jira Metadata와 불일치";
   }
@@ -344,7 +344,8 @@ export function applyJiraCreateResult(state, created) {
     && created.project === "RPL" && created.summary === state.approved_snapshot?.contract?.Summary
     && issueUrlMatches(created.url, state.runtime_evidence.jira_site_origin, created.key);
   if (state.target_mode) {
-    if (state.stage !== "await_create") return targetQuarantine(state, "Create result outside approved Intent stage");
+    if (state.stage !== "await_create" || previewId(state.approved_snapshot) !== state.preview_id)
+      return targetQuarantine(state, "Create result outside approved Intent or immutable Preview stage");
     if (!verified) return targetQuarantine(state, "Target Create identity not verified");
     state.created_issue = { key: created.key, url: created.url };
     state.stage = "await_read";
@@ -368,6 +369,8 @@ export function applyJiraIntentResult(state, result) {
   if (!state.target_mode || state.stage !== "await_intent") return terminal(state, {
     approval_status: "blocked", allowed_next_step: "Unexpected Intent result; Create forbidden",
   });
+  if (previewId(state.approved_snapshot) !== state.preview_id)
+    return terminal(state, { target_create_status: "intent_blocked", allowed_next_step: "Approved Preview integrity mismatch" });
   const t = state.approved_snapshot.target_create;
   if (result?.status !== "persisted" || result?.durable !== true || result?.tool_call_count !== 1
     || result?.create_request_id !== t.request_id || result?.ledger_ref !== t.ledger_ref)
