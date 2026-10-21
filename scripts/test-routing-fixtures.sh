@@ -183,4 +183,54 @@ printf '%s' "$work_json" | node -e '
 ' || fail "FX-RT-040: expected jira-ticket candidate"
 echo "passed: FX-RT-040-explicit-jira-create-routing"
 
+# Route substantial multi-service requests while leaving simple questions and
+# local fixes without a candidate. Keep this Skill-specific so broad keywords
+# such as "acceptance criteria" do not cause false positives.
+english_feature_request="I want to add a new subscription billing module across several services. The requirements and acceptance criteria are unclear; first review source of truth, surface Owner decisions, and define criteria before coding. Do not edit files."
+korean_feature_request="큰 구독 결제 기능을 여러 서비스에 추가하면서 요구사항과 인수 기준을 먼저 정의하고 Owner 결정을 정리한 뒤 구현해줘."
+simple_concept_question="What are acceptance criteria? How are they different from requirements?"
+small_fix_request="Fix this typo in one label."
+
+work_json="$(run_work_start_consumer "$real_index" "$english_feature_request")"
+prompt_json="$(run_prompt_consumer "$real_index" "$english_feature_request")"
+for json in "$work_json" "$prompt_json"; do
+  assert_field "FX-RT-050/english-substantial-change" "$json" routing_status matched
+  assert_field "FX-RT-050/english-substantial-change" "$json" skill_candidates 1
+  printf '%s' "$json" | node -e '
+    const input = JSON.parse(require("fs").readFileSync(0, "utf8"));
+    if (input.skill_candidates?.[0]?.name !== "spec-to-implementation") process.exit(1);
+  ' || fail "FX-RT-050/english-substantial-change: expected spec-to-implementation candidate"
+done
+assert_consumer_parity "FX-RT-050/english-substantial-change" "$real_index" "$english_feature_request"
+echo "passed: FX-RT-050/english-substantial-change"
+
+work_json="$(run_work_start_consumer "$real_index" "$korean_feature_request")"
+prompt_json="$(run_prompt_consumer "$real_index" "$korean_feature_request")"
+for json in "$work_json" "$prompt_json"; do
+  assert_field "FX-RT-050/korean-regression" "$json" routing_status matched
+  assert_field "FX-RT-050/korean-regression" "$json" skill_candidates 1
+  printf '%s' "$json" | node -e '
+    const input = JSON.parse(require("fs").readFileSync(0, "utf8"));
+    if (input.skill_candidates?.[0]?.name !== "spec-to-implementation") process.exit(1);
+  ' || fail "FX-RT-050/korean-regression: expected spec-to-implementation candidate"
+done
+assert_consumer_parity "FX-RT-050/korean-regression" "$real_index" "$korean_feature_request"
+echo "passed: FX-RT-050/korean-regression"
+
+for prompt in "$simple_concept_question" "$small_fix_request"; do
+  if [ "$prompt" = "$simple_concept_question" ]; then
+    fixture_id="FX-RT-050/english-simple-question"
+  else
+    fixture_id="FX-RT-050/small-fix"
+  fi
+  work_json="$(run_work_start_consumer "$real_index" "$prompt")"
+  prompt_json="$(run_prompt_consumer "$real_index" "$prompt")"
+  for json in "$work_json" "$prompt_json"; do
+    assert_field "$fixture_id" "$json" routing_status no_match
+    assert_field "$fixture_id" "$json" skill_candidates 0
+  done
+  assert_consumer_parity "$fixture_id" "$real_index" "$prompt"
+  echo "passed: $fixture_id"
+done
+
 echo "all routing fixtures passed"

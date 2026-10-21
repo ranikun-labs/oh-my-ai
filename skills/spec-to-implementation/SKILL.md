@@ -23,6 +23,7 @@ metadata:
           - 명세부터 구현
           - 승인된 명세
           - 요구사항과 인수 기준
+          - across several services
     keywords:
       ko:
         - 요구사항
