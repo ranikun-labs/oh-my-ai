@@ -423,5 +423,29 @@ assert.equal(reusedIntent.required_action, null, "reusing an existing request ID
 assert.equal(reusedIntent.report.create_attempted, false);
 console.log("passed: target-replayed-approval-and-intent-blocked");
 
+let corrupted = storedIntent(approvedTarget());
+delete corrupted.state.approved_snapshot;
+let malformedResult = applyJiraCreateResult(corrupted.state, fakeIssueResult());
+assert.equal(malformedResult.required_action, null);
+assert.equal(malformedResult.report.origin_status, "UNKNOWN_ORIGIN");
+assert.equal(malformedResult.report.mutation_status, "possibly_applied");
+
+corrupted = storedIntent(approvedTarget());
+corrupted = applyJiraCreateResult(corrupted.state, fakeIssueResult());
+delete corrupted.state.created_issue;
+malformedResult = applyJiraReadResult(corrupted.state, verifiedTargetRead());
+assert.equal(malformedResult.required_action, null);
+assert.equal(malformedResult.report.origin_status, "UNKNOWN_ORIGIN");
+
+corrupted = storedIntent(approvedTarget());
+corrupted = applyJiraCreateResult(corrupted.state, fakeIssueResult());
+corrupted = applyJiraReadResult(corrupted.state, verifiedTargetRead());
+delete corrupted.state.created_issue;
+malformedResult = applyJiraOriginResult(corrupted.state, { status: "persisted", durable: true });
+assert.equal(malformedResult.required_action, null);
+assert.equal(malformedResult.report.origin_status, "UNKNOWN_ORIGIN");
+console.log("passed: incomplete-Target-protocol-state-fails-closed");
+
+
 
 console.log("jira-ticket runtime protocol fixtures passed");
