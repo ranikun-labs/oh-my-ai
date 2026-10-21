@@ -91,7 +91,10 @@ function targetCreateError(target, metadata) {
       cutover.request_time, cutover.rollback_ref].every(normalizedText)) return "유형별 G3 Cutover 승인·기간·복구 증거 부족";
   const from = Date.parse(cutover.effective_from), to = Date.parse(cutover.effective_to);
   const now = Date.parse(cutover.request_time), checked = Date.parse(live?.observed_at);
+  // Never trust a caller-provided request_time as the actual current clock.
+  // Late replays must not reuse a previously valid activation window.
   if (![from, to, now, checked].every(Number.isFinite) || !(from <= now && now <= to)
+    || Math.abs(Date.now() - now) > 5 * 60 * 1000
     || checked > now || now - checked > 60 * 60 * 1000) return "G3 활성 기간 또는 최신 Jira Metadata 증거 불일치";
   if (!target.request_id || !normalizedText(target.ledger_ref)
     || !/^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/.test(target.request_id)) return "지속 저장 가능한 CreateRequestId 및 Ledger 필요";
@@ -388,6 +391,10 @@ export function applyJiraIntentResult(state, result) {
   if (!state.target_mode || state.stage !== "await_intent") return terminal(state, {
     approval_status: "blocked", allowed_next_step: "Unexpected Intent result; Create forbidden",
   });
+  if (targetCreateError(state.metadata?.target_create, state.metadata)) {
+    state.stage = "intent_blocked";
+    return terminal(state, { target_create_status: "intent_blocked", allowed_next_step: "G3 activation or Metadata expired before Jira Create" });
+  }
   if (previewId(state.approved_snapshot) !== state.preview_id) {
     state.stage = "intent_blocked";
     return terminal(state, { target_create_status: "intent_blocked", allowed_next_step: "Approved Preview integrity mismatch" });
