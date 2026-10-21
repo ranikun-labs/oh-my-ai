@@ -5,6 +5,9 @@ import { spawnSync } from "node:child_process";
 import {
   CONTRACT_FIELDS,
   applyJiraCreateResult,
+  applyJiraIntentResult,
+  applyJiraReadResult,
+  applyJiraOriginResult,
   applyJiraPreviewApproval,
   applyJiraSearchResult,
   beginJiraTicketCreateWorkflow,
@@ -227,4 +230,154 @@ const issue = { key: "RPL-1", url: "https://jira.example/browse/RPL-1", project:
 const codexCreate = normalizeJiraRuntimeResult("codex", "create", { toolCallCount: 1, issue });
 const claudeCreate = normalizeJiraRuntimeResult("claude", "create", { calls: [{}], createdIssue: issue });
 assert.deepEqual(codexCreate, claudeCreate, "create results share Core semantic schema");
+
+/* Target Create is opt-in; these are local synthetic protocol fixtures only.
+ * No Jira calls, Admin changes, or G3 activation occur in this test. */
+const targetConfig = () => ({
+  mode: "single_supervised",
+  request_id: "g3-fixture-request-0001",
+  ledger_ref: "fixtures/target-ledger.json",
+  readiness: { reader: true, board: true, automation: true, rollback: true, ledger: true },
+  cutover: {
+    status: "approved", approval_ref: "fixture-only-owner-approval",
+    activation_ref: "fixture-only-g3-activation",
+    effective_from: "2030-01-01T00:00:00Z", effective_to: "2030-01-02T00:00:00Z",
+    request_time: "2030-01-01T12:00:00Z", rollback_ref: "fixture-only-rollback",
+  },
+  create_metadata: {
+    source: "live_jira_create_metadata", project: "RPL", issue_type: "Task", issue_type_id: "10010",
+    observed_at: "2030-01-01T11:55:00Z",
+    fields: {
+      customfield_10042: { required: false, hasDefaultValue: false },
+      customfield_10043: { required: false, hasDefaultValue: false },
+      customfield_10044: { required: false, hasDefaultValue: false },
+      customfield_10108: { required: true, allowedValues: [{ id: "10027", value: "dev-harness" }] },
+      customfield_10109: { required: true, allowedValues: [{ id: "10028", value: "backend" }] },
+      customfield_10110: { required: false, allowedValues: [{ id: "10038", value: "integration" }] },
+    },
+  },
+  selection: {
+    product: { id: "10027", value: "dev-harness" },
+    component: { id: "10028", value: "backend" },
+    concerns: [{ id: "10038", value: "integration" }],
+  },
+  supplemental_fields: { customfield_10015: "2030-01-01", duedate: "2030-01-02" },
+});
+const targetCapabilities = {
+  ...capabilities,
+  "jira.read": { available: true, connection_verified: true },
+  "jira.intent.persist": { available: true, connection_verified: true },
+  "jira.origin.persist": { available: true, connection_verified: true },
+};
+function startTarget(config = targetConfig(), caps = targetCapabilities) {
+  return beginJiraTicketCreateWorkflow({
+    runtime: "codex", contract, metadata: { ...metadata, target_create: config },
+    capabilities: caps, runtime_evidence: runtimeEvidence,
+  });
+}
+function approvedTarget() {
+  let s = startTarget();
+  assert.equal(s.required_action.type, "jira.search_required");
+  s = applyJiraSearchResult(s.state, searchNone);
+  assert.equal(s.required_action.type, "preview_required");
+  s = applyJiraPreviewApproval(s.state, { status: "approved", preview_id: s.state.preview_id });
+  assert.equal(s.required_action.type, "jira.intent_persist_required");
+  assert.equal(s.report.create_attempted, false);
+  return s;
+}
+function storedIntent(s) {
+  const t = s.state.approved_snapshot.target_create;
+  return applyJiraIntentResult(s.state, { status: "persisted", durable: true, tool_call_count: 1,
+    create_request_id: t.request_id, ledger_ref: t.ledger_ref });
+}
+function fakeIssueResult() {
+  return { kind: "created", tool_call_count: 1, key: "RPL-201",
+    url: "https://jira.example/browse/RPL-201", project: "RPL", summary: contract.Summary };
+}
+function verifiedTargetRead() {
+  return { tool_call_count: 1, key: "RPL-201", issue_type_id: "10010",
+    fields: {
+      customfield_10108: { id: "10027" }, customfield_10109: { id: "10028" },
+      customfield_10110: [{ id: "10038" }],
+    } };
+}
+let blockedTarget = startTarget({ ...targetConfig(), cutover: { ...targetConfig().cutover, status: "pending" } });
+assert.equal(blockedTarget.required_action, null);
+assert.equal(blockedTarget.report.create_attempted, false);
+blockedTarget = startTarget({ ...targetConfig(), selection: { ...targetConfig().selection,
+  product: { id: "99999", value: "dev-harness" } } });
+assert.equal(blockedTarget.required_action, null, "unknown Product option must stop before search");
+blockedTarget = startTarget({ ...targetConfig(), create_metadata: { ...targetConfig().create_metadata,
+  fields: { ...targetConfig().create_metadata.fields, customfield_10042: { required: true, hasDefaultValue: false } } } });
+assert.equal(blockedTarget.required_action, null, "Legacy Required must block Target Create");
+blockedTarget = startTarget(targetConfig(), capabilities);
+assert.equal(blockedTarget.required_action, null, "Target persistence capabilities must be verified");
+blockedTarget = startTarget({ ...targetConfig(), selection: { ...targetConfig().selection,
+  concerns: [targetConfig().selection.concerns[0], targetConfig().selection.concerns[0]] } });
+assert.equal(blockedTarget.required_action, null, "duplicate Concern IDs forbidden");
+console.log("passed: target-g3-eligibility-fails-closed");
+
+let tg = approvedTarget();
+const currentTargetApproval = tg.state.preview_id;
+tg.state.metadata.target_create.selection.product.id = "10020";
+let denied = applyJiraPreviewApproval(tg.state, { status: "approved", preview_id: currentTargetApproval });
+assert.equal(denied.required_action, null, "Target mutation must invalidate approval");
+tg = approvedTarget();
+const missingIntent = applyJiraIntentResult(tg.state, { status: "persisted", durable: false, tool_call_count: 1,
+  create_request_id: tg.state.approved_snapshot.target_create.request_id, ledger_ref: "fixtures/target-ledger.json" });
+assert.equal(missingIntent.required_action, null);
+assert.equal(missingIntent.report.create_attempted, false, "no Jira Create without durable Intent");
+console.log("passed: target-preview-and-intent-guards");
+
+tg = approvedTarget();
+tg = storedIntent(tg);
+assert.equal(tg.required_action.type, "jira.create_required");
+assert.deepEqual(tg.required_action.request.fields, {
+  customfield_10108: { id: "10027" }, customfield_10109: { id: "10028" },
+  customfield_10110: [{ id: "10038" }], customfield_10015: "2030-01-01", duedate: "2030-01-02",
+});
+assert.equal(tg.required_action.request.fields.customfield_10042, undefined);
+assert.equal(tg.required_action.request.fields.customfield_10043, undefined);
+assert.equal(tg.required_action.request.fields.customfield_10044, undefined);
+tg = applyJiraCreateResult(tg.state, fakeIssueResult());
+assert.equal(tg.required_action.type, "jira.read_required");
+assert.notEqual(tg.report.verification_status, "verified", "Create identity alone is not Target verification");
+tg = applyJiraReadResult(tg.state, verifiedTargetRead());
+assert.equal(tg.required_action.type, "jira.origin_persist_required");
+assert.equal(tg.report.verification_status, "not_verifiable");
+tg = applyJiraOriginResult(tg.state, { status: "persisted", durable: true, tool_call_count: 1,
+  issue_key: "RPL-201", create_request_id: targetConfig().request_id, ledger_ref: targetConfig().ledger_ref,
+  phase: "create_ready", read_authority: "target", write_authority: "target" });
+assert.equal(tg.required_action, null);
+assert.equal(tg.report.verification_status, "verified");
+assert.equal(tg.report.target_create_status, "create_ready");
+assert.equal(tg.report.read_authority, "target");
+console.log("passed: target-durable-intent-create-read-origin-success");
+
+tg = storedIntent(approvedTarget());
+tg = applyJiraCreateResult(tg.state, fakeIssueResult());
+let badRead = verifiedTargetRead();
+badRead.fields.customfield_10108.id = "10020";
+tg = applyJiraReadResult(tg.state, badRead);
+assert.equal(tg.required_action, null);
+assert.equal(tg.report.origin_status, "UNKNOWN_ORIGIN");
+assert.equal(tg.report.read_authority, "none");
+assert.equal(tg.report.write_authority, "frozen");
+assert.equal(tg.report.automatic_retry, false);
+tg = storedIntent(approvedTarget());
+tg = applyJiraCreateResult(tg.state, fakeIssueResult());
+tg = applyJiraReadResult(tg.state, verifiedTargetRead());
+tg = applyJiraOriginResult(tg.state, { status: "timeout", durable: false });
+assert.equal(tg.report.origin_status, "UNKNOWN_ORIGIN");
+assert.equal(tg.report.verification_status, "not_verifiable");
+console.log("passed: target-uncertain-result-quarantine-no-auto-retry");
+
+// The JSON/CLI semantic bridge must preserve intermediate Target stage identity.
+tg = approvedTarget();
+let roundTripped = invokeRuntime({ event: "intent_result", state: JSON.parse(JSON.stringify(tg.state)),
+  result: { status: "persisted", durable: true, tool_call_count: 1,
+    create_request_id: targetConfig().request_id, ledger_ref: targetConfig().ledger_ref } });
+assert.equal(roundTripped.required_action.type, "jira.create_required");
+console.log("passed: target-runtime-bridge-intent-event");
+
 console.log("jira-ticket runtime protocol fixtures passed");
