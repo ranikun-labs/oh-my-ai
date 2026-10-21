@@ -311,6 +311,10 @@ for task in \
   "요구사항과 인수 기준을 설명해줘. 구현하지 마." \
   "요구사항과 인수 기준을 정한 뒤 기능을 구현하려면 어떻게 해야 하나요?" \
   "요구사항과 인수 기준을 먼저 정리하고 구현은 하지 마." \
+  "요구사항과 인수 기준을 정리하고 결제 기능 구현해줘. 아니, 구현하지 마." \
+  "요구사항과 인수 기준을 정리해줘. 구현해줘 말고 설명만 해줘." \
+  "요구사항과 인수 기준을 정리하고 구현 안 해." \
+  "요구사항과 인수 기준을 정리하고 결제 기능 만들지 말고 설명만 해줘." \
   "Do not use spec-to-implementation; just answer my question."; do
   work_json="$(run_work_start_consumer "$real_index" "$task")"
   prompt_json="$(run_prompt_consumer "$real_index" "$task")"

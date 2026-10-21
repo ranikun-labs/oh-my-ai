@@ -25,7 +25,7 @@ metadata:
         values:
           - ^(?![\s\S]*\b(?:do\s+not|don't|never)\s+use\s+spec-to-implementation\b)[\s\S]*\bspec-to-implementation\b[\s\S]*$
           - ^(?!\s*(?:what|why|how|explain|tell\s+me|can\s+you\s+(?:explain|tell|walk\s+me\s+through)|could\s+you\s+(?:explain|tell|walk\s+me\s+through)|i\s+(?:wonder|am\s+curious))\b)(?![\s\S]*\b(?:do\s+not|don't|never)\s+(?:build|implement|develop|create|add|design|plan)\b)(?=[\s\S]*\b(?:build|implement|develop|create|add|design|plan)\b)(?=[\s\S]*\b(?:requirements\s+and\s+acceptance\s+criteria|acceptance\s+criteria\s+and\s+requirements)\b)[\s\S]{1,2000}$
-          - ^(?=[\s\S]*요구사항\s*과\s*인수\s*기준)(?=[\s\S]*(?:구현|개발|추가|설계)(?:해\s*줘|해\s*주세요|해줄래|하자|해봐)|만들(?:어\s*줘|어\s*주세요|어줄래|자|어봐))[\s\S]{1,2000}$
+          - ^(?![\s\S]*(?:(?:구현|개발|추가|설계)(?:은|는|이|가|을|를)?\s*(?:하지\s*(?:마|말|않)|안\s*(?:해|하고|할|합니다))|만들(?:지\s*(?:마|말|않)|(?:기는|은|는|을|를)?\s*(?:하지\s*(?:마|말|않)|안\s*(?:해|하고|할|합니다)))|(?:구현|개발|추가|설계)(?:해\s*줘|해\s*주세요|해줄래|하자|해봐)\s*말고|만들(?:어\s*줘|어\s*주세요|어줄래|자|어봐)\s*말고))(?=[\s\S]*요구사항\s*과\s*인수\s*기준)(?=[\s\S]*(?:구현|개발|추가|설계)(?:해\s*줘|해\s*주세요|해줄래|하자|해봐)|만들(?:어\s*줘|어\s*주세요|어줄래|자|어봐))[\s\S]{1,2000}$
     keywords:
       ko:
         - 요구사항
