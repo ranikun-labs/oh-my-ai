@@ -288,7 +288,8 @@ function approvedTarget() {
 function storedIntent(s) {
   const t = s.state.approved_snapshot.target_create;
   return applyJiraIntentResult(s.state, { status: "persisted", durable: true, tool_call_count: 1,
-    create_request_id: t.request_id, ledger_ref: t.ledger_ref });
+    create_request_id: t.request_id, ledger_ref: t.ledger_ref,
+    approved_preview_id: s.state.preview_id, activation_ref: t.cutover.activation_ref });
 }
 function fakeIssueResult() {
   return { kind: "created", tool_call_count: 1, key: "RPL-201",
@@ -315,6 +316,10 @@ assert.equal(blockedTarget.required_action, null, "Target persistence capabiliti
 blockedTarget = startTarget({ ...targetConfig(), selection: { ...targetConfig().selection,
   concerns: [targetConfig().selection.concerns[0], targetConfig().selection.concerns[0]] } });
 assert.equal(blockedTarget.required_action, null, "duplicate Concern IDs forbidden");
+let metadataChanged = startTarget();
+metadataChanged.state.metadata.target_create.selection.product.id = "99999";
+metadataChanged = applyJiraSearchResult(metadataChanged.state, searchNone);
+assert.equal(metadataChanged.required_action, null, "Target metadata changed between Search stages");
 console.log("passed: target-g3-eligibility-fails-closed");
 
 let tg = approvedTarget();
@@ -347,7 +352,9 @@ assert.equal(tg.required_action.type, "jira.origin_persist_required");
 assert.equal(tg.report.verification_status, "not_verifiable");
 tg = applyJiraOriginResult(tg.state, { status: "persisted", durable: true, tool_call_count: 1,
   issue_key: "RPL-201", create_request_id: targetConfig().request_id, ledger_ref: targetConfig().ledger_ref,
-  phase: "create_ready", read_authority: "target", write_authority: "target" });
+  phase: "create_ready", read_authority: "target", write_authority: "target",
+  cutover_approval_ref: targetConfig().cutover.approval_ref,
+  create_activation_ref: targetConfig().cutover.activation_ref });
 assert.equal(tg.required_action, null);
 assert.equal(tg.report.verification_status, "verified");
 assert.equal(tg.report.target_create_status, "create_ready");
@@ -376,7 +383,9 @@ console.log("passed: target-uncertain-result-quarantine-no-auto-retry");
 tg = approvedTarget();
 let roundTripped = invokeRuntime({ event: "intent_result", state: JSON.parse(JSON.stringify(tg.state)),
   result: { status: "persisted", durable: true, tool_call_count: 1,
-    create_request_id: targetConfig().request_id, ledger_ref: targetConfig().ledger_ref } });
+    create_request_id: targetConfig().request_id, ledger_ref: targetConfig().ledger_ref,
+    approved_preview_id: tg.state.preview_id,
+    activation_ref: targetConfig().cutover.activation_ref } });
 assert.equal(roundTripped.required_action.type, "jira.create_required");
 console.log("passed: target-runtime-bridge-intent-event");
 tg = approvedTarget();
@@ -388,6 +397,11 @@ assert.equal(failedIntent.required_action, null);
 let repeatedIntent = applyJiraIntentResult(failedIntent.state, { status: "persisted", durable: true, tool_call_count: 1,
   create_request_id: targetConfig().request_id, ledger_ref: targetConfig().ledger_ref });
 assert.equal(repeatedIntent.required_action, null, "blocked Intent cannot resume to Create");
+tg = approvedTarget();
+let mismatchedReceipt = applyJiraIntentResult(tg.state, { status: "persisted", durable: true, tool_call_count: 1,
+  create_request_id: targetConfig().request_id, ledger_ref: targetConfig().ledger_ref,
+  approved_preview_id: "unapproved-preview", activation_ref: targetConfig().cutover.activation_ref });
+assert.equal(mismatchedReceipt.required_action, null, "Intent must match approved Preview SHA");
 console.log("passed: target-replayed-approval-and-intent-blocked");
 
 
