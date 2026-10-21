@@ -287,7 +287,8 @@ echo "passed: FX-RT-055 bare explicit skill name"
 for task in \
   "Design a payment platform.
 Write the requirements and acceptance criteria before coding." \
-  "Implement the billing module after reviewing the acceptance criteria and requirements."; do
+  "Implement the billing module after reviewing the acceptance criteria and requirements." \
+  "요구사항과 인수 기준을 정리한 뒤 결제 기능을 구현해줘."; do
   work_json="$(run_work_start_consumer "$real_index" "$task")"
   prompt_json="$(run_prompt_consumer "$real_index" "$task")"
   for json in "$work_json" "$prompt_json"; do
@@ -308,6 +309,8 @@ for task in \
   "Could you walk me through how to build a module with requirements and acceptance criteria?" \
   "요구사항과 인수 기준이 뭐야?" \
   "요구사항과 인수 기준을 설명해줘. 구현하지 마." \
+  "요구사항과 인수 기준을 정한 뒤 기능을 구현하려면 어떻게 해야 하나요?" \
+  "요구사항과 인수 기준을 먼저 정리하고 구현은 하지 마." \
   "Do not use spec-to-implementation; just answer my question."; do
   work_json="$(run_work_start_consumer "$real_index" "$task")"
   prompt_json="$(run_prompt_consumer "$real_index" "$task")"
