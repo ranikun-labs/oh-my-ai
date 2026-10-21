@@ -261,6 +261,13 @@ export function beginJiraTicketCreateWorkflow(input) {
 
 /** Accepts a runtime-normalized result after exactly one Jira search tool call. */
 export function applyJiraSearchResult(state, search) {
+  if (state.target_mode) {
+    const problem = targetCreateError(state.metadata?.target_create, state.metadata);
+    if (problem) return terminal(state, {
+      approval_status: "blocked", target_create_status: "blocked",
+      allowed_next_step: "Target metadata changed after Search: " + problem,
+    });
+  }
   if (search?.tool_call_count !== 1) return terminal(state, {
     search_result: "unclear", duplicate_status: "unknown", allowed_next_step: "Resolve Jira search evidence before creating an Issue",
   });
@@ -294,6 +301,9 @@ export function applyJiraSearchResult(state, search) {
 
 /** Approval is valid only for the exact canonical Preview emitted above. */
 export function applyJiraPreviewApproval(state, approval) {
+  if (state.target_mode && targetCreateError(state.metadata?.target_create, state.metadata))
+    return terminal(state, { approval_status: "blocked", target_create_status: "blocked",
+      allowed_next_step: "Revalidate live Target metadata before Preview approval" });
   if (state.target_mode && state.stage) return terminal(state, {
     approval_status: "blocked", allowed_next_step: "Duplicate Target approval stage; no additional Create allowed",
   });
@@ -378,7 +388,9 @@ export function applyJiraIntentResult(state, result) {
   }
   const t = state.approved_snapshot.target_create;
   if (result?.status !== "persisted" || result?.durable !== true || result?.tool_call_count !== 1
-    || result?.create_request_id !== t.request_id || result?.ledger_ref !== t.ledger_ref) {
+    || result?.create_request_id !== t.request_id || result?.ledger_ref !== t.ledger_ref
+    || result?.approved_preview_id !== state.preview_id
+    || result?.activation_ref !== t.cutover.activation_ref) {
     state.stage = "intent_blocked";
     return terminal(state, { target_create_status: "intent_blocked",
       allowed_next_step: "Durable pre-Create Intent not verified; Create forbidden" });
@@ -424,6 +436,8 @@ export function applyJiraOriginResult(state, result) {
   if (result?.tool_call_count !== 1 || result?.status !== "persisted" || result?.durable !== true
     || result?.issue_key !== state.created_issue.key || result?.create_request_id !== t.request_id
     || result?.ledger_ref !== t.ledger_ref || result?.phase !== "create_ready"
+    || result?.cutover_approval_ref !== t.cutover.approval_ref
+    || result?.create_activation_ref !== t.cutover.activation_ref
     || result?.read_authority !== "target" || result?.write_authority !== "target")
     return targetQuarantine(state, "Durable Target Origin registration failed");
   state.stage = "completed";
