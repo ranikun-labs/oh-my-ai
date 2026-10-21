@@ -346,6 +346,10 @@ export function applyJiraPreviewApproval(state, approval) {
 /** Validates a runtime-normalized Create result without constructing a Jira URL or Key. */
 export function applyJiraCreateResult(state, created) {
   state.report.create_attempted = true;
+  // A Jira Create result may already represent a real mutation. Until both GET
+  // and durable Origin registration pass it is never safe to report 0 writes.
+  const targetExpected = Boolean(state?.approved_snapshot?.target_create || state?.metadata?.target_create || state?.preview?.target_create);
+  if (targetExpected) state.report.mutation_status = "possibly_applied";
   state.report.create_call_count = created?.tool_call_count ?? 0;
   state.report.actual_issue_key = created?.key ?? null;
   state.report.actual_issue_url = created?.url ?? null;
@@ -356,6 +360,8 @@ export function applyJiraCreateResult(state, created) {
   const verified = created?.kind === "created" && created?.tool_call_count === 1 && keyValid
     && created.project === "RPL" && created.summary === state.approved_snapshot?.contract?.Summary
     && issueUrlMatches(created.url, state.runtime_evidence.jira_site_origin, created.key);
+  if (targetExpected && state.target_mode !== true)
+    return targetQuarantine(state, "Target classification stage flag tampered");
   if (state.target_mode) {
     if (state.stage !== "await_create" || previewId(state.approved_snapshot) !== state.preview_id)
       return targetQuarantine(state, "Create result outside approved Intent or immutable Preview stage");
@@ -390,7 +396,8 @@ export function applyJiraIntentResult(state, result) {
   if (result?.status !== "persisted" || result?.durable !== true || result?.tool_call_count !== 1
     || result?.create_request_id !== t.request_id || result?.ledger_ref !== t.ledger_ref
     || result?.approved_preview_id !== state.preview_id
-    || result?.activation_ref !== t.cutover.activation_ref) {
+    || result?.activation_ref !== t.cutover.activation_ref
+    || result?.created_new !== true || result?.prior_issue_key != null) {
     state.stage = "intent_blocked";
     return terminal(state, { target_create_status: "intent_blocked",
       allowed_next_step: "Durable pre-Create Intent not verified; Create forbidden" });
@@ -438,6 +445,7 @@ export function applyJiraOriginResult(state, result) {
     || result?.ledger_ref !== t.ledger_ref || result?.phase !== "create_ready"
     || result?.cutover_approval_ref !== t.cutover.approval_ref
     || result?.create_activation_ref !== t.cutover.activation_ref
+    || result?.origin !== "target_create"
     || result?.read_authority !== "target" || result?.write_authority !== "target")
     return targetQuarantine(state, "Durable Target Origin registration failed");
   state.stage = "completed";
