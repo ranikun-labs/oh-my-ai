@@ -18,14 +18,14 @@ metadata:
           - define_acceptance_criteria_before_implementation
       - kind: keyword
         values:
-          - spec-to-implementation
           - 추상 요구
           - 명세부터 구현
           - 승인된 명세
-          - 요구사항과 인수 기준
       - kind: pattern
         values:
+          - ^(?![\s\S]*\b(?:do\s+not|don't|never)\s+use\s+spec-to-implementation\b)[\s\S]*\bspec-to-implementation\b[\s\S]*$
           - ^(?!\s*(?:what|why|how|explain|tell\s+me|can\s+you\s+(?:explain|tell|walk\s+me\s+through)|could\s+you\s+(?:explain|tell|walk\s+me\s+through)|i\s+(?:wonder|am\s+curious))\b)(?![\s\S]*\b(?:do\s+not|don't|never)\s+(?:build|implement|develop|create|add|design|plan)\b)(?=[\s\S]*\b(?:build|implement|develop|create|add|design|plan)\b)(?=[\s\S]*\b(?:requirements\s+and\s+acceptance\s+criteria|acceptance\s+criteria\s+and\s+requirements)\b)[\s\S]{1,2000}$
+          - ^(?![\s\S]*(?:구현|만들|개발|추가|설계)(?:하지\s*(?:마|말)|하지\s*않|말고))(?=[\s\S]*(?:구현|만들|개발|추가|설계))(?=[\s\S]*요구사항\s*과\s*인수\s*기준)[\s\S]{1,2000}$
     keywords:
       ko:
         - 요구사항

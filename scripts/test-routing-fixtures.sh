@@ -267,6 +267,20 @@ for task in "What are the approaches for monitoring retries across several servi
 done
 echo "passed: FX-RT-052 no false-positive on cross-service / concept question"
 
+explicit_skill_name="spec-to-implementation"
+work_json="$(run_work_start_consumer "$real_index" "$explicit_skill_name")"
+prompt_json="$(run_prompt_consumer "$real_index" "$explicit_skill_name")"
+for json in "$work_json" "$prompt_json"; do
+  assert_field "FX-RT-055/explicit-skill-name" "$json" routing_status matched
+  assert_field "FX-RT-055/explicit-skill-name" "$json" skill_candidates 1
+  printf '%s' "$json" | node -e '
+    const d = JSON.parse(require("fs").readFileSync(0, "utf8"));
+    if (d.skill_candidates?.[0]?.name !== "spec-to-implementation") process.exit(1);
+  ' || fail "FX-RT-055: expected explicit spec-to-implementation candidate"
+done
+assert_consumer_parity "FX-RT-055" "$real_index" "$explicit_skill_name"
+echo "passed: FX-RT-055 bare explicit skill name"
+
 
 # Multi-line requirements, reversed phrasing, explicit no-implementation and
 # explanatory requests test recommendation only, never Skill execution/consent.
@@ -291,7 +305,10 @@ echo "passed: FX-RT-053 multiline-and-order-reversal"
 for task in \
   "Please do not implement a billing system; instead explain requirements and acceptance criteria." \
   "Do not build a billing system. Write the requirements and acceptance criteria?" \
-  "Could you walk me through how to build a module with requirements and acceptance criteria?"; do
+  "Could you walk me through how to build a module with requirements and acceptance criteria?" \
+  "요구사항과 인수 기준이 뭐야?" \
+  "요구사항과 인수 기준을 설명해줘. 구현하지 마." \
+  "Do not use spec-to-implementation; just answer my question."; do
   work_json="$(run_work_start_consumer "$real_index" "$task")"
   prompt_json="$(run_prompt_consumer "$real_index" "$task")"
   for json in "$work_json" "$prompt_json"; do
