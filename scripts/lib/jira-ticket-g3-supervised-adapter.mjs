@@ -17,6 +17,18 @@ export function createG3SupervisedAdapter({ jira, ledger, verifyGate, siteOrigin
   let active = null;
   let createStarted = false;
   let readConfirmed = false;
+  const typeId = { Task: "10010", Epic: "10007", Feature: "10009",
+    Bug: "10012", Research: "10013" };
+  function sameTargets(expected, fields) {
+    if (!fields || !Object.hasOwn(fields, "customfield_10110")
+      || (fields.customfield_10110 !== null && !Array.isArray(fields.customfield_10110))
+      || fields.customfield_10108?.id !== expected.customfield_10108?.id
+      || fields.customfield_10109?.id !== expected.customfield_10109?.id) return false;
+    const ids = values => values.map(v => v?.id).sort();
+    const concerns = fields.customfield_10110 ?? [];
+    return concerns.every(v => typeof v?.id === "string")
+      && JSON.stringify(ids(concerns)) === JSON.stringify(ids(expected.customfield_10110 ?? []));
+  }
 
   async function gate(stage, context) {
     const proof = await verifyGate({ stage, context });
@@ -40,7 +52,8 @@ export function createG3SupervisedAdapter({ jira, ledger, verifyGate, siteOrigin
       await gate("intent", request);
       const receipt = await ledger.persistIntent(request);
       if (receipt.status === "persisted" && receipt.created_new === true)
-        active = { id: request.create_request_id, activation: request.activation_ref };
+        active = { id: request.create_request_id, activation: request.activation_ref,
+          issueType: request.issue_type, expectedFields: request.fields };
       return { ...receipt, tool_call_count: 1 };
     },
     async create(request) {
@@ -48,10 +61,15 @@ export function createG3SupervisedAdapter({ jira, ledger, verifyGate, siteOrigin
       await gate("create", { request, create_request_id: active.id, activation_ref: active.activation });
       createStarted = true; // ambiguity on failure permanently prevents retry in this instance
       const result = await jira.create(request);
+      let identityValid = false;
+      try {
+        const u = new URL(result?.url);
+        identityValid = u.origin === siteOrigin && u.pathname === "/browse/" + result?.key;
+      } catch { /* invalid/partial response */ }
       if (result?.kind !== "created" || result?.tool_call_count !== 1
         || !/^RPL-[1-9][0-9]*$/.test(result?.key ?? "")
-        || typeof result?.url !== "string")
-        throw new Error("ambiguous Jira Create; do not automatically retry");
+        || result.project !== "RPL" || result.summary !== request.summary || !identityValid)
+        throw new Error("ambiguous Jira Create identity; do not automatically retry");
       // Link the returned IssueKey to a durable Intent *before* post-Create GET.
       // If linking fails, Core quarantines rather than pretending nothing was created.
       await ledger.linkIssue(active.id, result);
@@ -62,9 +80,11 @@ export function createG3SupervisedAdapter({ jira, ledger, verifyGate, siteOrigin
         throw new Error("post-Create Jira GET without Intent");
       await gate("read", { ...request, create_request_id: active.id });
       const result = await jira.read(request);
-      if (result?.tool_call_count !== 1 || result?.key !== request.key || !result?.fields)
-        throw new Error("unverifiable Jira GET");
-      readConfirmed = true; // Core separately validates every approved Target value
+      if (result?.tool_call_count !== 1 || result?.key !== request.key
+        || result?.issue_type_id !== typeId[active.issueType]
+        || !sameTargets(active.expectedFields, result?.fields))
+        throw new Error("Jira GET is inconsistent with the durable approved Intent");
+      readConfirmed = true; // Core independently checks the same saved Target values
       return result;
     },
     async persistOrigin(request) {
