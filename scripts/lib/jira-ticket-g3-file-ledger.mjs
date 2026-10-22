@@ -146,7 +146,7 @@ export function createG3FileLedger({ root, ledgerRef }) {
         return { origin: "UNKNOWN_ORIGIN", read_authority: "none",
           write_authority: "frozen", phase: "create_quarantined" };
       return { origin: "target_create", phase: "create_ready",
-        read_authority: "target", write_authority: "target",
+        read_authority: "target", write_authority: "target", issue_type: pending.issue_type,
         product: origin.verified_fields?.customfield_10108 ?? null,
         component: origin.verified_fields?.customfield_10109 ?? null,
         concern: origin.verified_fields?.customfield_10110 ?? [] };
