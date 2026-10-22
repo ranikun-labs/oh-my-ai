@@ -78,5 +78,33 @@ export function createG3SupervisedAdapter({ jira, ledger, verifyGate, siteOrigin
       await gate("authority_read", { issue_key: issueKey });
       return ledger.readClassificationAuthority(issueKey);
     },
+    async readVerifiedClassification(issueKey) {
+      await gate("authority_read", { issue_key: issueKey });
+      const authority = await ledger.readClassificationAuthority(issueKey);
+      if (authority.read_authority !== "target") return authority;
+      const typeIds = { Task: "10010", Epic: "10007", Feature: "10009",
+        Bug: "10012", Research: "10013" };
+      const expectedType = typeIds[authority.issue_type];
+      const fail = { origin: "UNKNOWN_ORIGIN", phase: "create_quarantined",
+        read_authority: "none", write_authority: "frozen" };
+      if (!expectedType) return fail;
+      let current;
+      try { current = await jira.read({ key: issueKey,
+        fields: ["issuetype", "customfield_10108", "customfield_10109", "customfield_10110"] }); }
+      catch { return fail; }
+      const fields = current?.fields, concern = fields?.customfield_10110;
+      if (!fields || !Object.hasOwn(fields, "customfield_10110")
+        || (concern !== null && !Array.isArray(concern))
+        || current?.key !== issueKey || current?.tool_call_count !== 1
+        || current?.issue_type_id !== expectedType
+        || fields.customfield_10108?.id !== authority.product?.id
+        || fields.customfield_10109?.id !== authority.component?.id)
+        return fail;
+      const ids = values => values.map(x => x?.id).sort();
+      const actual = concern ?? [], expected = authority.concern;
+      if (!Array.isArray(expected) || actual.some(x => typeof x?.id !== "string")
+        || JSON.stringify(ids(actual)) !== JSON.stringify(ids(expected))) return fail;
+      return { ...authority, source: "jira_get_and_durable_origin" };
+    },
   };
 }
