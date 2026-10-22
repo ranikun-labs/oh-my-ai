@@ -17,6 +17,8 @@ export function createG3SupervisedAdapter({ jira, ledger, verifyGate, siteOrigin
   let active = null;
   let createStarted = false;
   let readConfirmed = false;
+  let createdKey = null;
+  let verifiedReadFields = null;
   const typeId = { Task: "10010", Epic: "10007", Feature: "10009",
     Bug: "10012", Research: "10013" };
   function sameTargets(expected, fields) {
@@ -34,6 +36,36 @@ export function createG3SupervisedAdapter({ jira, ledger, verifyGate, siteOrigin
     const proof = await verifyGate({ stage, context });
     if (proof?.allowed !== true || typeof proof?.evidence_ref !== "string"
       || !proof.evidence_ref.trim()) throw new Error("G3 trusted external authorization missing: " + stage);
+  }
+  // Both public Reader entry points enforce Jira GET parity; raw Ledger reads
+  // are available only through the injected Ledger for privileged diagnostics.
+  async function readVerifiedClassificationInternal(issueKey) {
+    await gate("authority_read", { issue_key: issueKey });
+    const authority = await ledger.readClassificationAuthority(issueKey);
+    if (authority.read_authority !== "target") return authority;
+    const typeIds = { Task: "10010", Epic: "10007", Feature: "10009",
+      Bug: "10012", Research: "10013" };
+    const expectedType = typeIds[authority.issue_type];
+    const fail = { origin: "UNKNOWN_ORIGIN", phase: "create_quarantined",
+      read_authority: "none", write_authority: "frozen" };
+    if (!expectedType) return fail;
+    let current;
+    try { current = await jira.read({ key: issueKey,
+      fields: ["issuetype", "customfield_10108", "customfield_10109", "customfield_10110"] }); }
+    catch { return fail; }
+    const fields = current?.fields, concern = fields?.customfield_10110;
+    if (!fields || !Object.hasOwn(fields, "customfield_10110")
+      || (concern !== null && !Array.isArray(concern))
+      || current?.key !== issueKey || current?.tool_call_count !== 1
+      || current?.issue_type_id !== expectedType
+      || fields.customfield_10108?.id !== authority.product?.id
+      || fields.customfield_10109?.id !== authority.component?.id)
+      return fail;
+    const ids = values => values.map(x => x?.id).sort();
+    const actual = concern ?? [], expected = authority.concern;
+    if (!Array.isArray(expected) || actual.some(x => typeof x?.id !== "string")
+      || JSON.stringify(ids(actual)) !== JSON.stringify(ids(expected))) return fail;
+    return { ...authority, source: "jira_get_and_durable_origin" };
   }
   return {
     runtime,
@@ -73,6 +105,7 @@ export function createG3SupervisedAdapter({ jira, ledger, verifyGate, siteOrigin
       // Link the returned IssueKey to a durable Intent *before* post-Create GET.
       // If linking fails, Core quarantines rather than pretending nothing was created.
       await ledger.linkIssue(active.id, result);
+      createdKey = result.key;
       return result;
     },
     async read(request) {
@@ -81,50 +114,28 @@ export function createG3SupervisedAdapter({ jira, ledger, verifyGate, siteOrigin
       await gate("read", { ...request, create_request_id: active.id });
       const result = await jira.read(request);
       if (result?.tool_call_count !== 1 || result?.key !== request.key
-        || result?.issue_type_id !== typeId[active.issueType]
+        || result?.key !== createdKey || result?.issue_type_id !== typeId[active.issueType]
         || !sameTargets(active.expectedFields, result?.fields))
         throw new Error("Jira GET is inconsistent with the durable approved Intent");
+      // A successful GET is tied to exactly the Issue created by this Adapter.
+      verifiedReadFields = structuredClone(result.fields);
       readConfirmed = true; // Core independently checks the same saved Target values
       return result;
     },
     async persistOrigin(request) {
-      if (!active || !createStarted || !readConfirmed || request?.create_request_id !== active.id)
-        throw new Error("Origin without linked Intent, Create and GET");
+      if (!active || !createStarted || !readConfirmed
+        || request?.create_request_id !== active.id || request?.issue_key !== createdKey
+        || !sameTargets(verifiedReadFields, request?.verified_fields))
+        throw new Error("Origin without same-Issue, verified GET Target values and Intent");
       await gate("origin", request);
       const receipt = await ledger.persistOrigin(request);
       return { ...receipt, tool_call_count: 1 };
     },
     async readClassificationAuthority(issueKey) {
-      await gate("authority_read", { issue_key: issueKey });
-      return ledger.readClassificationAuthority(issueKey);
+      return readVerifiedClassificationInternal(issueKey);
     },
     async readVerifiedClassification(issueKey) {
-      await gate("authority_read", { issue_key: issueKey });
-      const authority = await ledger.readClassificationAuthority(issueKey);
-      if (authority.read_authority !== "target") return authority;
-      const typeIds = { Task: "10010", Epic: "10007", Feature: "10009",
-        Bug: "10012", Research: "10013" };
-      const expectedType = typeIds[authority.issue_type];
-      const fail = { origin: "UNKNOWN_ORIGIN", phase: "create_quarantined",
-        read_authority: "none", write_authority: "frozen" };
-      if (!expectedType) return fail;
-      let current;
-      try { current = await jira.read({ key: issueKey,
-        fields: ["issuetype", "customfield_10108", "customfield_10109", "customfield_10110"] }); }
-      catch { return fail; }
-      const fields = current?.fields, concern = fields?.customfield_10110;
-      if (!fields || !Object.hasOwn(fields, "customfield_10110")
-        || (concern !== null && !Array.isArray(concern))
-        || current?.key !== issueKey || current?.tool_call_count !== 1
-        || current?.issue_type_id !== expectedType
-        || fields.customfield_10108?.id !== authority.product?.id
-        || fields.customfield_10109?.id !== authority.component?.id)
-        return fail;
-      const ids = values => values.map(x => x?.id).sort();
-      const actual = concern ?? [], expected = authority.concern;
-      if (!Array.isArray(expected) || actual.some(x => typeof x?.id !== "string")
-        || JSON.stringify(ids(actual)) !== JSON.stringify(ids(expected))) return fail;
-      return { ...authority, source: "jira_get_and_durable_origin" };
+      return readVerifiedClassificationInternal(issueKey);
     },
   };
 }
