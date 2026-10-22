@@ -79,10 +79,10 @@ function targetSnapshotFields(snapshot) {
 
 function legacyFields(value) {
   if (!isRecord(value)) return null;
-  const product = optionId(value[LEGACY_FIELDS.product]);
-  const component = optionId(value[LEGACY_FIELDS.component]);
+  const product = optionIds(value[LEGACY_FIELDS.product]);
+  const component = optionIds(value[LEGACY_FIELDS.component]);
   const labels = optionIds(value[LEGACY_FIELDS.labels], { nullable: true });
-  if (!product || !component || labels === null) return null;
+  if (product === null || component === null || labels === null) return null;
   return { product, component, labels };
 }
 
@@ -113,8 +113,8 @@ function parseLegacyProof(value, issueKey) {
     const fromManifest = legacyFields(manifest.fields);
     const fromHistory = legacyFields(history.fields);
     if (!fromManifest || !fromHistory
-      || fromManifest.product !== fromHistory.product
-      || fromManifest.component !== fromHistory.component
+      || !sameArray(fromManifest.product, fromHistory.product)
+      || !sameArray(fromManifest.component, fromHistory.component)
       || !sameArray(fromManifest.labels, fromHistory.labels)) return null;
     return {
       kind: "legacy_retained", issue_type: manifest.issue_type,
@@ -155,23 +155,26 @@ function parseNotLegacy(value, issueKey) {
 function validateTargetResult(value, issueKey, migrationProof) {
   try {
     if (!isRecord(value) || value.read_authority !== "target"
-      || value.write_authority !== "target" || value.phase !== "create_ready"
+      || value.write_authority !== "target"
       || value.source !== "jira_get_and_durable_origin"
       || (value.issue_key !== undefined && value.issue_key !== issueKey)
       || (value.key !== undefined && value.key !== issueKey)
       || !Object.hasOwn(TYPE_IDS, value.issue_type)) return null;
+    const phase = value.origin === "target_create" ? "create_ready"
+      : value.origin === "legacy_migration" ? "cutover" : null;
+    if (phase === null || value.phase !== phase) return null;
     if (value.issue_type_id !== undefined && value.issue_type_id !== TYPE_IDS[value.issue_type]) return null;
     const fields = readTargetFields(value);
     if (!fields) return null;
     if (value.origin === "target_create") {
-      return { origin: "target_create", fields, issue_type: value.issue_type };
+      return { origin: "target_create", phase, fields, issue_type: value.issue_type };
     }
     if (value.origin !== "legacy_migration" || migrationProof?.kind !== "migrated_target"
       || value.issue_type !== migrationProof.issue_type
       || fields.product !== migrationProof.fields.product
       || fields.component !== migrationProof.fields.component
       || !sameArray(fields.concern, migrationProof.fields.concern)) return null;
-    return { origin: "legacy_migration", fields, issue_type: value.issue_type };
+    return { origin: "legacy_migration", phase, fields, issue_type: value.issue_type };
   } catch {
     return null;
   }
@@ -182,7 +185,7 @@ function targetProjection(issueKey, target, migrationProof) {
     status: "classified",
     issue_key: issueKey,
     origin: target.origin,
-    phase: "create_ready",
+    phase: target.phase,
     read_authority: "target",
     write_authority: "target",
     issue_type: target.issue_type,
@@ -211,8 +214,8 @@ function legacyProjection(issueKey, proof) {
     classification: {
       authority: "legacy",
       fields: {
-        [LEGACY_FIELDS.product]: { id: proof.fields.product },
-        [LEGACY_FIELDS.component]: { id: proof.fields.component },
+        [LEGACY_FIELDS.product]: proof.fields.product.map(id => ({ id })),
+        [LEGACY_FIELDS.component]: proof.fields.component.map(id => ({ id })),
         [LEGACY_FIELDS.labels]: proof.fields.labels.map(id => ({ id })),
       },
     },
@@ -238,8 +241,8 @@ export function createG3AuthorityReader({ targetReader, resolveLegacyEvidence, j
         && current?.issue_type_id === proof.issue_type_id
         && (current?.issue_type === undefined || current.issue_type === proof.issue_type)
         && actual !== null
-        && actual.product === proof.fields.product
-        && actual.component === proof.fields.component
+        && sameArray(actual.product, proof.fields.product)
+        && sameArray(actual.component, proof.fields.component)
         && sameArray(actual.labels, proof.fields.labels);
     } catch {
       return false;

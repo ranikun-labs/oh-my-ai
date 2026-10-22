@@ -4,8 +4,8 @@ import { createG3AuthorityReader } from "./lib/jira-ticket-g3-authority-reader.m
 
 const TYPE_ID = "10010";
 const legacyFields = {
-  customfield_10042: { id: "legacy-product-1" },
-  customfield_10043: { id: "legacy-component-2" },
+  customfield_10042: [{ id: "legacy-product-1" }, { id: "legacy-product-4" }],
+  customfield_10043: [{ id: "legacy-component-2" }, { id: "legacy-component-5" }],
   customfield_10044: [{ id: "legacy-label-3" }],
 };
 const targetFields = {
@@ -67,8 +67,11 @@ function targetResult(overrides = {}) {
 
 function legacyGet(issueKey, { fields = legacyFields, key = issueKey, typeId = TYPE_ID,
   type = "Task", calls = 1 } = {}) {
+  const currentFields = structuredClone(fields);
+  for (const field of ["customfield_10042", "customfield_10043"])
+    if (Array.isArray(currentFields[field])) currentFields[field].reverse();
   return { key, issue_type_id: typeId, issue_type: type, tool_call_count: calls,
-    fields: structuredClone(fields) };
+    fields: currentFields };
 }
 
 function dependencies({ evidenceFor, targetFor, jiraFor, calls = {} } = {}) {
@@ -106,6 +109,10 @@ assert.throws(() => createG3AuthorityReader({}), /requires a supervised Target r
   assert.equal(result.write_authority, "frozen");
   assert.equal(result.phase, "migration_staged");
   assert.equal(result.classification.authority, "legacy");
+  assert.deepEqual(result.classification.fields.customfield_10042,
+    [{ id: "legacy-product-1" }, { id: "legacy-product-4" }]);
+  assert.deepEqual(result.classification.fields.customfield_10043,
+    [{ id: "legacy-component-2" }, { id: "legacy-component-5" }]);
   assert.deepEqual(result.legacy_evidence.jira_get_parity, "verified");
   assert.deepEqual(d.calls.lastJiraFields, ["issuetype", "customfield_10042",
     "customfield_10043", "customfield_10044"]);
@@ -161,7 +168,7 @@ console.log("PASS: Jira GET key mismatch quarantines Legacy classification");
 
 for (const [name, mutate] of [
   ["type", evidence => { evidence.history.issue_type = "Bug"; evidence.history.issue_type_id = "10012"; }],
-  ["manifest option", evidence => { evidence.history.fields.customfield_10042.id = "other-product"; }],
+  ["manifest option", evidence => { evidence.history.fields.customfield_10042[1].id = "other-product"; }],
   ["missing source proof", evidence => { delete evidence.migration.evidence_ref; }],
   ["migration state", evidence => { evidence.migration.state = "unknown"; }],
 ]) {
@@ -180,9 +187,9 @@ console.log("PASS: mismatched type/options, missing source metadata, and invalid
 for (const [name, jiraOptions] of [
   ["type id", { typeId: "10012" }],
   ["option id", { fields: { ...legacyFields,
-    customfield_10042: { id: "different-product" } } }],
-  ["duplicate option", { fields: { ...legacyFields,
-    customfield_10044: [{ id: "duplicate" }, { id: "duplicate" }] } }],
+    customfield_10042: [{ id: "legacy-product-1" }, { id: "different-product" }] } }],
+  ["duplicate multiselect option", { fields: { ...legacyFields,
+    customfield_10043: [{ id: "duplicate" }, { id: "duplicate" }] } }],
 ]) {
   const d = dependencies({ evidenceFor: key => legacyEvidence(key), targetFor: () => null,
     jiraFor: key => legacyGet(key, jiraOptions) });
@@ -207,11 +214,12 @@ console.log("PASS: mismatched Target identity, type, options, and status fail cl
 
 {
   const d = dependencies({ evidenceFor: key => migratedTargetEvidence(key),
-    targetFor: () => targetResult({ origin: "legacy_migration" }),
+    targetFor: () => targetResult({ origin: "legacy_migration", phase: "cutover" }),
     jiraFor: () => { throw new Error("Migrated Target parity comes from verified migration source"); } });
   const result = await reader(d).readClassification("RPL-209");
   assert.equal(result.read_authority, "target");
   assert.equal(result.origin, "legacy_migration");
+  assert.equal(result.phase, "cutover");
   assert.equal(result.migration_evidence.parity, "parity:RPL-209");
 }
 console.log("PASS: migrated Target requires and accepts separate approved cutover, snapshot, and parity sources");
@@ -221,12 +229,22 @@ console.log("PASS: migrated Target requires and accepts separate approved cutove
     const evidence = migratedTargetEvidence(key);
     delete evidence.cutover.evidence_ref;
     return evidence;
-  }, targetFor: () => targetResult({ origin: "legacy_migration" }), jiraFor: () => null });
+  }, targetFor: () => targetResult({ origin: "legacy_migration", phase: "cutover" }), jiraFor: () => null });
   const result = await reader(d).readClassification("RPL-210");
   assert.equal(result.read_authority, "none");
   assert.equal(d.calls.targetRead ?? 0, 0, "invalid migration source must quarantine without Target promotion");
 }
 console.log("PASS: migrated Target without separately verifiable sources remains quarantined");
+
+{
+  const d = dependencies({ evidenceFor: key => migratedTargetEvidence(key),
+    targetFor: () => targetResult({ origin: "legacy_migration", phase: "create_ready" }),
+    jiraFor: () => null });
+  const result = await reader(d).readClassification("RPL-212");
+  assert.equal(result.read_authority, "none");
+  assert.equal(result.reason, "migrated_target_evidence_unverified");
+}
+console.log("PASS: migrated Target with create_ready phase is quarantined");
 
 {
   const d = dependencies({ evidenceFor: key => legacyEvidence(key),
