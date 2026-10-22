@@ -102,11 +102,11 @@ try {
     ledger: unverifiedLedger, verifyGate: gate, siteOrigin: "https://jira.example" }),
   /missing verified capability evidence/);
   assert.equal(unverifiedJira.calls(), 0, "no evidence must not attempt Jira Create");
-  const staleSiteCapabilities = structuredClone(fixtureCapabilities);
-  staleSiteCapabilities["jira.create"].jira_site_origin = "https://another-jira.example";
+  const wrongSiteCapabilities = structuredClone(fixtureCapabilities);
+  wrongSiteCapabilities["jira.create"].jira_site_origin = "https://another-jira.example";
   assert.throws(() => createG3SupervisedAdapter({ jira: unverifiedJira.jira,
     ledger: unverifiedLedger, verifyGate: gate, siteOrigin: "https://jira.example",
-    capabilityEvidence: staleSiteCapabilities }),
+    capabilityEvidence: wrongSiteCapabilities }),
   /missing verified capability evidence: jira.create/);
   const absentAvailability = structuredClone(fixtureCapabilities);
   absentAvailability["jira.search"].available = false;
@@ -126,7 +126,7 @@ try {
     ledger: unverifiedLedger, verifyGate: gate, siteOrigin: "https://jira.example",
     capabilityEvidence: missingEvidenceRef }),
   /missing verified capability evidence: jira.intent.persist/);
-  console.log("PASS: no/forged capability evidence refuses Adapter construction before Jira calls");
+  console.log("PASS: missing/invalid/mismatched capability evidence refuses Adapter construction before Jira calls");
 
   const successDir = join(root, "success"), good = fakeJira();
   const pass = await execution({ root: successDir, simulation: good });
