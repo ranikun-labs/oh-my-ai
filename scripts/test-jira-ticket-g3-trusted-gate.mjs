@@ -49,7 +49,7 @@ const metadataFields = {
   priority: { required: true, hasDefaultValue: false, schema: { type: "option" },
     allowedValues: [{ id: "3", name: "High" }] },
   labels: { required: false, hasDefaultValue: false, schema: { type: "array", items: "string" } },
-  customfield_10042: { required: false, hasDefaultValue: false },
+  customfield_10042: { required: false, hasDefaultValue: false, defaultValue: [] },
   customfield_10043: { required: false, hasDefaultValue: false },
   customfield_10044: { required: false, hasDefaultValue: false },
   customfield_10015: { required: true, hasDefaultValue: false, schema: { type: "date" } },
@@ -253,6 +253,10 @@ defaultedLegacyMetadata.fields.customfield_10043.hasDefaultValue = true;
 defaultedLegacyMetadata.fields.customfield_10043.defaultValue = "legacy-default";
 const defaultedLegacy = fixtureGate({ metadataOverride: defaultedLegacyMetadata });
 await assert.rejects(() => defaultedLegacy.verifyGate({ stage: "search", context: { project: "RPL" } }), /Legacy/i);
+const contradictoryLegacyDefaultMetadata = structuredClone(metadataContent);
+contradictoryLegacyDefaultMetadata.fields.customfield_10043.defaultValue = "legacy-default";
+const contradictoryLegacyDefault = fixtureGate({ metadataOverride: contradictoryLegacyDefaultMetadata });
+await assert.rejects(() => contradictoryLegacyDefault.verifyGate({ stage: "search", context: { project: "RPL" } }), /Legacy/i);
 const currentAccountsMetadata = structuredClone(metadataContent);
 currentAccountsMetadata.fields.assignee.allowedValues = [{ accountId: "retired-account" }];
 const staleAssignee = fixtureGate({ metadataOverride: currentAccountsMetadata });
@@ -303,5 +307,5 @@ console.log("PASS: Activation effective-window and signed-evidence expiry bounda
 clock += 6 * 60_000;
 const expiredActivation = fixtureGate({ activationExpiryMs: -1 });
 await assert.rejects(() => expiredActivation.verifyGate({ stage: "search", context: { project: "RPL" } }), /expired/i);
-console.log("PASS: expired signed Activation cannot authorize a read stage");
+console.log("PASS: expired signed Activation cannot authorize a new search");
 console.log("G3 trusted gate offline fixtures passed");

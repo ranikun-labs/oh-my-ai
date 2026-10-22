@@ -100,7 +100,9 @@ function validAccount(value, allowedValues) {
 function assertLegacyFields(fields) {
   for (const id of LEGACY_FIELD_IDS) {
     const field = fields[id];
-    if (!field || field.required !== false || field.hasDefaultValue !== false || field.defaultValue != null)
+    const hasUnexpectedDefault = field?.defaultValue != null
+      && !(Array.isArray(field.defaultValue) && field.defaultValue.length === 0);
+    if (!field || field.required !== false || field.hasDefaultValue !== false || hasUnexpectedDefault)
       throw new Error("live Jira Legacy classification field is still required or has a default");
   }
 }
