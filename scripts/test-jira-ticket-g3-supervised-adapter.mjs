@@ -11,6 +11,10 @@ import { createG3SupervisedAdapter } from "./lib/jira-ticket-g3-supervised-adapt
 // All actors, approvals, metadata and Jira IssueKeys below are SYNTHETIC.
 // Nothing in this file connects to Atlassian or writes to production systems.
 const ledgerRef = "fixture-g3-single-writer-ledger";
+const fixtureCapabilities = Object.fromEntries([
+  "jira.search", "jira.create", "jira.read", "jira.intent.persist", "jira.origin.persist",
+].map(name => [name, { available: true, connection_verified: true,
+  evidence_ref: "SYNTHETIC-CAPABILITY-ONLY", jira_site_origin: "https://jira.example" }]));
 const contract = Object.fromEntries(CONTRACT_FIELDS.map(k => [k, k === "Summary"
   ? "[FIXTURE ONLY] G3 Task Create" : "Synthetic " + k]));
 const metadata = { project: "RPL", issue_type: "Task", assignee: "fixture-user",
@@ -83,7 +87,7 @@ const pendingIntent = (requestId, fields = {
 const execution = async ({ root, target, simulation, customGate = gate, ledgerOverride } = {}) => {
   const ledger = ledgerOverride ?? createG3FileLedger({ root, ledgerRef });
   const actor = createG3SupervisedAdapter({ ledger, jira: simulation.jira,
-    verifyGate: customGate, siteOrigin: "https://jira.example" });
+    verifyGate: customGate, siteOrigin: "https://jira.example", capabilityEvidence: fixtureCapabilities });
   const report = await runJiraTicketCreateWorkflow({ adapter: actor,
     contract, metadata: { ...metadata, target_create: target ?? config() },
     approval: { current: true } });
@@ -91,6 +95,27 @@ const execution = async ({ root, target, simulation, customGate = gate, ledgerOv
 };
 const root = await mkdtemp(join(tmpdir(), "jira-g3-offline-"));
 try {
+  const unverifiedJira = fakeJira(), unverifiedLedger = createG3FileLedger({
+    root: join(root, "no-capabilities"), ledgerRef,
+  });
+  assert.throws(() => createG3SupervisedAdapter({ jira: unverifiedJira.jira,
+    ledger: unverifiedLedger, verifyGate: gate, siteOrigin: "https://jira.example" }),
+  /missing verified capability evidence/);
+  assert.equal(unverifiedJira.calls(), 0, "no evidence must not attempt Jira Create");
+  const staleSiteCapabilities = structuredClone(fixtureCapabilities);
+  staleSiteCapabilities["jira.create"].jira_site_origin = "https://another-jira.example";
+  assert.throws(() => createG3SupervisedAdapter({ jira: unverifiedJira.jira,
+    ledger: unverifiedLedger, verifyGate: gate, siteOrigin: "https://jira.example",
+    capabilityEvidence: staleSiteCapabilities }),
+  /missing verified capability evidence: jira.create/);
+  const missingEvidenceRef = structuredClone(fixtureCapabilities);
+  missingEvidenceRef["jira.intent.persist"].evidence_ref = "";
+  assert.throws(() => createG3SupervisedAdapter({ jira: unverifiedJira.jira,
+    ledger: unverifiedLedger, verifyGate: gate, siteOrigin: "https://jira.example",
+    capabilityEvidence: missingEvidenceRef }),
+  /missing verified capability evidence: jira.intent.persist/);
+  console.log("PASS: no/forged capability evidence refuses Adapter construction before Jira calls");
+
   const successDir = join(root, "success"), good = fakeJira();
   const pass = await execution({ root: successDir, simulation: good });
   assert.equal(pass.report.verification_status, "verified", JSON.stringify(pass.report));
@@ -108,7 +133,7 @@ try {
   console.log("PASS: durable Intent > at-most-one Create attempt > IssueKey link > GET > Origin/Reader");
 
   const readerTamper = createG3SupervisedAdapter({ ledger: pass.ledger,
-    jira: fakeJira({ wrongRead: true }).jira, verifyGate: gate, siteOrigin: "https://jira.example" });
+    jira: fakeJira({ wrongRead: true }).jira, verifyGate: gate, siteOrigin: "https://jira.example", capabilityEvidence: fixtureCapabilities });
   assert.equal((await readerTamper.readVerifiedClassification("RPL-201")).read_authority, "none");
   assert.equal((await readerTamper.readClassificationAuthority("RPL-201")).read_authority, "none",
     "public Reader alias must not expose raw Ledger authority");
@@ -158,7 +183,7 @@ try {
   const missingApprovalLedger = createG3FileLedger({ root: missingApprovalDir, ledgerRef });
   const missingApprovalActor = createG3SupervisedAdapter({ ledger: missingApprovalLedger,
     jira: fakeJira().jira, verifyGate: async () => ({ allowed: true,
-      evidence_ref: "SYNTHETIC-TEST-ONLY" }), siteOrigin: "https://jira.example" });
+      evidence_ref: "SYNTHETIC-TEST-ONLY" }), siteOrigin: "https://jira.example", capabilityEvidence: fixtureCapabilities });
   await assert.rejects(() => missingApprovalActor.persistIntent(pendingIntent("g3-fixture-no-approval-0001")),
     /non-empty cutover approval reference/);
   assert.equal((await missingApprovalLedger.inspectRequest("g3-fixture-no-approval-0001")).pending, null);
@@ -172,7 +197,7 @@ try {
     jira: fakeJira().jira, verifyGate: async input => {
       if (input.stage === "intent") await intentGateHeld;
       return gate(input);
-    }, siteOrigin: "https://jira.example" });
+    }, siteOrigin: "https://jira.example", capabilityEvidence: fixtureCapabilities });
   const firstIntent = intentRaceActor.persistIntent(pendingIntent("g3-fixture-intent-race-0001"));
   await assert.rejects(() => intentRaceActor.persistIntent(pendingIntent("g3-fixture-intent-race-0002")),
     /already has an Intent/);
@@ -189,7 +214,7 @@ try {
     jira: createRaceJira.jira, verifyGate: async input => {
       if (input.stage === "create") await createGateHeld;
       return gate(input);
-    }, siteOrigin: "https://jira.example" });
+    }, siteOrigin: "https://jira.example", capabilityEvidence: fixtureCapabilities });
   await createRaceActor.persistIntent(pendingIntent("g3-fixture-create-race-0001"));
   const createRequest = { summary: contract.Summary };
   const concurrentCreates = [createRaceActor.create(createRequest), createRaceActor.create(createRequest)];
@@ -203,7 +228,7 @@ try {
   const mutableIntentJira = fakeJira({ wrongRead: true });
   const mutableIntentActor = createG3SupervisedAdapter({
     ledger: createG3FileLedger({ root: mutableIntentDir, ledgerRef }),
-    jira: mutableIntentJira.jira, verifyGate: gate, siteOrigin: "https://jira.example" });
+    jira: mutableIntentJira.jira, verifyGate: gate, siteOrigin: "https://jira.example", capabilityEvidence: fixtureCapabilities });
   const mutablePending = pendingIntent("g3-fixture-mutable-intent-0001");
   await mutableIntentActor.persistIntent(mutablePending);
   mutablePending.fields.customfield_10108.id = "10020";
