@@ -8,7 +8,12 @@ const digest = text => createHash("sha256").update(text, "utf8").digest("hex");
 const TARGET_IDS = ["customfield_10108", "customfield_10109", "customfield_10110"];
 function sameVerifiedTargets(intentFields, verifiedFields) {
   if (!intentFields || !verifiedFields || typeof verifiedFields !== "object"
-    || Object.keys(verifiedFields).sort().join("|") !== [...TARGET_IDS].sort().join("|")) return false;
+    || Object.keys(verifiedFields).sort().join("|") !== [...TARGET_IDS].sort().join("|")
+    || TARGET_IDS.slice(0, 2).some(id =>
+      typeof intentFields[id]?.id !== "string" || typeof verifiedFields[id]?.id !== "string")
+    || !Array.isArray(verifiedFields[TARGET_IDS[2]])
+    || (intentFields[TARGET_IDS[2]] != null && !Array.isArray(intentFields[TARGET_IDS[2]])))
+    return false;
   const norm = (value) => Array.isArray(value)
     ? [...value].map(v => v?.id).sort().join(",") : value?.id;
   return TARGET_IDS.every(id =>
