@@ -30,6 +30,13 @@ Owner 별도 G3 승인 / Live Jira metadata + Type별 Activation Gate
 
 Foundation 정책 경계: §8.0에 해당하는 Owner 승인 소량·단일 Writer·직렬 운영은 승인/검증 근거 링크가 연결된 버전관리 CSV/JSON 원장을 사용할 수 있으며, 전용 Registry 서버나 DB가 일률적인 선행 조건은 아니다. 무인·동시·복수 Writer·대량 운영은 §8.1 통제에 따라야 한다. 저장 방식을 선택해도 이 로컬 참조 구현만으로 운영 내구성이나 정책 적합성이 입증되지는 않는다.
 
+## 실제 Runtime Capability 증거 (후속 보강, 미배포)
+
+- 주입된 `jira.search/create/read` 함수의 **존재만으로 연결됨이라고 표시하지 않는다**. `createG3SupervisedAdapter` 생성 시 `capabilityEvidence`의 5개 항목 (`jira.search`, `jira.create`, `jira.read`, `jira.intent.persist`, `jira.origin.persist`) 각각에 `available=true`, `connection_verified=true`, 빈 값이 아닌 `evidence_ref`가 있어야 한다.
+- Jira Search/Create/GET의 `jira_site_origin`은 Adapter의 `siteOrigin`과 일치해야 한다. 누락·다른 사이트·빈 증거면 **Adapter 생성 단계에서 차단**. 가짜 Jira/MCP 객체와 임의 evidence 문자열은 **테스트 전용**이다.
+- **보안 경계:** 이 참조 구현은 `evidence_ref` 문자열의 발급자·서명·연결 진위를 자체 검증하지 않는다. 프로덕션 Connector는 *사용자 입력과 분리된 인증된 Runtime*에서 이 증거를 검증한 후 주입해야 한다. 따라서 이 보강만으로 운영 활성화 조건을 충족하지 않는다.
+- 테스트: `node scripts/test-jira-ticket-g3-supervised-adapter.mjs` — 증거 없음, 타 Jira Origin, Ledger 증거 누락에서 원격 호출 전에 fail-closed. Node Native 실행 증거 없으면 **NOT_RUN**으로 보고한다.
+
 ## Trusted Gate 운영 계약
 
 - `verifyGate({ stage: "intent", context })`는 외부 신뢰 원천에서 현재 Activation, Policy SHA, Live Metadata, 정확한 Owner 승인 범위를 확인하고 `allowed: true`, 비어 있지 않은 `evidence_ref`, 비어 있지 않은 `cutover_approval_ref`를 반환해야 한다. `cutover_approval_ref`는 해당 승인 기록에 연결된 안정적인 참조여야 한다.
