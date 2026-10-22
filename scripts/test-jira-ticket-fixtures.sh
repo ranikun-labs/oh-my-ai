@@ -122,4 +122,5 @@ NODE
 node scripts/test-jira-ticket-mcp-create-workflow.mjs
 node scripts/test-jira-ticket-preview-regression.mjs
 node scripts/test-jira-ticket-runtime-protocol.mjs
-echo "jira-ticket MCP-backed Create Workflow fixtures passed"
+node scripts/test-jira-ticket-g3-supervised-adapter.mjs
+echo "jira-ticket MCP-backed Create Workflow and offline G3 fixtures passed"
