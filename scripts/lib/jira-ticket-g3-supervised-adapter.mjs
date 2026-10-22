@@ -15,6 +15,8 @@ export function createG3SupervisedAdapter({ jira, ledger, verifyGate, siteOrigin
     throw new Error("G3 requires explicit trusted Jira, authorization and durable Ledger integrations");
   if (!/^https:\/\/[^/]+$/.test(siteOrigin ?? "")) throw new Error("verified Jira site origin required");
   let active = null;
+  let intentReserved = false;
+  let createReserved = false;
   let createStarted = false;
   let readConfirmed = false;
   let createdKey = null;
@@ -33,9 +35,10 @@ export function createG3SupervisedAdapter({ jira, ledger, verifyGate, siteOrigin
   }
 
   async function gate(stage, context) {
-    const proof = await verifyGate({ stage, context });
+    const proof = await verifyGate({ stage, context: structuredClone(context) });
     if (proof?.allowed !== true || typeof proof?.evidence_ref !== "string"
       || !proof.evidence_ref.trim()) throw new Error("G3 trusted external authorization missing: " + stage);
+    return proof;
   }
   // Both public Reader entry points enforce Jira GET parity; raw Ledger reads
   // are available only through the injected Ledger for privileged diagnostics.
@@ -80,19 +83,28 @@ export function createG3SupervisedAdapter({ jira, ledger, verifyGate, siteOrigin
       return result;
     },
     async persistIntent(request) {
-      if (active) throw new Error("this supervised Writer already has an Intent");
-      await gate("intent", request);
-      const receipt = await ledger.persistIntent(request);
+      if (active || intentReserved) throw new Error("this supervised Writer already has an Intent or pending Intent gate");
+      intentReserved = true; // Reserve synchronously before awaiting the external gate.
+      const intent = structuredClone(request);
+      const proof = await gate("intent", intent);
+      const approvalRef = proof.cutover_approval_ref;
+      if (typeof approvalRef !== "string" || !approvalRef.trim())
+        throw new Error("G3 intent gate must prove a non-empty cutover approval reference");
+      const immutablePending = { ...intent, cutover_approval_ref: approvalRef };
+      const receipt = await ledger.persistIntent(immutablePending);
       if (receipt.status === "persisted" && receipt.created_new === true)
-        active = { id: request.create_request_id, activation: request.activation_ref,
-          issueType: request.issue_type, expectedFields: request.fields };
+        active = { id: immutablePending.create_request_id, activation: immutablePending.activation_ref,
+          issueType: immutablePending.issue_type, expectedFields: structuredClone(immutablePending.fields),
+          cutoverApprovalRef: approvalRef };
       return { ...receipt, tool_call_count: 1 };
     },
     async create(request) {
-      if (!active || createStarted) throw new Error("missing/new Intent or replayed Jira Create");
-      await gate("create", { request, create_request_id: active.id, activation_ref: active.activation });
-      createStarted = true; // ambiguity on failure permanently prevents retry in this instance
-      const result = await jira.create(request);
+      if (!active || createReserved) throw new Error("missing/new Intent or replayed Jira Create");
+      const createRequest = structuredClone(request);
+      createReserved = true; // Synchronous reservation closes the gate-await race.
+      await gate("create", { request: createRequest, create_request_id: active.id, activation_ref: active.activation });
+      createStarted = true; // Any Jira call failure permanently prevents retry in this instance.
+      const result = await jira.create(createRequest);
       let identityValid = false;
       try {
         const u = new URL(result?.url);
@@ -100,7 +112,7 @@ export function createG3SupervisedAdapter({ jira, ledger, verifyGate, siteOrigin
       } catch { /* invalid/partial response */ }
       if (result?.kind !== "created" || result?.tool_call_count !== 1
         || !/^RPL-[1-9][0-9]*$/.test(result?.key ?? "")
-        || result.project !== "RPL" || result.summary !== request.summary || !identityValid)
+        || result.project !== "RPL" || result.summary !== createRequest.summary || !identityValid)
         throw new Error("ambiguous Jira Create identity; do not automatically retry");
       // Link the returned IssueKey to a durable Intent *before* post-Create GET.
       // If linking fails, Core quarantines rather than pretending nothing was created.
@@ -109,11 +121,12 @@ export function createG3SupervisedAdapter({ jira, ledger, verifyGate, siteOrigin
       return result;
     },
     async read(request) {
-      if (!createStarted || !active || !/^RPL-[1-9][0-9]*$/.test(request?.key ?? ""))
+      const readRequest = structuredClone(request);
+      if (!createStarted || !createdKey || !active || !/^RPL-[1-9][0-9]*$/.test(readRequest?.key ?? ""))
         throw new Error("post-Create Jira GET without Intent");
-      await gate("read", { ...request, create_request_id: active.id });
-      const result = await jira.read(request);
-      if (result?.tool_call_count !== 1 || result?.key !== request.key
+      await gate("read", { ...readRequest, create_request_id: active.id });
+      const result = await jira.read(readRequest);
+      if (result?.tool_call_count !== 1 || result?.key !== readRequest.key
         || result?.key !== createdKey || result?.issue_type_id !== typeId[active.issueType]
         || !sameTargets(active.expectedFields, result?.fields))
         throw new Error("Jira GET is inconsistent with the durable approved Intent");
@@ -123,12 +136,14 @@ export function createG3SupervisedAdapter({ jira, ledger, verifyGate, siteOrigin
       return result;
     },
     async persistOrigin(request) {
+      const originRequest = structuredClone(request);
       if (!active || !createStarted || !readConfirmed
-        || request?.create_request_id !== active.id || request?.issue_key !== createdKey
-        || !sameTargets(verifiedReadFields, request?.verified_fields))
+        || originRequest?.create_request_id !== active.id || originRequest?.issue_key !== createdKey
+        || originRequest?.cutover_approval_ref !== active.cutoverApprovalRef
+        || !sameTargets(verifiedReadFields, originRequest?.verified_fields))
         throw new Error("Origin without same-Issue, verified GET Target values and Intent");
-      await gate("origin", request);
-      const receipt = await ledger.persistOrigin(request);
+      await gate("origin", originRequest);
+      const receipt = await ledger.persistOrigin(originRequest);
       return { ...receipt, tool_call_count: 1 };
     },
     async readClassificationAuthority(issueKey) {

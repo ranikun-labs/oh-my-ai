@@ -6,6 +6,7 @@ const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/;
 const KEY = /^RPL-[1-9][0-9]*$/;
 const digest = text => createHash("sha256").update(text, "utf8").digest("hex");
 const TARGET_IDS = ["customfield_10108", "customfield_10109", "customfield_10110"];
+const nonEmptyRef = value => typeof value === "string" && value.trim().length > 0;
 function sameVerifiedTargets(intentFields, verifiedFields) {
   if (!intentFields || !verifiedFields || typeof verifiedFields !== "object"
     || Object.keys(verifiedFields).sort().join("|") !== [...TARGET_IDS].sort().join("|")
@@ -71,21 +72,23 @@ export function createG3FileLedger({ root, ledgerRef }) {
 
   return {
     async persistIntent(request) {
-      const id = request?.create_request_id;
+      const snapshot = structuredClone(request);
+      const id = snapshot?.create_request_id;
       assertId(id);
-      if (request?.ledger_ref !== ledgerRef || request?.status !== "pending"
-        || typeof request?.approved_preview_id !== "string"
-        || typeof request?.activation_ref !== "string"
-        || typeof request?.issue_type !== "string"
-        || !request?.fields || typeof request.fields !== "object")
+      if (snapshot?.ledger_ref !== ledgerRef || snapshot?.status !== "pending"
+        || typeof snapshot?.approved_preview_id !== "string"
+        || typeof snapshot?.activation_ref !== "string"
+        || typeof snapshot?.issue_type !== "string"
+        || !nonEmptyRef(snapshot?.cutover_approval_ref)
+        || !snapshot?.fields || typeof snapshot.fields !== "object")
         throw new Error("incomplete immutable pending Intent");
-      const record = { ...request, phase: "pending", stored_at: new Date().toISOString() };
+      const record = { ...snapshot, phase: "pending", stored_at: new Date().toISOString() };
       const created = await writeOnce(intentDir, intentPath(id), record);
       if (!created) return { status: "duplicate", durable: true, created_new: false,
         create_request_id: id, ledger_ref: ledgerRef, prior_issue_key: (await load(linkPath(id)))?.issue_key ?? null };
       return { status: "persisted", durable: true, created_new: true, prior_issue_key: null,
         create_request_id: id, ledger_ref: ledgerRef,
-        approved_preview_id: request.approved_preview_id, activation_ref: request.activation_ref };
+        approved_preview_id: snapshot.approved_preview_id, activation_ref: snapshot.activation_ref };
     },
 
     async linkIssue(requestId, issue) {
@@ -104,6 +107,7 @@ export function createG3FileLedger({ root, ledgerRef }) {
     },
 
     async persistOrigin(request) {
+      request = structuredClone(request);
       const id = request?.create_request_id;
       assertId(id);
       assertKey(request?.issue_key);
@@ -114,7 +118,8 @@ export function createG3FileLedger({ root, ledgerRef }) {
         || request.origin !== "target_create" || request.phase !== "create_ready"
         || request.read_authority !== "target" || request.write_authority !== "target"
         || request.legacy_snapshot_ref !== "not_applicable"
-        || typeof request.cutover_approval_ref !== "string"
+        || !nonEmptyRef(request.cutover_approval_ref)
+        || request.cutover_approval_ref !== pending.cutover_approval_ref
         || !sameVerifiedTargets(pending.fields, request.verified_fields))
         throw new Error("Origin does not match linked, verified pending Intent");
       // One IssueKey can only be assigned one Origin. Existing data is not overwritten.
@@ -140,6 +145,8 @@ export function createG3FileLedger({ root, ledgerRef }) {
       if (!pending || !linked || pending.phase !== "pending"
         || pending.ledger_ref !== ledgerRef || origin.ledger_ref !== ledgerRef
         || linked.issue_key !== issueKey || origin.origin !== "target_create"
+        || !nonEmptyRef(pending.cutover_approval_ref)
+        || origin.cutover_approval_ref !== pending.cutover_approval_ref
         || !sameVerifiedTargets(pending.fields, origin.verified_fields)
         || origin.phase !== "create_ready" || origin.read_authority !== "target"
         || origin.write_authority !== "target" || origin.create_activation_ref !== pending.activation_ref)

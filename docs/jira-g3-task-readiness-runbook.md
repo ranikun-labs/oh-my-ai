@@ -28,6 +28,15 @@ Owner 별도 G3 승인 / Live Jira metadata + Type별 Activation Gate
 
 **범위 한계:** `scripts/lib/jira-ticket-g3-file-ledger.mjs`는 `fs.open('wx')`와 파일·디렉터리 `fsync`로 같은 파일시스템의 중복 pending 등록을 방어한다. 다중 호스트, NFS/object storage, 컨테이너 휘발 저장소, 복제·백업·장애 복구 내구성을 입증하지 않는다. 로컬 참조 구현이며 운영 승인된 공유 영속 Ledger가 아니다. `createG3SupervisedAdapter`는 **의존성 주입 인터페이스**로 실제 Jira 접근이나 Owner 증명 검증을 제공하지 않는다. Mock `verifyGate`는 테스트에서만 허용된다. 실 운영에서는 Owner 승인·Activation·Policy SHA·Live Metadata를 외부 신뢰 원천에서 인증하는 Gate를 구현해야 한다.
 
+Foundation 정책 경계: §8.0에 해당하는 Owner 승인 소량·단일 Writer·직렬 운영은 승인/검증 근거 링크가 연결된 버전관리 CSV/JSON 원장을 사용할 수 있으며, 전용 Registry 서버나 DB가 일률적인 선행 조건은 아니다. 무인·동시·복수 Writer·대량 운영은 §8.1 통제에 따라야 한다. 저장 방식을 선택해도 이 로컬 참조 구현만으로 운영 내구성이나 정책 적합성이 입증되지는 않는다.
+
+## Trusted Gate 운영 계약
+
+- `verifyGate({ stage: "intent", context })`는 외부 신뢰 원천에서 현재 Activation, Policy SHA, Live Metadata, 정확한 Owner 승인 범위를 확인하고 `allowed: true`, 비어 있지 않은 `evidence_ref`, 비어 있지 않은 `cutover_approval_ref`를 반환해야 한다. `cutover_approval_ref`는 해당 승인 기록에 연결된 안정적인 참조여야 한다.
+- Adapter는 호출자가 보낸 승인 참조를 권위로 사용하지 않고 Intent Gate의 `cutover_approval_ref`를 immutable pending Intent에 저장한다. 값 누락/공백이면 Intent 저장과 Jira Create 전에 중단한다.
+- `persistOrigin`은 Core가 보낸 승인 참조가 pending Intent와 정확히 같은지 확인하고, Ledger도 Origin 등록 및 Reader 경로에서 같은 값을 다시 대조한다. 불일치하면 Origin 등록을 거부하고 Reader는 `UNKNOWN_ORIGIN / none / frozen`을 반환한다.
+- `evidence_ref`와 `cutover_approval_ref`는 감사 가능한 근거를 가리키는 식별자다. 식별자 문자열만으로 승인을 입증했다고 간주하지 않는다.
+
 ## Task(10010)만 실제 G3 시험할 때 필요한 Owner 결정
 
 | 항목 | 현행(READ-ONLY 확인) | 변경/검증 예정 | 권한 |
@@ -46,7 +55,7 @@ Owner 별도 G3 승인 / Live Jira metadata + Type별 Activation Gate
 ## 실행 이전 Gate — 순서 엄수
 
 1. 이번 reference Draft PR의 별도 Native Node 테스트, 독립 Reviewer PASS, Owner Merge 승인을 완료한다.
-2. 실제 운영 환경·단일 Writer, trusted `verifyGate` + Jira Search/Create/GET client, 지속 저장 볼륨/정합성, 장애 후 조회/복구 경로를 정하고 구현한다. `readVerifiedClassification`을 실제 Reader/Board/Automation에 연결한다. 구현 PR과 독립 검수 증거를 제출한다.
+2. 실제 운영 환경·단일 Writer, trusted `verifyGate` + Jira Search/Create/GET client, 정책 분류에 맞는 원장·정합성, 장애 후 조회/복구 경로를 정하고 구현한다. `readVerifiedClassification`을 실제 Reader/Board/Automation에 연결한다. 구현 PR과 독립 검수 증거를 제출한다.
 3. 저장소·Jira 관리자 **READ-ONLY**: 현재 스키마/옵션/필수·기본값, Board/Filter/Automation, 권한·연동 Writer 상태, rollback export/복구 가능 여부를 재확인한다.
 4. Owner가 **Task Admin 설정 변경** 범위·전환 시간·원상복구 방식을 명시 승인하면 Before export → 해당 유형 설정 변경 → Create Metadata GET 재확인. 미승인 변경 금지.
 5. 시험 Create는 **Owner가 정확한 1건**을 별도 승인한 뒤 실행. 추천 표본: `RPL/Task(10010)`, `dev-harness(10027)/backend(10028)`, Concern `[]`, 제목 `[G3 TEST] Task Target Create 단일 생성 검증`. 실제 담당자/시작 날짜/기한/보존 정책을 Owner가 확정해야 한다.
