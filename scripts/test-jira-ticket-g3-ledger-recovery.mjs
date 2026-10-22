@@ -50,7 +50,7 @@ function authorization(record, issueKey, patch = {}) {
 }
 function jiraResult(key, patch = {}) {
   return { tool_call_count: 1, key, issue_type_id: "10010", fields: {
-    customfield_10108: { id: "10027" }, customfield_10109: { id: "10028" }, customfield_10110: [],
+    customfield_10108: { id: "10027" }, customfield_10109: { id: "10028" }, customfield_10110: null,
   }, ...patch };
 }
 function makeRecovery({ root, ledger, jiraRead, clock = now, syncReceipt } = {}) {

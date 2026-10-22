@@ -25,6 +25,7 @@ const fields = {
   customfield_10108: { id: "10027" },
   customfield_10109: { id: "10028" },
   customfield_10015: "2026-10-23",
+  duedate: "2026-10-24",
 };
 const createRequest = {
   project: "RPL", issue_type: "Task", summary: "[FIXTURE ONLY] signed G3 request",
@@ -37,6 +38,25 @@ const options = {
   concern: [{ id: "10038", value: "integration" }],
 };
 const metadataFields = {
+  project: { required: true, hasDefaultValue: false, schema: { type: "project" },
+    allowedValues: [{ id: "10000", key: "RPL" }] },
+  issuetype: { required: true, hasDefaultValue: false, schema: { type: "issuetype" },
+    allowedValues: [{ id: "10010", name: "Task" }] },
+  summary: { required: true, hasDefaultValue: false, schema: { type: "string" } },
+  description: { required: true, hasDefaultValue: false, schema: { type: "textarea" } },
+  assignee: { required: true, hasDefaultValue: false, schema: { type: "user" },
+    allowedValues: [{ accountId: "fixture-user" }] },
+  priority: { required: true, hasDefaultValue: false, schema: { type: "option" },
+    allowedValues: [{ id: "3", name: "High" }] },
+  labels: { required: false, hasDefaultValue: false, schema: { type: "array", items: "string" } },
+  customfield_10042: { required: false, hasDefaultValue: false },
+  customfield_10043: { required: false, hasDefaultValue: false },
+  customfield_10044: { required: false, hasDefaultValue: false },
+  customfield_10015: { required: true, hasDefaultValue: false, schema: { type: "date" } },
+  duedate: { required: true, hasDefaultValue: false, schema: { type: "date" } },
+  customfield_10045: { required: true, hasDefaultValue: true,
+    defaultValue: [{ accountId: "fixture-owner" }],
+    schema: { type: "array", items: "user" }, allowedValues: [{ accountId: "fixture-owner" }] },
   customfield_10108: { required: true, hasDefaultValue: false,
     schema: { type: "option", custom: "com.atlassian.jira.plugin.system.customfieldtypes:select" }, allowedValues: options.product },
   customfield_10109: { required: true, hasDefaultValue: false,
@@ -53,7 +73,8 @@ const approvalRef = "fixture-owner-cutover-approved-task";
 
 function makePayloads({ activationPatch = {}, policyPatch = {}, metadataPatch = {}, approvalPatch = {},
   metadataAgeMs = 10_000, activationExpiryMs = 300_000, approvalExpiryMs = 240_000,
-  metadataOverride = metadataContent } = {}) {
+  metadataOverride = metadataContent, fieldsOverride = fields, createRequestOverride = createRequest,
+  readAuthorityPatch = {}, readAuthorityIssueKey = "RPL-901" } = {}) {
   const issuedAt = iso(clock - 1_000);
   const activation = {
     kind: "g3_activation", status: "active", activation_ref: activationRef,
@@ -69,7 +90,7 @@ function makePayloads({ activationPatch = {}, policyPatch = {}, metadataPatch = 
   const policy = {
     kind: "g3_policy", status: "active", policy_sha256: policyHash, project: "RPL",
     allowed_issue_types: { Task: "10010" }, mode: "single_supervised",
-    allowed_create_fields: ["customfield_10108", "customfield_10109", "customfield_10110", "customfield_10015"],
+    allowed_create_fields: ["customfield_10108", "customfield_10109", "customfield_10110", "customfield_10015", "duedate"],
     max_concerns: 3, max_metadata_age_ms: 60_000, issued_at: issuedAt,
     expires_at: iso(clock + 300_000), ...policyPatch,
   };
@@ -85,16 +106,23 @@ function makePayloads({ activationPatch = {}, policyPatch = {}, metadataPatch = 
     status: "approved", approval_ref: approvalRef, activation_ref: activationRef,
     policy_sha256: policyHash, project: "RPL", issue_type: "Task", issue_type_id: "10010",
     ledger_ref: ledgerRef, create_request_id: requestId, approved_preview_id: previewId,
-    fields_sha256: g3EvidenceSha256(fields), create_request_sha256: g3EvidenceSha256(createRequest),
+    fields_sha256: g3EvidenceSha256(fieldsOverride), create_request_sha256: g3EvidenceSha256(createRequestOverride),
     issued_at: issuedAt, expires_at: iso(clock + approvalExpiryMs), ...approvalPatch,
   });
-  return { activation, policy, metadata, approval };
+  const readAuthority = {
+    kind: "g3_read_authority", status: "approved", project: "RPL", issue_key: readAuthorityIssueKey,
+    issue_type: "Task", issue_type_id: "10010", origin: "target_create",
+    origin_ref: `fixture-origin-${readAuthorityIssueKey}`, read_authority: "target",
+    policy_sha256: policyHash, issued_at: issuedAt, expires_at: iso(clock + 120_000),
+    ...readAuthorityPatch,
+  };
+  return { activation, policy, metadata, approval, readAuthority };
 }
 
 function fixtureGate(options = {}) {
   const payloads = makePayloads(options);
   const replay = new Set();
-  const fetchCounts = { activation: 0, current: 0, policy: 0, metadata: 0, approval: 0, claim: 0 };
+  const fetchCounts = { activation: 0, current: 0, policy: 0, metadata: 0, approval: 0, readAuthority: 0, claim: 0 };
   const source = {
     async fetchActivation(input) {
       fetchCounts.activation++;
@@ -121,6 +149,10 @@ function fixtureGate(options = {}) {
       assert.equal(input.approval_ref, approvalRef);
       assert.equal(input.create_request_id, requestId);
       return signed(payloads.approval);
+    },
+    async fetchReadAuthority() {
+      fetchCounts.readAuthority++;
+      return signed(payloads.readAuthority, options.tamperReadAuthority === true);
     },
     async claimReplay(input) {
       fetchCounts.claim++;
@@ -174,6 +206,29 @@ await signedFlow.verifyGate({ stage: "origin", context: {
 assert.equal((await signedFlow.verifyGate({ stage: "authority_read", context: { issue_key: "RPL-901" } })).allowed, true);
 console.log("PASS: signed current Activation, policy, live metadata, exact Owner approval and all adapter stages");
 
+// Existing Target-created issues retain their per-Issue read authority after
+// the future Create Activation expires or is rolled back.
+const expiredCreateForReader = fixtureGate({ activationPatch: { status: "revoked", effective_to: iso(clock) },
+  activationExpiryMs: -1 });
+assert.equal((await expiredCreateForReader.verifyGate({ stage: "authority_read", context: {
+  issue_key: "RPL-901",
+} })).allowed, true);
+assert.equal(expiredCreateForReader.fetchCounts.current, 0,
+  "existing-Issue authority must not depend on a current Create Activation");
+const forgedReadProof = fixtureGate({ tamperReadAuthority: true });
+await assert.rejects(() => forgedReadProof.verifyGate({ stage: "authority_read", context: {
+  issue_key: "RPL-901",
+} }), /signature/i);
+const expiredReadProof = fixtureGate({ readAuthorityPatch: { expires_at: iso(clock) } });
+await assert.rejects(() => expiredReadProof.verifyGate({ stage: "authority_read", context: {
+  issue_key: "RPL-901",
+} }), /expired/i);
+const wrongReadIssue = fixtureGate({ readAuthorityPatch: { issue_key: "RPL-902" } });
+await assert.rejects(() => wrongReadIssue.verifyGate({ stage: "authority_read", context: {
+  issue_key: "RPL-901",
+} }), /does not bind/i);
+console.log("PASS: per-Issue Target read authority survives Create rollback but rejects forged, expired, or wrong-Issue proof");
+
 const replayAcrossInstance = fixtureGate({ forceReplay: true });
 await assert.rejects(() => replayAcrossInstance.verifyGate({ stage: "intent", context: intent() }), /replay/i);
 assert.equal(replayAcrossInstance.fetchCounts.claim, 1);
@@ -185,6 +240,39 @@ const wrongPolicy = fixtureGate({ policyPatch: { policy_sha256: "c".repeat(64) }
 await assert.rejects(() => wrongPolicy.verifyGate({ stage: "search", context: { project: "RPL" } }), /policy/i);
 const staleMetadata = fixtureGate({ metadataAgeMs: 120_000 });
 await assert.rejects(() => staleMetadata.verifyGate({ stage: "search", context: { project: "RPL" } }), /stale/i);
+const requiredLegacyMetadata = structuredClone(metadataContent);
+requiredLegacyMetadata.fields.customfield_10042.required = true;
+const requiredLegacy = fixtureGate({ metadataOverride: requiredLegacyMetadata });
+await assert.rejects(() => requiredLegacy.verifyGate({ stage: "search", context: { project: "RPL" } }), /Legacy/i);
+await assert.rejects(() => requiredLegacy.verifyGate({ stage: "create", context: {
+  request: createRequest, create_request_id: requestId, activation_ref: activationRef,
+  create_metadata: { fields: { customfield_10042: { required: false, hasDefaultValue: false } } },
+} }), /Legacy/i);
+const defaultedLegacyMetadata = structuredClone(metadataContent);
+defaultedLegacyMetadata.fields.customfield_10043.hasDefaultValue = true;
+defaultedLegacyMetadata.fields.customfield_10043.defaultValue = "legacy-default";
+const defaultedLegacy = fixtureGate({ metadataOverride: defaultedLegacyMetadata });
+await assert.rejects(() => defaultedLegacy.verifyGate({ stage: "search", context: { project: "RPL" } }), /Legacy/i);
+const currentAccountsMetadata = structuredClone(metadataContent);
+currentAccountsMetadata.fields.assignee.allowedValues = [{ accountId: "retired-account" }];
+const staleAssignee = fixtureGate({ metadataOverride: currentAccountsMetadata });
+await staleAssignee.verifyGate({ stage: "intent", context: intent() });
+await assert.rejects(() => staleAssignee.verifyGate({ stage: "create", context: {
+  request: createRequest, create_request_id: requestId, activation_ref: activationRef,
+  create_metadata: { fields: { customfield_10042: { required: false, hasDefaultValue: false } } },
+} }), /current Jira metadata/i);
+const missingRequiredUserMetadata = structuredClone(metadataContent);
+missingRequiredUserMetadata.fields.customfield_10045.hasDefaultValue = false;
+delete missingRequiredUserMetadata.fields.customfield_10045.defaultValue;
+const missingRequiredUser = fixtureGate({ metadataOverride: missingRequiredUserMetadata });
+await assert.rejects(() => missingRequiredUser.verifyGate({ stage: "intent", context: intent() }),
+  /required live Jira Intent field/i);
+const invalidDateFields = { ...fields, customfield_10015: "2026-02-30" };
+const invalidDateRequest = { ...createRequest, fields: invalidDateFields };
+const invalidDate = fixtureGate({ fieldsOverride: invalidDateFields, createRequestOverride: invalidDateRequest });
+await assert.rejects(() => invalidDate.verifyGate({ stage: "intent", context: intent({ fields: invalidDateFields }) }),
+  /Create date/i);
+console.log("PASS: signed live metadata blocks Legacy required/default, stale accounts, missing required fields, and invalid dates");
 const badOption = fixtureGate();
 await assert.rejects(() => badOption.verifyGate({ stage: "intent", context: intent({ fields: {
   ...fields, customfield_10108: { id: "99999" },

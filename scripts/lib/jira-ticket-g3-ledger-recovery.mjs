@@ -21,7 +21,7 @@ function sameTargets(intentFields, observedFields) {
   const observedConcerns = observedFields[TARGET_FIELDS[2]] ?? [];
   if (!Array.isArray(concerns) || observedConcerns.some(item => typeof item?.id !== "string")) return false;
   return TARGET_FIELDS.every(id => JSON.stringify(norm(intentFields[id] ?? (id === TARGET_FIELDS[2] ? [] : undefined)))
-    === JSON.stringify(norm(observedFields[id])));
+    === JSON.stringify(norm(observedFields[id] ?? (id === TARGET_FIELDS[2] ? [] : undefined))));
 }
 
 function immutableIntent(pending) {

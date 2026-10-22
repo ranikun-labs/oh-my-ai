@@ -7,6 +7,9 @@ const TARGET_FIELDS = {
 };
 const TARGET_IDS = Object.values(TARGET_FIELDS);
 const ISSUE_TYPE_IDS = { Task: "10010", Epic: "10007", Feature: "10009", Bug: "10012", Research: "10013" };
+const LEGACY_FIELD_IDS = ["customfield_10042", "customfield_10043", "customfield_10044"];
+const SUPPLEMENTAL_FIELD_IDS = ["customfield_10015", "duedate", "customfield_10045"];
+const WRAPPER_FIELD_IDS = ["summary", "description", "assignee", "priority", "labels"];
 const SIGNED_KEYS = ["key_id", "payload", "signature"];
 
 function canonical(value, path = "$") {
@@ -82,6 +85,47 @@ function requireRef(value, label) {
 
 function isHash(value) { return typeof value === "string" && /^[a-f0-9]{64}$/.test(value); }
 
+function validCalendarDate(value) {
+  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)
+    && Number.isFinite(Date.parse(value)) && new Date(value).toISOString().slice(0, 10) === value;
+}
+
+function validAccount(value, allowedValues) {
+  if (!Array.isArray(allowedValues)) return false;
+  const accountId = typeof value === "string" ? value : value?.accountId;
+  if (typeof accountId !== "string" || !accountId.trim()) return false;
+  return allowedValues.some(option => option?.accountId === accountId);
+}
+
+function assertLegacyFields(fields) {
+  for (const id of LEGACY_FIELD_IDS) {
+    const field = fields[id];
+    if (!field || field.required !== false || field.hasDefaultValue !== false || field.defaultValue != null)
+      throw new Error("live Jira Legacy classification field is still required or has a default");
+  }
+}
+
+function assertSupplementalMetadata(fields) {
+  for (const id of SUPPLEMENTAL_FIELD_IDS) {
+    const field = fields[id], schema = field?.schema;
+    if (!field || typeof field.required !== "boolean" || typeof field.hasDefaultValue !== "boolean")
+      throw new Error("live Jira required supplementary metadata is incomplete");
+    if (id === "customfield_10045") {
+      if (schema?.type !== "array" || schema.items !== "user" || !Array.isArray(field.allowedValues))
+        throw new Error("live Jira people supplementary schema or current accounts are unavailable");
+      if (field.hasDefaultValue) {
+        if (!Array.isArray(field.defaultValue) || field.defaultValue.length === 0
+          || field.defaultValue.some(value => !validAccount(value, field.allowedValues)))
+          throw new Error("live Jira people default is not a current allowed account");
+      } else if (field.defaultValue != null) throw new Error("live Jira people default contradicts metadata");
+      continue;
+    }
+    if (schema?.type !== "date") throw new Error("live Jira supplementary date schema is invalid");
+    if (field.hasDefaultValue ? !validCalendarDate(field.defaultValue) : field.defaultValue != null)
+      throw new Error("live Jira supplementary date default contradicts metadata");
+  }
+}
+
 function isCurrentActivation(payload, now, stage) {
   if (payload.kind !== "g3_activation" || payload.status !== "active"
     || typeof payload.activation_ref !== "string" || !payload.activation_ref.trim()
@@ -116,7 +160,7 @@ function matchesPolicyAndMetadata(activation, policy, metadata) {
   if (metadata.kind !== "g3_live_metadata" || metadata.project !== scope.project
     || metadata.issue_type !== scope.issue_type || metadata.issue_type_id !== scope.issue_type_id
     || metadata.metadata_sha256 !== metadataHash || activation.metadata_sha256 !== metadataHash
-    || !metadata.fields || typeof metadata.fields !== "object")
+    || !metadata.fields || typeof metadata.fields !== "object" || Array.isArray(metadata.fields))
     throw new Error("live Jira metadata does not match Activation snapshot");
   const observedAt = timestamp(metadata.observed_at, "metadata observed_at");
   const issuedAt = timestamp(metadata.issued_at, "metadata issued_at");
@@ -134,6 +178,8 @@ function matchesPolicyAndMetadata(activation, policy, metadata) {
     || !Array.isArray(product.allowedValues) || !Array.isArray(component.allowedValues)
     || !Array.isArray(concern.allowedValues))
     throw new Error("live Jira Target field schema is not approved");
+  assertLegacyFields(metadata.fields);
+  assertSupplementalMetadata(metadata.fields);
   return { policy, metadata, policy_sha256: policy.policy_sha256 };
 }
 
@@ -157,6 +203,113 @@ function assertTargetOptions(fields, metadata, policy) {
     throw new Error("Create option is absent from current Jira metadata");
 }
 
+function createValueForField(id, request) {
+  if (id === "project") return request.project;
+  if (id === "issuetype" || id === "issue_type") return request.issue_type;
+  if (WRAPPER_FIELD_IDS.includes(id)) return request[id];
+  return request.fields?.[id];
+}
+
+function hasCreateValue(value) {
+  if (value === undefined || value === null || value === "") return false;
+  return !Array.isArray(value) || value.length > 0;
+}
+
+function matchesAllowedValue(value, allowedValues) {
+  if (!Array.isArray(allowedValues)) return false;
+  const wanted = typeof value === "string" ? value : null;
+  const wantedId = typeof value?.id === "string" ? value.id : null;
+  return allowedValues.some(option => [option?.id, option?.key, option?.name, option?.value]
+    .some(candidate => typeof candidate === "string" && (candidate === wanted || candidate === wantedId)));
+}
+
+function assertMetadataValue(id, value, field) {
+  const schema = field?.schema;
+  if (!schema || typeof schema.type !== "string") throw new Error(`live Jira schema missing for ${id}`);
+  if (schema.type === "user") {
+    if (!validAccount(value, field.allowedValues)) throw new Error(`Create account is absent from current Jira metadata for ${id}`);
+    return;
+  }
+  if (schema.type === "date") {
+    if (!validCalendarDate(value)) throw new Error(`Create date violates current Jira metadata for ${id}`);
+    return;
+  }
+  if (schema.type === "option") {
+    if (!matchesAllowedValue(value, field.allowedValues)) throw new Error(`Create option is absent from current Jira metadata for ${id}`);
+    return;
+  }
+  if (schema.type === "project" || schema.type === "issuetype") {
+    if (!matchesAllowedValue(value, field.allowedValues)) throw new Error(`Create scope is absent from current Jira metadata for ${id}`);
+    return;
+  }
+  if (schema.type === "array") {
+    if (!Array.isArray(value)) throw new Error(`Create value violates current Jira array schema for ${id}`);
+    if (schema.items === "user") {
+      if (!Array.isArray(field.allowedValues) || value.some(item => !validAccount(item, field.allowedValues)))
+        throw new Error(`Create accounts are absent from current Jira metadata for ${id}`);
+      return;
+    }
+    if (schema.items === "option") {
+      if (value.some(item => !matchesAllowedValue(item, field.allowedValues)))
+        throw new Error(`Create options are absent from current Jira metadata for ${id}`);
+      return;
+    }
+    if (schema.items === "string" && value.every(item => typeof item === "string")) return;
+    throw new Error(`Unsupported live Jira array schema for ${id}`);
+  }
+  if (["string", "text", "textarea"].includes(schema.type)) {
+    if (typeof value !== "string") throw new Error(`Create value violates current Jira text schema for ${id}`);
+    return;
+  }
+  throw new Error(`Unsupported required live Jira schema for ${id}`);
+}
+
+function assertCreateRequestMetadata(request, metadata, policy) {
+  if (!request || typeof request !== "object" || Array.isArray(request)
+    || !request.fields || typeof request.fields !== "object" || Array.isArray(request.fields))
+    throw new Error("Create request fields are missing");
+  assertTargetOptions(request.fields, metadata, policy);
+  if (LEGACY_FIELD_IDS.some(id => Object.hasOwn(request.fields, id)))
+    throw new Error("Create request includes a prohibited Legacy classification field");
+  const fields = metadata.fields;
+  for (const id of [...WRAPPER_FIELD_IDS, ...Object.keys(request.fields)]) {
+    if (!fields[id]) throw new Error(`Create field is absent from current Jira metadata: ${id}`);
+    if (typeof fields[id].required !== "boolean" || typeof fields[id].hasDefaultValue !== "boolean")
+      throw new Error(`Create field required/default metadata is incomplete: ${id}`);
+  }
+  for (const [id, field] of Object.entries(fields)) {
+    if (typeof field?.required !== "boolean" || typeof field?.hasDefaultValue !== "boolean")
+      throw new Error(`live Jira required/default metadata is incomplete: ${id}`);
+    const value = createValueForField(id, request);
+    if (!hasCreateValue(value)) {
+      if (field.required && !field.hasDefaultValue)
+        throw new Error(`required live Jira Create field is missing: ${id}`);
+      if (field.hasDefaultValue) assertMetadataValue(id, field.defaultValue, field);
+      continue;
+    }
+    assertMetadataValue(id, value, field);
+  }
+  // The workflow's three supplemental fields have fixed Create contracts. Their
+  // signed live schemas are checked even when one is optional and omitted.
+  assertSupplementalMetadata(fields);
+}
+
+function assertIntentFieldMetadata(intentFields, metadata, policy) {
+  assertTargetOptions(intentFields, metadata, policy);
+  if (LEGACY_FIELD_IDS.some(id => Object.hasOwn(intentFields, id)))
+    throw new Error("Intent includes a prohibited Legacy classification field");
+  for (const [id, value] of Object.entries(intentFields)) {
+    const field = metadata.fields[id];
+    if (!field) throw new Error(`Intent field is absent from current Jira metadata: ${id}`);
+    assertMetadataValue(id, value, field);
+  }
+  for (const [id, field] of Object.entries(metadata.fields)) {
+    if (WRAPPER_FIELD_IDS.includes(id) || id === "project" || id === "issuetype" || id === "issue_type") continue;
+    if (field.required && !field.hasDefaultValue && !hasCreateValue(intentFields[id]))
+      throw new Error(`required live Jira Intent field is missing: ${id}`);
+  }
+}
+
 function targetsOnly(fields) {
   return {
     [TARGET_FIELDS.product]: fields?.[TARGET_FIELDS.product] ?? null,
@@ -175,7 +328,7 @@ function signedRef(envelopes) {
  */
 export function createG3TrustedGate({ source, trustedKeys, now = Date.now, maxEvidenceAgeMs = 5 * 60_000 }) {
   const required = ["fetchActivation", "fetchCurrentActivation", "fetchPolicy", "fetchLiveMetadata",
-    "fetchOwnerApproval", "claimReplay"];
+    "fetchOwnerApproval", "fetchReadAuthority", "claimReplay"];
   if (!source || required.some(name => typeof source[name] !== "function")
     || !trustedKeys || typeof now !== "function" || !Number.isFinite(maxEvidenceAgeMs) || maxEvidenceAgeMs <= 0)
     throw new Error("G3 trusted gate requires signed evidence sources, pinned keys, and durable replay claims");
@@ -201,6 +354,23 @@ export function createG3TrustedGate({ source, trustedKeys, now = Date.now, maxEv
     for (const envelope of additionalEnvelopes)
       verifyG3SignedEvidence(envelope, pinnedKeys, { now: time, maxAgeMs: maxEvidenceAgeMs });
     return time;
+  }
+
+  async function readAuthorityEvidence(issueKey) {
+    if (!/^RPL-[1-9][0-9]*$/.test(issueKey ?? "")) throw new Error("invalid G3 authority-read IssueKey");
+    const envelope = await source.fetchReadAuthority({ issue_key: issueKey });
+    const time = now();
+    if (!Number.isFinite(time)) throw new Error("invalid G3 gate clock");
+    const proof = verifyG3SignedEvidence(envelope, pinnedKeys, { now: time, maxAgeMs: maxEvidenceAgeMs });
+    if (proof.kind !== "g3_read_authority" || proof.status !== "approved"
+      || proof.project !== "RPL" || proof.issue_key !== issueKey
+      || !Object.values(ISSUE_TYPE_IDS).includes(proof.issue_type_id)
+      || ISSUE_TYPE_IDS[proof.issue_type] !== proof.issue_type_id
+      || proof.origin !== "target_create" || proof.read_authority !== "target"
+      || typeof proof.origin_ref !== "string" || !proof.origin_ref.trim()
+      || !isHash(proof.policy_sha256))
+      throw new Error("signed per-Issue G3 read authority does not bind this exact Target Origin");
+    return { allowed: true, evidence_ref: signedRef([envelope]) };
   }
 
   async function loadEvidence(stage, context, { current = false } = {}) {
@@ -262,10 +432,9 @@ export function createG3TrustedGate({ source, trustedKeys, now = Date.now, maxEv
   return async function verifyGate({ stage, context }) {
     if (!context || typeof context !== "object" || Array.isArray(context)) throw new Error("missing G3 gate context");
     context = structuredClone(context);
-    if (stage === "search" || stage === "authority_read") {
-      const project = stage === "search" ? context.project : "RPL";
-      if (stage === "authority_read" && !/^RPL-[1-9][0-9]*$/.test(context.issue_key ?? ""))
-        throw new Error("invalid G3 authority-read IssueKey");
+    if (stage === "authority_read") return readAuthorityEvidence(context.issue_key);
+    if (stage === "search") {
+      const project = context.project;
       if (project !== "RPL") throw new Error("G3 project outside approved scope");
       const records = await loadEvidence(stage, { project }, { current: true });
       records.time = refreshRecords(records, stage);
@@ -292,7 +461,7 @@ export function createG3TrustedGate({ source, trustedKeys, now = Date.now, maxEv
         || context.issue_type !== activation.scope.issue_type || context.status !== "pending"
         || bindings.has(context.create_request_id) || completed.has(context.create_request_id))
         throw new Error("Intent request is outside one-time G3 Activation scope");
-      assertTargetOptions(context.fields, metadata, policy);
+      assertIntentFieldMetadata(context.fields, metadata, policy);
       const { approval, envelope: approvalEnvelope } = await ownerEvidence(records, context);
       if (approval.fields_sha256 !== g3EvidenceSha256(context.fields))
         throw new Error("Owner approval does not bind the immutable Intent fields");
@@ -335,7 +504,7 @@ export function createG3TrustedGate({ source, trustedKeys, now = Date.now, maxEv
         || request?.issue_type !== issueType || g3EvidenceSha256(request.fields ?? {}) !== binding.fields_sha256
         || g3EvidenceSha256(request) !== binding.create_request_sha256)
         throw new Error("Jira Create request differs from exact Owner-approved Preview");
-      assertTargetOptions(request.fields, metadata, policy);
+      assertCreateRequestMetadata(request, metadata, policy);
     } else if (stage === "read") {
       const read = context;
       const expected = ["issuetype", ...TARGET_IDS];
