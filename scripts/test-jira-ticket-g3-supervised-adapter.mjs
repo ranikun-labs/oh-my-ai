@@ -134,6 +134,29 @@ try {
   const outcomes = await Promise.all([a.persistIntent(intent), b.persistIntent(intent)]);
   assert.equal(outcomes.filter(x => x.created_new).length, 1);
   console.log("PASS: concurrent file CAS allows one pending Intent");
+  const forgedDir = join(root, "forged");
+  const forged = createG3FileLedger({ root: forgedDir, ledgerRef });
+  const stored = await forged.persistIntent({
+    ...intent, create_request_id: "g3-fixture-forged-0001",
+    fields: { customfield_10108: { id: "10027" },
+      customfield_10109: { id: "10028" }, customfield_10110: [] },
+  });
+  assert.equal(stored.created_new, true);
+  await forged.linkIssue("g3-fixture-forged-0001", {
+    key: "RPL-202", url: "https://jira.example/browse/RPL-202",
+  });
+  await assert.rejects(() => forged.persistOrigin({
+    create_request_id: "g3-fixture-forged-0001", issue_key: "RPL-202",
+    ledger_ref: ledgerRef, create_activation_ref: "fixture-task-activation",
+    cutover_approval_ref: "fixture-owner-approval", origin: "target_create",
+    phase: "create_ready", read_authority: "target", write_authority: "target",
+    legacy_snapshot_ref: "not_applicable",
+    verified_fields: { customfield_10108: { id: "10020" },
+      customfield_10109: { id: "10028" }, customfield_10110: [] },
+  }), /Origin does not match/);
+  assert.equal((await forged.readClassificationAuthority("RPL-202")).read_authority, "none");
+  console.log("PASS: forged Origin Product option fails closed");
+
 
   console.log("G3 offline supervised Adapter/Origin Ledger fixtures passed");
 } finally { await rm(root, { recursive: true, force: true }); }
