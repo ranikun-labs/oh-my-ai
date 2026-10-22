@@ -5,6 +5,15 @@ import { join, resolve } from "node:path";
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/;
 const KEY = /^RPL-[1-9][0-9]*$/;
 const digest = text => createHash("sha256").update(text, "utf8").digest("hex");
+const TARGET_IDS = ["customfield_10108", "customfield_10109", "customfield_10110"];
+function sameVerifiedTargets(intentFields, verifiedFields) {
+  if (!intentFields || !verifiedFields || typeof verifiedFields !== "object"
+    || Object.keys(verifiedFields).sort().join("|") !== [...TARGET_IDS].sort().join("|")) return false;
+  const norm = (value) => Array.isArray(value)
+    ? [...value].map(v => v?.id).sort().join(",") : value?.id;
+  return TARGET_IDS.every(id =>
+    norm(intentFields[id] ?? (id === TARGET_IDS[2] ? [] : undefined)) === norm(verifiedFields[id]));
+}
 
 function assertId(id) {
   if (typeof id !== "string" || !ID.test(id)) throw new Error("invalid CreateRequestId");
@@ -101,7 +110,7 @@ export function createG3FileLedger({ root, ledgerRef }) {
         || request.read_authority !== "target" || request.write_authority !== "target"
         || request.legacy_snapshot_ref !== "not_applicable"
         || typeof request.cutover_approval_ref !== "string"
-        || !request.verified_fields || typeof request.verified_fields !== "object")
+        || !sameVerifiedTargets(pending.fields, request.verified_fields))
         throw new Error("Origin does not match linked, verified pending Intent");
       // One IssueKey can only be assigned one Origin. Existing data is not overwritten.
       const created = await writeOnce(originDir, originPath(request.issue_key), {
@@ -126,6 +135,7 @@ export function createG3FileLedger({ root, ledgerRef }) {
       if (!pending || !linked || pending.phase !== "pending"
         || pending.ledger_ref !== ledgerRef || origin.ledger_ref !== ledgerRef
         || linked.issue_key !== issueKey || origin.origin !== "target_create"
+        || !sameVerifiedTargets(pending.fields, origin.verified_fields)
         || origin.phase !== "create_ready" || origin.read_authority !== "target"
         || origin.write_authority !== "target" || origin.create_activation_ref !== pending.activation_ref)
         return { origin: "UNKNOWN_ORIGIN", read_authority: "none",
