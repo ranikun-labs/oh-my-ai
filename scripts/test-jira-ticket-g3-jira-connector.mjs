@@ -27,8 +27,10 @@ function validProof({ capability, session }) {
   };
 }
 
-function jiraIssue({ key = "RPL-42", summary = SUMMARY, project = "RPL", self = `${SITE}/rest/api/3/issue/RPL-42`, extraFields = {} } = {}) {
-  return { key, self, fields: { project: { key: project }, issuetype: { id: "10010" }, summary, ...extraFields } };
+function jiraIssue({ key = "RPL-42", id = "10042", summary = SUMMARY, project = "RPL", self,
+  extraFields = {}, ...extraIssueFields } = {}) {
+  return { id, key, self: self ?? `${SITE}/rest/api/3/issue/${id}`,
+    fields: { project: { key: project }, issuetype: { id: "10010" }, summary, ...extraFields }, ...extraIssueFields };
 }
 
 async function connector(invokeTool, verifySession = validProof) {
@@ -122,9 +124,16 @@ async function searchFailuresAndPagination() {
   assert.deepEqual(await toolError.search(SEARCH_REQUEST), { status: "failed", tool_call_count: 1 });
   assert.equal(calls, 4);
 
+  const structuredError = await connector(async () => {
+    calls += 1;
+    return { structuredContent: { issues: [], total: 0, errorMessages: [], errors: { permission: "denied" } } };
+  });
+  assert.deepEqual(await structuredError.search(SEARCH_REQUEST), { status: "failed", tool_call_count: 1 });
+  assert.equal(calls, 5);
+
   const timeout = await connector(async () => { calls += 1; throw new Error("synthetic timeout"); });
   assert.deepEqual(await timeout.search(SEARCH_REQUEST), { status: "failed", tool_call_count: 1 });
-  assert.equal(calls, 5);
+  assert.equal(calls, 6);
 }
 
 async function createAmbiguityAndNoRetry() {
@@ -141,7 +150,7 @@ async function createAmbiguityAndNoRetry() {
 
   const missingIdentity = await connector(async () => {
     calls += 1;
-    return { structuredContent: { key: "RPL-42", id: "10042", self: `${SITE}/rest/api/3/issue/RPL-42` } };
+    return { structuredContent: { key: "RPL-42", id: "10042", self: `${SITE}/rest/api/3/issue/10042` } };
   });
   await assert.rejects(missingIdentity.create(CREATE_REQUEST), error => {
     assert.equal(error.code, "JIRA_CREATE_POSSIBLY_APPLIED");
@@ -153,10 +162,52 @@ async function createAmbiguityAndNoRetry() {
 
   const wrongSite = await connector(async () => {
     calls += 1;
-    return { structuredContent: jiraIssue({ self: "https://other.example/rest/api/3/issue/RPL-42" }) };
+    return { structuredContent: jiraIssue({ self: "https://other.example/rest/api/3/issue/10042" }) };
   });
   await assert.rejects(wrongSite.create(CREATE_REQUEST), error => error.code === "JIRA_CREATE_POSSIBLY_APPLIED");
   assert.equal(calls, 3);
+
+  const mismatchedNumericId = await connector(async () => {
+    calls += 1;
+    return { structuredContent: jiraIssue({ self: `${SITE}/rest/api/3/issue/99999` }) };
+  });
+  await assert.rejects(mismatchedNumericId.create(CREATE_REQUEST), error => error.code === "JIRA_CREATE_POSSIBLY_APPLIED");
+  assert.equal(calls, 4);
+
+  const conflictingIdentities = await connector(async () => {
+    calls += 1;
+    return { structuredContent: jiraIssue({ url: "https://other.example/browse/RPL-42" }) };
+  });
+  await assert.rejects(conflictingIdentities.create(CREATE_REQUEST), error => error.code === "JIRA_CREATE_POSSIBLY_APPLIED");
+  assert.equal(calls, 5);
+
+  const credentialsOrQuery = await connector(async () => {
+    calls += 1;
+    return { structuredContent: jiraIssue({ url: `https://user@jira.example.test/browse/RPL-42?expand=fields` }) };
+  });
+  await assert.rejects(credentialsOrQuery.create(CREATE_REQUEST), error => error.code === "JIRA_CREATE_POSSIBLY_APPLIED");
+  assert.equal(calls, 6);
+
+  const wrongBrowseKey = await connector(async () => {
+    calls += 1;
+    return { structuredContent: jiraIssue({ url: `${SITE}/browse/RPL-43` }) };
+  });
+  await assert.rejects(wrongBrowseKey.create(CREATE_REQUEST), error => error.code === "JIRA_CREATE_POSSIBLY_APPLIED");
+  assert.equal(calls, 7);
+
+  const oldKeyPath = await connector(async () => {
+    calls += 1;
+    return { structuredContent: jiraIssue({ self: `${SITE}/rest/api/3/issue/RPL-42` }) };
+  });
+  assert.equal((await oldKeyPath.create(CREATE_REQUEST)).key, "RPL-42");
+  assert.equal(calls, 8);
+
+  const browsePath = await connector(async () => {
+    calls += 1;
+    return { structuredContent: jiraIssue({ self: `${SITE}/browse/RPL-42` }) };
+  });
+  assert.equal((await browsePath.create(CREATE_REQUEST)).key, "RPL-42");
+  assert.equal(calls, 9);
 }
 
 async function authScopeAndGetValidation() {
@@ -197,11 +248,11 @@ async function supervisedWorkflowIntegration() {
     toolCalls.push({ name, args });
     if (name === G3_JIRA_TOOL_NAMES.search) return { structuredContent: { issues: [], total: 0 } };
     if (name === G3_JIRA_TOOL_NAMES.create) return { structuredContent: {
-      key: "RPL-73", self: `${SITE}/rest/api/3/issue/RPL-73`,
+      id: "10073", key: "RPL-73", self: `${SITE}/rest/api/3/issue/10073`,
       fields: { project: { key: args.projectKey }, issuetype: { id: "10010" }, summary: args.summary },
     } };
     if (name === G3_JIRA_TOOL_NAMES.read) return { structuredContent: {
-      key: "RPL-73", self: `${SITE}/rest/api/3/issue/RPL-73`,
+      id: "10073", key: "RPL-73", self: `${SITE}/rest/api/3/issue/10073`,
       fields: { project: { key: "RPL" }, issuetype: { id: "10010" },
         customfield_10108: { id: "101" }, customfield_10109: { id: "202" }, customfield_10110: null },
     } };

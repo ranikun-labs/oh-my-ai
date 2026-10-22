@@ -43,26 +43,46 @@ function siteCloudId(value, siteOrigin) {
 }
 
 function hasSiteIdentity(issue, siteOrigin, key) {
-  const identities = [issue?.self, issue?.url, issue?.browse_url].filter(nonEmpty);
-  return identities.some(value => {
+  const supplied = [issue?.self, issue?.url, issue?.browse_url].filter(value => value !== undefined && value !== null);
+  if (!supplied.length || (issue.id !== undefined && !/^\d+$/.test(issue.id ?? ""))) return false;
+  return supplied.every(value => {
+    if (!nonEmpty(value)) return false;
     try {
       const url = new URL(value);
-      return url.origin === siteOrigin && (url.pathname.endsWith(`/issue/${key}`)
-        || url.pathname === `/browse/${key}`);
+      if (url.origin !== siteOrigin || url.username || url.password || url.href.includes("?") || url.href.includes("#")) return false;
+      if (url.pathname === `/browse/${key}`) return true;
+      if (url.pathname === `/rest/api/2/issue/${key}` || url.pathname === `/rest/api/3/issue/${key}`) return true;
+      return nonEmpty(issue.id) && (url.pathname === `/rest/api/2/issue/${issue.id}`
+        || url.pathname === `/rest/api/3/issue/${issue.id}`);
     } catch { return false; }
   });
+}
+
+function nonEmptyError(value) {
+  if (value == null || value === false || value === "" || value === 0) return false;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === "object") return Object.keys(value).length > 0;
+  return true;
+}
+
+function hasSemanticError(data) {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return true;
+  return data.isError === true || nonEmptyError(data.error)
+    || nonEmptyError(data.errors) || nonEmptyError(data.errorMessages);
 }
 
 function responseObject(result) {
   if (!result || typeof result !== "object" || Array.isArray(result) || result.isError === true) return null;
   if (result.structuredContent && typeof result.structuredContent === "object"
-    && !Array.isArray(result.structuredContent)) return result.structuredContent;
+    && !Array.isArray(result.structuredContent))
+    return hasSemanticError(result.structuredContent) ? null : result.structuredContent;
   if (!Array.isArray(result.content)) return null;
   const texts = result.content.filter(item => item?.type === "text" && typeof item.text === "string");
   for (const item of texts) {
     try {
       const parsed = JSON.parse(item.text);
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed))
+        return hasSemanticError(parsed) ? null : parsed;
     } catch { /* MCP may include non-JSON explanatory text alongside JSON. */ }
   }
   return null;
