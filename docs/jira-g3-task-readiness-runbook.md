@@ -18,7 +18,7 @@
 Owner 별도 G3 승인 / Live Jira metadata + Type별 Activation Gate
   -> Trusted verifyGate (운영 구현 아직 없음)
   -> Intent CAS 'pending' (CreateRequestId로 wx + fsync)
-  -> Jira Create 최대 1회 (운영 transport 아직 없음)
+  -> Jira Create 요청 ID당 최대 1회 *시도* (운영 transport 아직 없음)
   -> IssueKey 별도 불변 영속 연결
   -> Jira GET: Task/Target Product/Component/Concern 실제 저장값 확인
   -> Origin 별도 불변 영속 등록(create_ready/target/target)
@@ -70,3 +70,10 @@ git diff --check
 ```
 
 위 fixture는 임시 디렉터리 + 가짜 Jira·가짜 Owner Gate 사용. 실 Jira Create나 조직 Admin 호출이 없다.
+
+## 정확한 멱등성 보장 범위
+
+- **보장 후보(단일 공유 로컬 파일시스템·동일 RequestId):** pending Intent의 `wx` CAS가 성공한 Writer만 Jira Create 호출 단계로 진행하며, 동일 ID의 자동 재시도는 차단한다.
+- **보장하지 않음:** Jira 서버 자체의 `CreateRequestId` 멱등 API, 전역/다중 호스트 exactly-once 생성, 다른 RequestId로 같은 이슈를 중복 요청하는 경우, 응답 소실 뒤 자동 결과 복구.
+- **복구:** Create가 성공했지만 응답·IssueKey 연결을 잃으면 `possibly_applied / UNKNOWN_ORIGIN`으로 격리하고 Maintainer가 Jira와 대장을 수동 대조한다. Create 재실행은 금지.
+- **권위 Reader:** 노출하는 두 Adapter Reader API 모두 Live Jira GET와 Ledger Origin 대조를 거쳐야 Target 값을 반환한다. Ledger 단독 조회는 특권 감사·복구 용도로만 사용한다.
