@@ -96,7 +96,7 @@ try {
   assert.equal((await pass.ledger.readClassificationAuthority("RPL-299")).read_authority, "none");
   const link = await pass.ledger.inspectRequest("g3-fixture-request-0001");
   assert.equal(link.link.issue_key, "RPL-201");
-  console.log("PASS: durable Intent > exactly-once Create > IssueKey link > GET > Origin/Reader");
+  console.log("PASS: durable Intent > at-most-one Create attempt > IssueKey link > GET > Origin/Reader");
 
   const readerTamper = createG3SupervisedAdapter({ ledger: pass.ledger,
     jira: fakeJira({ wrongRead: true }).jira, verifyGate: gate, siteOrigin: "https://jira.example" });
