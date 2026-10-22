@@ -101,7 +101,19 @@ try {
   const readerTamper = createG3SupervisedAdapter({ ledger: pass.ledger,
     jira: fakeJira({ wrongRead: true }).jira, verifyGate: gate, siteOrigin: "https://jira.example" });
   assert.equal((await readerTamper.readVerifiedClassification("RPL-201")).read_authority, "none");
-  console.log("PASS: ledger authority alone cannot override divergent Jira GET");
+  assert.equal((await readerTamper.readClassificationAuthority("RPL-201")).read_authority, "none",
+    "public Reader alias must not expose raw Ledger authority");
+  await assert.rejects(() => pass.actor.persistOrigin({
+    create_request_id: "g3-fixture-request-0001", issue_key: "RPL-999",
+    verified_fields: { customfield_10108: { id: "10027" },
+      customfield_10109: { id: "10028" }, customfield_10110: [] },
+  }), /Origin without same-Issue/);
+  await assert.rejects(() => pass.actor.persistOrigin({
+    create_request_id: "g3-fixture-request-0001", issue_key: "RPL-201",
+    verified_fields: { customfield_10108: { id: "10020" },
+      customfield_10109: { id: "10028" }, customfield_10110: [] },
+  }), /Origin without same-Issue/);
+  console.log("PASS: Reader alias and Origin receipts cannot bypass same Jira GET");
 
   // Fresh process/adapter using the same request ID MUST NOT call Jira Create.
   const duplicate = fakeJira();
