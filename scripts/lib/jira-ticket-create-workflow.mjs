@@ -82,6 +82,14 @@ const TARGET_ISSUE_TYPES = new Map([
   ["Research", "10013"],
 ]);
 
+function validSupplementalValue(id, value) {
+  if (id === "customfield_10045") return Array.isArray(value) && value.length > 0
+    && value.every(v => normalizedText(v?.accountId))
+    && new Set(value.map(v => v.accountId)).size === value.length;
+  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)
+    && Number.isFinite(Date.parse(value)) && new Date(value).toISOString().slice(0, 10) === value;
+}
+
 function targetCreateError(target, metadata) {
   if (!target || typeof target !== "object" || Array.isArray(target)) return "Target Create 설정 없음";
   if (target.mode !== "single_supervised") return "승인된 직렬·단일 Writer 모드 필요";
@@ -90,32 +98,47 @@ function targetCreateError(target, metadata) {
     || ![cutover.approval_ref, cutover.activation_ref, cutover.effective_from, cutover.effective_to,
       cutover.request_time, cutover.rollback_ref].every(normalizedText)) return "유형별 G3 Cutover 승인·기간·복구 증거 부족";
   const from = Date.parse(cutover.effective_from), to = Date.parse(cutover.effective_to);
-  const now = Date.parse(cutover.request_time), checked = Date.parse(live?.observed_at);
+  const requested = Date.parse(cutover.request_time), checked = Date.parse(live?.observed_at);
+  const now = Date.now();
   // Never trust a caller-provided request_time as the actual current clock.
   // Late replays must not reuse a previously valid activation window.
-  if (![from, to, now, checked].every(Number.isFinite) || !(from <= now && now <= to)
-    || Math.abs(Date.now() - now) > 5 * 60 * 1000
+  if (![from, to, requested, checked].every(Number.isFinite) || !(from <= now && now <= to)
+    || Math.abs(now - requested) > 5 * 60 * 1000
     || checked > now || now - checked > 60 * 60 * 1000) return "G3 활성 기간 또는 최신 Jira Metadata 증거 불일치";
   if (!target.request_id || !normalizedText(target.ledger_ref)
     || !/^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/.test(target.request_id)) return "지속 저장 가능한 CreateRequestId 및 Ledger 필요";
   if (!["reader", "board", "automation", "rollback", "ledger"].every(k => target.readiness?.[k] === true))
     return "Reader/Board/Automation/Rollback/Ledger 사전 검증 미완료";
-  if (!live || live.source !== "live_jira_create_metadata" || live.project !== "RPL"
+  const supportedTypeId = TARGET_ISSUE_TYPES.get(metadata?.issue_type);
+  if (!supportedTypeId || metadata.project !== "RPL" || !live
+    || live.source !== "live_jira_create_metadata" || live.project !== metadata.project
     || live.issue_type !== metadata.issue_type
-    || live.issue_type_id !== TARGET_ISSUE_TYPES.get(metadata.issue_type)) return "Jira Issue Type·실제 Create Metadata 불일치";
+    || live.issue_type_id !== supportedTypeId) return "Jira Issue Type·실제 Create Metadata 불일치";
   const fields = live.fields;
   if (!fields || LEGACY_CLASSIFICATION_FIELDS.some(k =>
-    !fields[k] || fields[k].required !== false || fields[k].hasDefaultValue !== false))
+    !fields[k] || fields[k].required !== false || fields[k].hasDefaultValue !== false
+      || (fields[k].defaultValue != null
+        && !(Array.isArray(fields[k].defaultValue) && fields[k].defaultValue.length === 0))))
     return "Legacy 필수/기본값 해제 미검증";
   if (fields[TARGET_FIELDS.product]?.required !== true || fields[TARGET_FIELDS.component]?.required !== true
     || fields[TARGET_FIELDS.concern]?.required !== false) return "Target 필수/선택 계약 미검증";
+  for (const [kind, id] of Object.entries(TARGET_FIELDS)) {
+    const field = fields[id], schema = field.schema;
+    if (field.hasDefaultValue !== false || field.defaultValue != null
+      || (kind === "concern"
+        ? schema?.type !== "array" || schema.items !== "option"
+          || schema.custom !== "com.atlassian.jira.plugin.system.customfieldtypes:multicheckboxes"
+        : schema?.type !== "option"
+          || schema.custom !== "com.atlassian.jira.plugin.system.customfieldtypes:select"))
+      return "Target 타입 또는 기본값 없음 미검증";
+  }
   if (!chosen || !Array.isArray(chosen.concerns) || chosen.concerns.length > 3)
     return "Target Product·Component 또는 Concern 0~3개가 필요";
   for (const [kind, values] of [["product", [chosen.product]], ["component", [chosen.component]],
     ["concern", chosen.concerns]]) {
     const field = fields[TARGET_FIELDS[kind]];
     if (!Array.isArray(field.allowedValues)) return "실제 Target 허용 옵션 목록 미확인";
-    if (values.some(v => !v || !/^\d+$/.test(v.id ?? "") || !normalizedText(v.value)
+    if (values.some(v => !v || typeof v.id !== "string" || !/^\d+$/.test(v.id) || !normalizedText(v.value)
       || !field.allowedValues.some(a => a.id === v.id && a.value === v.value)))
       return "선택한 Target 옵션 ID/값이 Jira Metadata와 불일치";
   }
@@ -124,17 +147,56 @@ function targetCreateError(target, metadata) {
   if (!extra || typeof extra !== "object" || Array.isArray(extra)
     || Object.keys(extra).some(k => !SUPPLEMENTAL_CREATE_FIELDS.has(k) || extra[k] == null))
     return "승인 외 보조 Create 필드 또는 누락 값";
+  for (const id of SUPPLEMENTAL_CREATE_FIELDS) {
+    const field = fields[id], schema = field?.schema;
+    if (!field || typeof field.required !== "boolean" || typeof field.hasDefaultValue !== "boolean"
+      || (id === "customfield_10045" ? schema?.type !== "array" || schema.items !== "user"
+        : schema?.type !== "date")) return "보조 Create 필드 Metadata·타입 미검증";
+    if ((field.hasDefaultValue && !validSupplementalValue(id, field.defaultValue))
+      || (!field.hasDefaultValue && field.defaultValue != null))
+      return "보조 Create 필드 기본값 증거 불일치";
+    const value = extra[id];
+    if (value === undefined) {
+      if (field.required && !field.hasDefaultValue) return "필수 보조 Create 필드 값 누락";
+      continue;
+    }
+    if (!validSupplementalValue(id, value)) return "보조 Create 필드 값·타입 불일치";
+  }
   return null;
 }
 
-function targetCreateFields(snapshot) {
+function targetCreateFields(snapshot, includeSupplemental = true) {
   const t = snapshot.target_create, selected = t.selection;
   return {
     [TARGET_FIELDS.product]: { id: selected.product.id },
     [TARGET_FIELDS.component]: { id: selected.component.id },
     ...(selected.concerns.length ? { [TARGET_FIELDS.concern]: selected.concerns.map(v => ({ id: v.id })) } : {}),
-    ...t.supplemental_fields,
+    ...(includeSupplemental ? t.supplemental_fields : {}),
   };
+}
+
+// Protocol state is transport data, not a new approval. Preserve the displayed
+// Snapshot and verified capabilities at every Target boundary. The external
+// adapter still authenticates approval, live metadata, and durable receipts.
+function approvedTargetSnapshotError(state, revalidateLive = false) {
+  const snapshot = state.approved_snapshot;
+  if (!state.target_mode || !snapshot?.target_create || !state.preview_id
+    || previewId(snapshot) !== state.preview_id) return "Approved Preview integrity mismatch";
+  try {
+    if (!state.search || previewId(previewPayload(state, state.search)) !== state.preview_id)
+      return "Current Target state differs from approved Preview";
+  } catch { return "Incomplete approved Target state"; }
+  if (["await_read", "await_origin"].includes(state.stage)
+    && (state.created_issue?.key !== state.report.actual_issue_key
+      || state.created_issue?.url !== state.report.actual_issue_url
+      || !issueUrlMatches(state.created_issue?.url, snapshot.runtime_evidence?.jira_site_origin,
+        state.created_issue?.key))) return "Created Issue identity differs from Create evidence";
+  if (!["jira.search", "jira.create", "jira.intent.persist", "jira.read", "jira.origin.persist"]
+    .every(capability => hasCapability(state, capability))) return "Target capability no longer verified";
+  if (revalidateLive && (targetCreateError(snapshot.target_create, snapshot)
+    || targetCreateError(state.metadata?.target_create, state.metadata)))
+    return "G3 activation or Metadata expired before Jira Create";
+  return null;
 }
 
 function targetQuarantine(state, reason) {
@@ -362,12 +424,13 @@ export function applyJiraCreateResult(state, created) {
   const keyValid = /^RPL-[1-9][0-9]*$/.test(created?.key ?? "");
   const verified = created?.kind === "created" && created?.tool_call_count === 1 && keyValid
     && created.project === "RPL" && created.summary === state.approved_snapshot?.contract?.Summary
-    && issueUrlMatches(created.url, state.runtime_evidence.jira_site_origin, created.key);
+    && issueUrlMatches(created.url, targetExpected
+      ? state.approved_snapshot?.runtime_evidence?.jira_site_origin
+      : state.runtime_evidence.jira_site_origin, created.key);
   if (targetExpected && state.target_mode !== true)
     return targetQuarantine(state, "Target classification stage flag tampered");
   if (state.target_mode) {
-    if (state.stage !== "await_create" || !state.approved_snapshot?.target_create
-      || !state.preview_id || previewId(state.approved_snapshot) !== state.preview_id)
+    if (state.stage !== "await_create" || approvedTargetSnapshotError(state))
       return targetQuarantine(state, "Create result outside approved Intent or immutable Preview stage");
     if (!verified) return targetQuarantine(state, "Target Create identity not verified");
     state.created_issue = { key: created.key, url: created.url };
@@ -392,13 +455,10 @@ export function applyJiraIntentResult(state, result) {
   if (!state.target_mode || state.stage !== "await_intent" || !state.approved_snapshot?.target_create) return terminal(state, {
     approval_status: "blocked", allowed_next_step: "Unexpected Intent result; Create forbidden",
   });
-  if (targetCreateError(state.metadata?.target_create, state.metadata)) {
+  const snapshotProblem = approvedTargetSnapshotError(state, true);
+  if (snapshotProblem) {
     state.stage = "intent_blocked";
-    return terminal(state, { target_create_status: "intent_blocked", allowed_next_step: "G3 activation or Metadata expired before Jira Create" });
-  }
-  if (previewId(state.approved_snapshot) !== state.preview_id) {
-    state.stage = "intent_blocked";
-    return terminal(state, { target_create_status: "intent_blocked", allowed_next_step: "Approved Preview integrity mismatch" });
+    return terminal(state, { target_create_status: "intent_blocked", allowed_next_step: snapshotProblem });
   }
   const t = state.approved_snapshot.target_create;
   if (result?.status !== "persisted" || result?.durable !== true || result?.tool_call_count !== 1
@@ -420,14 +480,18 @@ export function applyJiraIntentResult(state, result) {
 /** Compare the actual Jira GET with the exact approved option snapshot. */
 export function applyJiraReadResult(state, result) {
   if (!state.target_mode || state.stage !== "await_read" || !state.created_issue?.key
-    || !state.approved_snapshot?.target_create)
-    return targetQuarantine(state, "Unexpected or incomplete post-Create read");
+    || approvedTargetSnapshotError(state))
+    return targetQuarantine(state, "Unexpected or incomplete post-Create read or Preview mismatch");
   const t = state.approved_snapshot.target_create;
   const expected = t.selection, f = result?.fields;
   const expectedConcern = expected.concerns.map(v => v.id).sort();
-  const actualConcern = Array.isArray(f?.[TARGET_FIELDS.concern])
-    ? f[TARGET_FIELDS.concern].map(v => v?.id).sort() : [];
+  const concern = f?.[TARGET_FIELDS.concern];
+  const concernPresent = f && Object.hasOwn(f, TARGET_FIELDS.concern);
+  const concernShape = concern === null || (Array.isArray(concern)
+    && concern.every(v => typeof v?.id === "string" && /^\d+$/.test(v.id)));
+  const actualConcern = Array.isArray(concern) ? concern.map(v => v?.id).sort() : [];
   const good = result?.tool_call_count === 1 && result?.key === state.created_issue.key
+    && concernPresent && concernShape
     && result?.issue_type_id === t.create_metadata.issue_type_id
     && f?.[TARGET_FIELDS.product]?.id === expected.product.id
     && f?.[TARGET_FIELDS.component]?.id === expected.component.id
@@ -440,15 +504,16 @@ export function applyJiraReadResult(state, result) {
       ledger_ref: t.ledger_ref, create_activation_ref: t.cutover.activation_ref,
       cutover_approval_ref: t.cutover.approval_ref, origin: "target_create",
       phase: "create_ready", read_authority: "target", write_authority: "target",
-      verified_fields: targetCreateFields(state.approved_snapshot), legacy_snapshot_ref: "not_applicable" },
+      verified_fields: { ...targetCreateFields(state.approved_snapshot, false),
+        [TARGET_FIELDS.concern]: expectedConcern.map(id => ({ id })) }, legacy_snapshot_ref: "not_applicable" },
   } };
 }
 
 /** Report successful Target Create only after durable per-Issue Origin registration. */
 export function applyJiraOriginResult(state, result) {
   if (!state.target_mode || state.stage !== "await_origin" || !state.created_issue?.key
-    || !state.approved_snapshot?.target_create)
-    return targetQuarantine(state, "Unexpected or incomplete Origin confirmation");
+    || approvedTargetSnapshotError(state))
+    return targetQuarantine(state, "Unexpected or incomplete Origin confirmation or Preview mismatch");
   const t = state.approved_snapshot.target_create;
   if (result?.tool_call_count !== 1 || result?.status !== "persisted" || result?.durable !== true
     || result?.issue_key !== state.created_issue.key || result?.create_request_id !== t.request_id

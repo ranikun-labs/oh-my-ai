@@ -56,6 +56,7 @@ function createRequestFromSnapshot(snapshot) {
 
 function invokeRuntime(input) {
   const cli = spawnSync(process.execPath, ["scripts/oh-my-ai.mjs", "jira-ticket", "--json", JSON.stringify(input)], { encoding: "utf8" });
+  assert.ifError(cli.error);
   assert.equal(cli.status, 0, cli.stderr);
   return JSON.parse(cli.stdout);
 }
@@ -253,9 +254,15 @@ const targetConfig = () => ({
       customfield_10042: { required: false, hasDefaultValue: false },
       customfield_10043: { required: false, hasDefaultValue: false },
       customfield_10044: { required: false, hasDefaultValue: false },
-      customfield_10108: { required: true, allowedValues: [{ id: "10027", value: "dev-harness" }] },
-      customfield_10109: { required: true, allowedValues: [{ id: "10028", value: "backend" }] },
-      customfield_10110: { required: false, allowedValues: [{ id: "10038", value: "integration" }] },
+      customfield_10015: { required: true, hasDefaultValue: false, schema: { type: "date" } },
+      duedate: { required: true, hasDefaultValue: false, schema: { type: "date" } },
+      customfield_10045: { required: false, hasDefaultValue: false, schema: { type: "array", items: "user" } },
+      customfield_10108: { required: true, hasDefaultValue: false,
+        schema: { type: "option", custom: "com.atlassian.jira.plugin.system.customfieldtypes:select" }, allowedValues: [{ id: "10027", value: "dev-harness" }] },
+      customfield_10109: { required: true, hasDefaultValue: false,
+        schema: { type: "option", custom: "com.atlassian.jira.plugin.system.customfieldtypes:select" }, allowedValues: [{ id: "10028", value: "backend" }] },
+      customfield_10110: { required: false, hasDefaultValue: false,
+        schema: { type: "array", items: "option", custom: "com.atlassian.jira.plugin.system.customfieldtypes:multicheckboxes" }, allowedValues: [{ id: "10038", value: "integration" }] },
     },
   },
   selection: {
@@ -277,8 +284,8 @@ function startTarget(config = targetConfig(), caps = targetCapabilities) {
     capabilities: caps, runtime_evidence: runtimeEvidence,
   });
 }
-function approvedTarget() {
-  let s = startTarget();
+function approvedTarget(config = targetConfig()) {
+  let s = startTarget(config);
   assert.equal(s.required_action.type, "jira.search_required");
   s = applyJiraSearchResult(s.state, searchNone);
   assert.equal(s.required_action.type, "preview_required");
@@ -508,5 +515,164 @@ assert.equal(fullTarget.origin_status, "UNKNOWN_ORIGIN");
 assert.equal(fullTarget.mutation_status, "possibly_applied");
 assert.equal(fullTarget.automatic_retry, false);
 console.log("passed: full-Target-adapter-simulation-and-failures");
+
+// Independent review regressions: synthetic states never invoke Jira.
+for (const [name, mutate] of [
+  ["legacy-default-contradiction", c => { c.create_metadata.fields.customfield_10042.defaultValue = [{ id: "unapproved" }]; }],
+  ["supplemental-default-missing", c => { c.create_metadata.fields.duedate.hasDefaultValue = true; delete c.supplemental_fields.duedate; }],
+  ["supplemental-default-malformed", c => { c.create_metadata.fields.duedate.hasDefaultValue = true; c.create_metadata.fields.duedate.defaultValue = "2030-02-30"; delete c.supplemental_fields.duedate; }],
+  ["supplemental-default-contradiction", c => { c.create_metadata.fields.customfield_10045.defaultValue = [{ accountId: "unapproved" }]; }],
+  ["target-default-present", c => { c.create_metadata.fields.customfield_10108.hasDefaultValue = true; }],
+  ["target-default-unknown", c => { delete c.create_metadata.fields.customfield_10109.hasDefaultValue; }],
+  ["target-schema-missing", c => { delete c.create_metadata.fields.customfield_10108.schema; }],
+  ["target-schema-wrong", c => { c.create_metadata.fields.customfield_10109.schema.type = "array"; }],
+  ["concern-schema-wrong", c => { c.create_metadata.fields.customfield_10110.schema.items = "string"; }],
+  ["type-id-missing", c => { delete c.create_metadata.issue_type_id; }],
+  ["supplemental-schema-missing", c => { delete c.create_metadata.fields.duedate.schema; }],
+  ["supplemental-metadata-missing", c => { delete c.create_metadata.fields.customfield_10045; }],
+  ["required-date-missing", c => { delete c.supplemental_fields.duedate; }],
+  ["required-people-missing", c => { c.create_metadata.fields.customfield_10045.required = true; }],
+  ["supplemental-date-invalid", c => { c.supplemental_fields.duedate = "2030-02-30"; }],
+  ["supplemental-people-invalid", c => { c.supplemental_fields.customfield_10045 = "unverified-user"; }],
+]) {
+  const config = targetConfig(); mutate(config);
+  const blocked = startTarget(config);
+  assert.equal(blocked.required_action, null, name);
+  assert.equal(blocked.report.create_attempted, false, name);
+}
+const unsupportedConfig = targetConfig();
+unsupportedConfig.create_metadata.issue_type = "Story";
+delete unsupportedConfig.create_metadata.issue_type_id;
+const unsupported = beginJiraTicketCreateWorkflow({ runtime: "codex", contract,
+  metadata: { ...metadata, issue_type: "Story", target_create: unsupportedConfig },
+  capabilities: targetCapabilities, runtime_evidence: runtimeEvidence });
+assert.equal(unsupported.required_action, null, "unsupported type plus missing ID must not compare undefined === undefined");
+const explicitPeople = targetConfig();
+explicitPeople.create_metadata.fields.customfield_10045.required = true;
+explicitPeople.supplemental_fields.customfield_10045 = [{ accountId: "fixture-only-account" }];
+assert.equal(startTarget(explicitPeople).required_action.type, "jira.search_required");
+const actualDefaults = targetConfig();
+actualDefaults.create_metadata.fields.customfield_10045 = {
+  required: true, hasDefaultValue: true, schema: { type: "array", items: "user" },
+  defaultValue: [{ accountId: "fixture-default-account" }],
+};
+actualDefaults.create_metadata.fields.duedate.hasDefaultValue = true;
+actualDefaults.create_metadata.fields.duedate.defaultValue = "2030-01-02";
+delete actualDefaults.supplemental_fields.duedate;
+assert.equal(startTarget(actualDefaults).required_action.type, "jira.search_required", "actual valid defaults are evidence, not merely hasDefaultValue flags");
+let changedProject = startTarget();
+changedProject.state.metadata.project = "OTHER";
+changedProject = applyJiraSearchResult(changedProject.state, searchNone);
+assert.equal(changedProject.required_action, null, "caller project must still match live RPL metadata after Search");
+assert.equal(changedProject.report.create_attempted, false);
+console.log("passed: target-real-schema-default-and-required-input-boundaries");
+
+const actualNow = Date.now;
+try {
+  Date.now = () => targetFixtureNow;
+  for (const [name, configure] of [
+    ["expired-backdated-request", c => {
+      c.cutover.effective_to = new Date(targetFixtureNow - 120_000).toISOString();
+      c.cutover.request_time = new Date(targetFixtureNow - 180_000).toISOString();
+    }],
+    ["future-postdated-request", c => {
+      c.cutover.effective_from = new Date(targetFixtureNow + 120_000).toISOString();
+      c.cutover.request_time = new Date(targetFixtureNow + 180_000).toISOString();
+    }],
+    ["stale-metadata-backdated-request", c => {
+      c.cutover.request_time = new Date(targetFixtureNow - 180_000).toISOString();
+      c.create_metadata.observed_at = new Date(targetFixtureNow - 3700_000).toISOString();
+    }],
+  ]) {
+    const config = targetConfig(); configure(config);
+    assert.equal(startTarget(config).required_action, null, name);
+  }
+  let expiredIntent = approvedTarget();
+  Date.now = () => targetFixtureNow + 3600_001;
+  expiredIntent = storedIntent(expiredIntent);
+  assert.equal(expiredIntent.required_action, null, "activation must still cover actual clock immediately before Create");
+  assert.equal(expiredIntent.report.create_attempted, false);
+} finally { Date.now = actualNow; }
+console.log("passed: actual-clock-activation-and-metadata-expiry");
+
+for (const [name, mutate] of [
+  ["valid-selection-replaced", s => {
+    s.metadata.target_create.selection.product = { id: "10020", value: "carelog" };
+    s.metadata.target_create.create_metadata.fields.customfield_10108.allowedValues.push({ id: "10020", value: "carelog" });
+  }],
+  ["fresh-metadata-replaced", s => { s.metadata.target_create.create_metadata.observed_at = new Date(targetFixtureNow - 1_000).toISOString(); }],
+  ...["jira.search", "jira.create", "jira.intent.persist", "jira.read", "jira.origin.persist"]
+    .map(capability => ["capability-lost-" + capability, s => {
+      s.capabilities = structuredClone(s.capabilities); s.capabilities[capability].connection_verified = false;
+    }]),
+]) {
+  let changed = approvedTarget(); mutate(changed.state);
+  changed = storedIntent(changed);
+  assert.equal(changed.required_action, null, name);
+  assert.equal(changed.report.create_attempted, false, name);
+}
+for (const stage of ["create", "read", "origin"]) {
+  let changed = storedIntent(approvedTarget());
+  if (stage !== "create") changed = applyJiraCreateResult(changed.state, fakeIssueResult());
+  if (stage === "origin") changed = applyJiraReadResult(changed.state, verifiedTargetRead());
+  changed.state.approved_snapshot.target_create.selection.product.id = "10020";
+  const result = stage === "create" ? applyJiraCreateResult(changed.state, fakeIssueResult())
+    : stage === "read" ? applyJiraReadResult(changed.state, verifiedTargetRead())
+      : applyJiraOriginResult(changed.state, { status: "persisted", durable: true });
+  assert.equal(result.required_action, null, stage + " Snapshot changed");
+  assert.equal(result.report.origin_status, "UNKNOWN_ORIGIN", stage);
+  assert.equal(result.report.mutation_status, "possibly_applied", stage);
+  assert.notEqual(result.report.verification_status, "verified", stage);
+}
+let wrongSite = storedIntent(approvedTarget());
+wrongSite.state.runtime_evidence = { jira_site_origin: "https://forged.example" };
+wrongSite = applyJiraCreateResult(wrongSite.state, { ...fakeIssueResult(), url: "https://forged.example/browse/RPL-201" });
+assert.equal(wrongSite.report.origin_status, "UNKNOWN_ORIGIN");
+for (const stage of ["read", "origin"]) {
+  for (const change of ["key", "url"]) {
+    let current = storedIntent(approvedTarget());
+    current = applyJiraCreateResult(current.state, fakeIssueResult());
+    if (stage === "origin") current = applyJiraReadResult(current.state, verifiedTargetRead());
+    if (change === "key") current.state.created_issue.key = "RPL-202";
+    else current.state.created_issue.url = "https://jira.example/browse/RPL-202";
+    const read = verifiedTargetRead(); read.key = current.state.created_issue.key;
+    const result = stage === "read" ? applyJiraReadResult(current.state, read)
+      : applyJiraOriginResult(current.state, { status: "persisted", durable: true, tool_call_count: 1,
+        issue_key: current.state.created_issue.key, create_request_id: targetConfig().request_id,
+        ledger_ref: targetConfig().ledger_ref, phase: "create_ready", read_authority: "target", write_authority: "target",
+        cutover_approval_ref: targetConfig().cutover.approval_ref,
+        create_activation_ref: targetConfig().cutover.activation_ref, origin: "target_create" });
+    assert.equal(result.required_action, null, stage + " identity " + change);
+    assert.equal(result.report.origin_status, "UNKNOWN_ORIGIN");
+    assert.equal(result.report.actual_issue_key, "RPL-201");
+  }
+}
+console.log("passed: approved-snapshot-and-capabilities-stay-fixed-across-stages");
+
+const emptyConcernConfig = () => { const c = targetConfig(); c.selection.concerns = []; return c; };
+for (const [name, actual, omit] of [
+  ["missing-concern", undefined, true], ["undefined-concern", undefined, false],
+  ["object-concern", {}, false], ["string-concern", "", false],
+  ["invalid-concern-option", [{ id: 10038 }], false], ["null-concern-option", [null], false],
+]) {
+  let current = storedIntent(approvedTarget(emptyConcernConfig()));
+  current = applyJiraCreateResult(current.state, fakeIssueResult());
+  const read = verifiedTargetRead();
+  if (omit) delete read.fields.customfield_10110; else read.fields.customfield_10110 = actual;
+  const quarantined = applyJiraReadResult(current.state, read);
+  assert.equal(quarantined.report.origin_status, "UNKNOWN_ORIGIN", name);
+  assert.equal(quarantined.required_action, null, name);
+}
+for (const empty of [null, []]) {
+  let current = storedIntent(approvedTarget(emptyConcernConfig()));
+  current = applyJiraCreateResult(current.state, fakeIssueResult());
+  const read = verifiedTargetRead(); read.fields.customfield_10110 = empty;
+  current = applyJiraReadResult(current.state, read);
+  assert.equal(current.required_action.type, "jira.origin_persist_required");
+  assert.deepEqual(current.required_action.request.verified_fields.customfield_10110, []);
+  assert.equal(Object.hasOwn(current.required_action.request.verified_fields, "customfield_10015"), false);
+  assert.equal(Object.hasOwn(current.required_action.request.verified_fields, "duedate"), false);
+}
+console.log("passed: read-requires-present-concern-and-origin-claims-only-read-fields");
 
 console.log("jira-ticket runtime protocol fixtures passed");
