@@ -108,6 +108,18 @@ try {
     ledger: unverifiedLedger, verifyGate: gate, siteOrigin: "https://jira.example",
     capabilityEvidence: staleSiteCapabilities }),
   /missing verified capability evidence: jira.create/);
+  const absentAvailability = structuredClone(fixtureCapabilities);
+  absentAvailability["jira.search"].available = false;
+  assert.throws(() => createG3SupervisedAdapter({ jira: unverifiedJira.jira,
+    ledger: unverifiedLedger, verifyGate: gate, siteOrigin: "https://jira.example",
+    capabilityEvidence: absentAvailability }),
+  /missing verified capability evidence: jira.search/);
+  const unverifiedConnection = structuredClone(fixtureCapabilities);
+  unverifiedConnection["jira.read"].connection_verified = false;
+  assert.throws(() => createG3SupervisedAdapter({ jira: unverifiedJira.jira,
+    ledger: unverifiedLedger, verifyGate: gate, siteOrigin: "https://jira.example",
+    capabilityEvidence: unverifiedConnection }),
+  /missing verified capability evidence: jira.read/);
   const missingEvidenceRef = structuredClone(fixtureCapabilities);
   missingEvidenceRef["jira.intent.persist"].evidence_ref = "";
   assert.throws(() => createG3SupervisedAdapter({ jira: unverifiedJira.jira,
