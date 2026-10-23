@@ -40,6 +40,14 @@ test-truthfulness-fixtures:
 test-jira-ticket-fixtures:
 	./scripts/test-jira-ticket-fixtures.sh
 
+.PHONY: test-jira-ticket-g3-integrations
+test-jira-ticket-g3-integrations:
+	node scripts/test-jira-ticket-g3-jira-connector.mjs
+	node scripts/test-jira-ticket-g3-trusted-gate.mjs
+	node scripts/test-jira-ticket-g3-ledger-recovery.mjs
+	node scripts/test-jira-ticket-g3-authority-reader.mjs
+	node scripts/test-jira-ticket-g3-integration.mjs
+
 test-jira-work-fixtures:
 	./scripts/test-jira-work-fixtures.sh
 

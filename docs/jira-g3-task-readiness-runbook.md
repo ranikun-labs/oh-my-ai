@@ -46,6 +46,19 @@ Foundation 정책 경계: §8.0에 해당하는 Owner 승인 소량·단일 Writ
 
 ## Task(10010)만 실제 G3 시험할 때 필요한 Owner 결정
 
+### 후속 통합 코드의 검증 범위
+
+- `jira-ticket-g3-jira-connector.mjs`: 현재 Plugin 도구의 Search/Create/GET 인자에 매핑하고, 별도로 주입된 세션 검증자의 Site/Cloud/Capability·유효기간 증거를 매 호출 전에 검사한다. 합성 응답만 검증했으며 실제 운영 인증·도구 응답 호환성·연결 상태는 **NOT_VERIFIED**다. Create 응답이 `{id,key,self}`뿐이거나 반환 Project/Summary/IssueType 근거가 부족하면 `possibly_applied`로 격리하며 자동 재시도하지 않는다.
+- `jira-ticket-g3-trusted-gate.mjs`: 독립적으로 고정한 공개키로 Owner 승인·Activation·정책·실시간 Metadata의 서명과 기간·정확한 Preview/Create 범위를 검증한다. Legacy required/default와 필수 일정·담당자도 신뢰 Metadata로 확인한다. 기존 Target 읽기는 별도의 이슈별 서명 권한을 검증하므로 미래 Create의 만료·Rollback과 분리된다. 실제 발급자, 키 배포·폐기, 신뢰 원천 조회 및 영속 Replay CAS 연결은 운영 환경에서 별도 검증해야 한다. 테스트의 임시 서명자는 운영 Owner가 아니다.
+- `jira-ticket-g3-ledger-recovery.mjs`: 기존 파일 원장과 별도 서명된 수동 복구 승인으로 알려진 IssueKey를 GET·대조하고 연결/Origin을 복구한다. Create/Search/Admin 호출은 없으며 손상·불일치·조회 소실 시 격리한다. 운영 원장 버전 보존·백업·복구를 대신하지 않는다.
+- `jira-ticket-g3-authority-reader.mjs`: 인증된 Legacy 출처 resolver와 Target Origin+GET Reader를 결합한다. Legacy 다중 선택값은 전부 보존하고, 기존 이전 이슈는 별도 `cutover` 근거를 요구한다. 현 파일 Ledger는 `target_create`만 저장하므로 기존 이전 이슈에는 별도 검증된 Migration Reader가 필요하다. RPL-112/113/114는 항상 격리하고, UNKNOWN은 집계의 분류 건수에서 제외한다. Board/Filter/Automation 설정을 변경하는 코드는 없다.
+
+```bash
+make test-jira-ticket-g3-integrations
+```
+
+이 명령은 합성 Jira·임시 서명키·임시 원장만 사용한다. §8.0의 소량·단일 Writer·직렬 경량 대장 허용은 유지하며, 병렬 개발·테스트는 운영 동시 Writer 승인을 뜻하지 않는다. 이 통합 코드를 병합하더라도 실제 Connector 연결, Task Admin 변경, 시험 Create 최대 1건 및 G3 Cutover는 각각 Owner Gate를 통과해야 한다.
+
 | 항목 | 현행(READ-ONLY 확인) | 변경/검증 예정 | 권한 |
 |---|---|---|---|
 | Legacy Product `customfield_10042` | Required, 기본값 있음 | Optional, default 해제, 기존 값 보존 | Jira Admin 별도 승인 |
