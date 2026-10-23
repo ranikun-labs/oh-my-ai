@@ -24,6 +24,7 @@ jobs:
       - name: Checkout PR code
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - name: Use Node.js 22
         uses: actions/setup-node@v4
@@ -46,6 +47,7 @@ jobs:
       - name: Checkout PR code
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - name: Use Node.js 22
         uses: actions/setup-node@v4
