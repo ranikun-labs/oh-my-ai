@@ -42,9 +42,28 @@ function siteCloudId(value, siteOrigin) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
-function hasSiteIdentity(issue, siteOrigin, key) {
+function hasSiteIdentity(issue, siteOrigin, key, cloudId) {
+  // Rovo returns Jira's cloud-scoped API self URL plus a browser URL. Bind both
+  // the API cloud/issue id and browser site/key before accepting that shape.
+  if (typeof issue?.self === "string") {
+    try {
+      const self = new URL(issue.self);
+      if (self.hostname === "api.atlassian.com" && self.pathname.startsWith("/ex/jira/")) {
+        const match = /^\/ex\/jira\/([^/]+)\/rest\/api\/3\/issue\/([1-9][0-9]*)$/.exec(self.pathname);
+        const id = String(issue.id ?? "");
+        const browserUrl = `${siteOrigin}/browse/${key}`;
+        return Boolean(self.origin === "https://api.atlassian.com" && match && match[1] === cloudId
+          && match[2] === id && issue.key === key
+          && ISSUE_KEY.test(key ?? "") && issue.webUrl === `${siteOrigin}/browse/${key}`
+          && !self.username && !self.password && !self.search && !self.hash
+          && (issue.url == null || issue.url === browserUrl)
+          && (issue.browse_url == null || issue.browse_url === browserUrl));
+      }
+    } catch { return false; }
+  }
   const supplied = [issue?.self, issue?.url, issue?.browse_url].filter(value => value !== undefined && value !== null);
   if (!supplied.length || (issue.id !== undefined && !/^\d+$/.test(issue.id ?? ""))) return false;
+  if (issue.webUrl != null && issue.webUrl !== `${siteOrigin}/browse/${key}`) return false;
   return supplied.every(value => {
     if (!nonEmpty(value)) return false;
     try {
@@ -71,11 +90,87 @@ function hasSemanticError(data) {
     || nonEmptyError(data.errors) || nonEmptyError(data.errorMessages);
 }
 
-function responseObject(result) {
+function isRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function parsedTextPayloads(result) {
+  const parsed = [];
+  for (const item of Array.isArray(result?.content) ? result.content : []) {
+    if (item?.type !== "text" || typeof item.text !== "string") continue;
+    try {
+      const value = JSON.parse(item.text);
+      parsed.push(value);
+    } catch {
+      if (/^[\[{]/.test(item.text.trim())) return null;
+      /* MCP may include explanatory text alongside JSON. */
+    }
+  }
+  return parsed;
+}
+
+function stableJson(value) {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (isRecord(value)) return `{${Object.keys(value).sort().map(key =>
+    `${JSON.stringify(key)}:${stableJson(value[key])}`).join(",")}}`;
+  return JSON.stringify(value);
+}
+
+function sameRovoIssueEvidence(raw, node, expectedFields) {
+  if (!isRecord(raw) || !isRecord(node) || String(raw.id ?? "") !== String(node.id ?? "")
+    || raw.key !== node.key || raw.self !== node.self) return false;
+  for (const name of expectedFields) {
+    if (!isRecord(raw.fields) || !isRecord(node.fields)
+      || !Object.hasOwn(raw.fields, name) || !Object.hasOwn(node.fields, name)
+      || stableJson(raw.fields[name]) !== stableJson(node.fields[name])) return false;
+  }
+  return raw.webUrl === undefined || raw.webUrl === node.webUrl;
+}
+
+function rovoRawIssues(payload) {
+  if (!isRecord(payload)) return null;
+  if (Array.isArray(payload.issues)) return payload.issues;
+  if (isRecord(payload.issues) && Array.isArray(payload.issues.nodes)) return payload.issues.nodes;
+  if (typeof payload.key === "string") return [payload];
+  return null;
+}
+
+function validRovoEnvelope(result, data, expectedFields) {
+  const wrapper = data?.issues;
+  if (!isRecord(wrapper) || !Array.isArray(wrapper.nodes)) return true;
+  const nodes = wrapper.nodes;
+  if (nodes.some(node => !isRecord(node))) return false;
+  if (Object.hasOwn(wrapper, "pageInfo")) {
+    const pageInfo = wrapper.pageInfo;
+    if (!isRecord(pageInfo) || typeof pageInfo.hasNextPage !== "boolean" || pageInfo.hasNextPage
+      || !Object.hasOwn(pageInfo, "endCursor")
+      || (pageInfo.endCursor !== null && !nonEmpty(pageInfo.endCursor))) return false;
+  }
+  const payloads = parsedTextPayloads(result);
+  if (!payloads || payloads.length > 1) return false;
+  if (!payloads.length) return true;
+  const raw = payloads[0];
+  if (!isRecord(raw) || hasSemanticError(raw)) return false;
+  const rawIssues = rovoRawIssues(raw);
+  if (!rawIssues || rawIssues.length !== nodes.length
+    || !rawIssues.every((issue, index) => sameRovoIssueEvidence(issue, nodes[index], expectedFields))) return false;
+  if (Object.hasOwn(raw, "isLast")
+    && (typeof raw.isLast !== "boolean" || !isRecord(wrapper.pageInfo)
+      || raw.isLast === wrapper.pageInfo.hasNextPage)) return false;
+  if (raw.nextPageToken != null && raw.nextPageToken !== ""
+    && (!isRecord(wrapper.pageInfo) || wrapper.pageInfo.hasNextPage !== true)) return false;
+  if (Object.hasOwn(raw, "total") && (!Number.isSafeInteger(raw.total) || raw.total !== nodes.length)) return false;
+  return true;
+}
+
+function responseObject(result, expectedFields = []) {
   if (!result || typeof result !== "object" || Array.isArray(result) || result.isError === true) return null;
+  if (result.structuredContent != null && !isRecord(result.structuredContent)) return null;
   if (result.structuredContent && typeof result.structuredContent === "object"
-    && !Array.isArray(result.structuredContent))
-    return hasSemanticError(result.structuredContent) ? null : result.structuredContent;
+    && !Array.isArray(result.structuredContent)) {
+    return hasSemanticError(result.structuredContent) || !validRovoEnvelope(result, result.structuredContent, expectedFields)
+      ? null : result.structuredContent;
+  }
   if (!Array.isArray(result.content)) return null;
   const texts = result.content.filter(item => item?.type === "text" && typeof item.text === "string");
   for (const item of texts) {
@@ -90,11 +185,15 @@ function responseObject(result) {
 
 function responseIssue(data) {
   if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+  if (Object.hasOwn(data, "issues")) {
+    const nodes = data.issues?.nodes;
+    return Array.isArray(nodes) && nodes.length === 1 && isRecord(nodes[0]) ? nodes[0] : null;
+  }
   const candidate = data.issue && typeof data.issue === "object" ? data.issue : data;
   return candidate && typeof candidate === "object" && !Array.isArray(candidate) ? candidate : null;
 }
 
-function normalizeCreated(data, siteOrigin, request) {
+function normalizeCreated(data, siteOrigin, cloudId, request) {
   const issue = responseIssue(data);
   const key = issue?.key;
   const fields = issue?.fields;
@@ -105,18 +204,18 @@ function normalizeCreated(data, siteOrigin, request) {
   if (!ISSUE_KEY.test(key ?? "") || project !== request.project || summary !== request.summary
     || !/^\d+$/.test(issueTypeId ?? "")
     || (expectedIssueTypeId ? issueTypeId !== expectedIssueTypeId : fields?.issuetype?.name !== request.issue_type)
-    || !hasSiteIdentity(issue, siteOrigin, key)) return null;
+    || !hasSiteIdentity(issue, siteOrigin, key, cloudId)) return null;
   // The returned key, project, summary and same-site Jira self URL bind this
   // browse URL to the Create response; no key or site identity is guessed.
-  return { kind: "created", key, url: `${siteOrigin}/browse/${key}`, project, summary, tool_call_count: 1 };
+  return { kind: "created", key, url: issue.webUrl ?? `${siteOrigin}/browse/${key}`, project, summary, tool_call_count: 1 };
 }
 
-function normalizeRead(data, siteOrigin, request) {
+function normalizeRead(data, siteOrigin, cloudId, request) {
   const issue = responseIssue(data);
   const fields = issue?.fields;
   const key = issue?.key;
   if (key !== request.key || !ISSUE_KEY.test(key ?? "") || fields?.project?.key !== "RPL"
-    || !nonEmpty(fields?.issuetype?.id) || !hasSiteIdentity(issue, siteOrigin, key)) return null;
+    || !nonEmpty(fields?.issuetype?.id) || !hasSiteIdentity(issue, siteOrigin, key, cloudId)) return null;
   if (!request.fields.every(name => Object.hasOwn(fields, name))) return null;
   const returnedFields = Object.fromEntries(request.fields.filter(name => name !== "issuetype")
     .map(name => [name, fields[name]]));
@@ -141,7 +240,40 @@ function searchArgs(request, cloudId) {
   };
 }
 
-function searchOutcome(data, request, siteOrigin) {
+function validRovoSearchWebUrl(value, siteOrigin) {
+  if (!nonEmpty(value)) return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.origin === siteOrigin && url.pathname === "/issues"
+      && !url.username && !url.password && !url.hash;
+  } catch { return false; }
+}
+
+function searchOutcome(data, request, siteOrigin, cloudId) {
+  if (isRecord(data?.issues) && Array.isArray(data.issues.nodes)) {
+    const result = data.issues;
+    const pageInfo = result.pageInfo;
+    if (!isRecord(pageInfo) || typeof pageInfo.hasNextPage !== "boolean"
+      || !Object.hasOwn(pageInfo, "endCursor")
+      || (pageInfo.endCursor !== null && !nonEmpty(pageInfo.endCursor))
+      || !validRovoSearchWebUrl(result.webUrl, siteOrigin) || pageInfo.hasNextPage)
+      return { status: "failed", tool_call_count: 1 };
+    if (!result.nodes.length) return { status: "none", tool_call_count: 1 };
+    const normalized = [];
+    for (const issue of result.nodes) {
+      const key = issue?.key, fields = issue?.fields;
+      if (!ISSUE_KEY.test(key ?? "") || fields?.project?.key !== request.project
+        || typeof fields?.summary !== "string" || !fields.summary.trim()
+        || !/^\d+$/.test(fields?.issuetype?.id ?? "")
+        || !hasSiteIdentity(issue, siteOrigin, key, cloudId))
+        return { status: "failed", tool_call_count: 1 };
+      normalized.push({ key, project: fields.project.key, summary: fields.summary, url: issue.webUrl });
+    }
+    const exact = normalized.find(issue => issue.summary.normalize("NFKC").trim().replace(/\s+/g, " ").toLocaleLowerCase()
+      === request.summary_keywords.normalize("NFKC").trim().replace(/\s+/g, " ").toLocaleLowerCase());
+    const candidate = exact ?? normalized[0];
+    return { status: exact ? "exact_duplicate" : "similar", issue: candidate, tool_call_count: 1 };
+  }
   const issues = data?.issues;
   if (!Array.isArray(issues)) return { status: "failed", tool_call_count: 1 };
   const hasTotal = Object.hasOwn(data, "total");
@@ -158,7 +290,7 @@ function searchOutcome(data, request, siteOrigin) {
     if (!ISSUE_KEY.test(key ?? "") || fields?.project?.key !== request.project
       || typeof fields?.summary !== "string" || !fields.summary.trim()
       || !/^\d+$/.test(fields?.issuetype?.id ?? "")
-      || !hasSiteIdentity(issue, siteOrigin, key))
+      || !hasSiteIdentity(issue, siteOrigin, key, cloudId))
       return { status: "similar", tool_call_count: 1 };
     normalized.push({ key, project: fields.project.key, summary: fields.summary,
       ...(nonEmpty(issue.browse_url) ? { url: issue.browse_url } : nonEmpty(issue.self) ? { url: issue.self } : {}) });
@@ -258,8 +390,8 @@ export async function createG3JiraConnector({ invokeTool, verifySession, session
       let response;
       try { response = await invokeTool(TOOL.search, args); }
       catch { return { status: "failed", tool_call_count: 1 }; }
-      const data = responseObject(response);
-      return data ? searchOutcome(data, request, siteOrigin) : { status: "failed", tool_call_count: 1 };
+      const data = responseObject(response, ["project", "issuetype", "summary"]);
+      return data ? searchOutcome(data, request, siteOrigin, cloudId) : { status: "failed", tool_call_count: 1 };
     },
     async create(request) {
       const args = createArgs(request, cloudId);
@@ -270,8 +402,8 @@ export async function createG3JiraConnector({ invokeTool, verifySession, session
         throw createError("Jira Create response was lost or timed out; it may have applied. Do not retry.",
           { toolCallCount: 1, possibleApplied: true, cause });
       }
-      const data = responseObject(response);
-      const result = data && normalizeCreated(data, siteOrigin, request);
+      const data = responseObject(response, ["project", "issuetype", "summary"]);
+      const result = data && normalizeCreated(data, siteOrigin, cloudId, request);
       if (result) return result;
       throw createError("Jira Create returned no complete same-site key, summary and project identity; it may have applied. Do not retry.",
         { toolCallCount: 1, possibleApplied: true });
@@ -289,8 +421,8 @@ export async function createG3JiraConnector({ invokeTool, verifySession, session
       } catch (cause) {
         throw createError("Jira GET failed or timed out", { toolCallCount: 1, cause });
       }
-      const data = responseObject(response);
-      const normalized = data && normalizeRead(data, siteOrigin, { key, fields });
+      const data = responseObject(response, [...new Set(["project", ...fields])]);
+      const normalized = data && normalizeRead(data, siteOrigin, cloudId, { key, fields });
       if (!normalized) throw createError("Jira GET response is malformed, incomplete or outside the verified site", { toolCallCount: 1 });
       return normalized;
     },

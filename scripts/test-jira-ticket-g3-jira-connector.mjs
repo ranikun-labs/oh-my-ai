@@ -33,6 +33,34 @@ function jiraIssue({ key = "RPL-42", id = "10042", summary = SUMMARY, project = 
     fields: { project: { key: project }, issuetype: { id: "10010" }, summary, ...extraFields }, ...extraIssueFields };
 }
 
+function rovoIssue({ key = "RPL-42", id = "10042", summary = SUMMARY, project = "RPL",
+  webUrl = `${SITE}/browse/${key}`, extraFields = {}, ...extraIssueFields } = {}) {
+  return { id, key,
+    self: `https://api.atlassian.com/ex/jira/${CLOUD}/rest/api/3/issue/${id}`,
+    webUrl, fields: { project: { key: project }, issuetype: { id: "10010" }, summary, ...extraFields },
+    ...extraIssueFields };
+}
+
+function rawRovoIssue(issue) {
+  const { webUrl: _webUrl, ...raw } = issue;
+  return raw;
+}
+
+function rovoSearchResponse(issues, { hasNextPage = false, pageInfo = { hasNextPage, endCursor: null },
+  webUrl = `${SITE}/issues?jql=synthetic`, rawIssues = issues, isLast = !hasNextPage } = {}) {
+  return {
+    content: [{ type: "text", text: JSON.stringify({ issues: rawIssues.map(rawRovoIssue), isLast }) }],
+    structuredContent: { issues: { nodes: issues, webUrl, pageInfo }, context: {} },
+  };
+}
+
+function rovoGetResponse(issue, { nodes = [issue], raw = rawRovoIssue(issue) } = {}) {
+  return {
+    content: [{ type: "text", text: JSON.stringify(raw) }],
+    structuredContent: { issues: { nodes }, context: {} },
+  };
+}
+
 async function connector(invokeTool, verifySession = validProof) {
   return createG3JiraConnector({ invokeTool, verifySession, session: SESSION, siteOrigin: SITE, cloudId: CLOUD });
 }
@@ -92,6 +120,127 @@ async function successPath() {
   assert.deepEqual(calls[2].args.fields, ["project", "issuetype", "customfield_10108", "customfield_10109", "customfield_10110"]);
   assert.equal(calls[2].args.failFast, true);
   assert.equal(calls.length, 3);
+}
+
+async function rovoEnvelopeCompatibility() {
+  // Sanitized shape captured from Rovo Search/Get: webUrl exists only in the
+  // structured node; content preserves the underlying Jira API issue fields.
+  const calls = [];
+  const jira = await connector(async (name, args) => {
+    calls.push({ name, args });
+    if (name === G3_JIRA_TOOL_NAMES.search) return rovoSearchResponse([rovoIssue()]);
+    if (name === G3_JIRA_TOOL_NAMES.create) return rovoGetResponse(rovoIssue({ summary: CREATE_REQUEST.summary }));
+    if (name === G3_JIRA_TOOL_NAMES.read) return rovoGetResponse(rovoIssue({ extraFields: {
+      customfield_10108: { id: "101" }, customfield_10109: { id: "202" }, customfield_10110: null,
+    } }));
+    throw new Error(`unexpected tool name: ${name}`);
+  });
+
+  const search = await jira.search(SEARCH_REQUEST);
+  assert.equal(search.status, "exact_duplicate");
+  assert.equal(search.issue.url, `${SITE}/browse/RPL-42`);
+  assert.equal(search.tool_call_count, 1);
+  const created = await jira.create(CREATE_REQUEST);
+  assert.deepEqual(created, { kind: "created", key: "RPL-42", url: `${SITE}/browse/RPL-42`,
+    project: "RPL", summary: SUMMARY, tool_call_count: 1 });
+  const read = await jira.read({ key: "RPL-42", fields: ["issuetype", "customfield_10108", "customfield_10109", "customfield_10110"] });
+  assert.deepEqual(read, { key: "RPL-42", issue_type_id: "10010", fields: {
+    customfield_10108: { id: "101" }, customfield_10109: { id: "202" }, customfield_10110: null,
+  }, tool_call_count: 1 });
+  assert.deepEqual(calls.map(call => call.name), [G3_JIRA_TOOL_NAMES.search, G3_JIRA_TOOL_NAMES.create, G3_JIRA_TOOL_NAMES.read]);
+
+  const badSearchResponses = [
+    rovoSearchResponse([rovoIssue()], { hasNextPage: true }),
+    rovoSearchResponse([rovoIssue()], { pageInfo: {} }),
+    rovoSearchResponse([rovoIssue()], { webUrl: "https://other.example/issues" }),
+    rovoSearchResponse([rovoIssue()], { rawIssues: [rawRovoIssue(rovoIssue({ key: "RPL-43" }))] }),
+    { content: [{ type: "text", text: JSON.stringify({ issues: [rawRovoIssue(rovoIssue())], isLast: true,
+      errors: { permission: "denied" } }) }],
+      structuredContent: { issues: { nodes: [rovoIssue()], webUrl: `${SITE}/issues`,
+        pageInfo: { hasNextPage: false, endCursor: null } }, context: {} } },
+    { ...rovoSearchResponse([rovoIssue()]), content: [{ type: "text", text: "[]" }] },
+    rovoSearchResponse([rovoIssue({ self: `https://api.atlassian.com/ex/jira/wrong-cloud/rest/api/3/issue/10042` })]),
+    rovoSearchResponse([rovoIssue({ self: `http://api.atlassian.com/ex/jira/${CLOUD}/rest/api/3/issue/10042` })]),
+    rovoSearchResponse([rovoIssue({ self: `https://api.atlassian.com:8443/ex/jira/${CLOUD}/rest/api/3/issue/10042` })]),
+    rovoSearchResponse([rovoIssue({ self: `https://api.atlassian.com/ex/jira/${CLOUD}/rest/api/3/issue/99999` })]),
+    rovoSearchResponse([rovoIssue({ webUrl: "https://other.example/browse/RPL-42" })]),
+    rovoSearchResponse([rovoIssue({ fields: { summary: SUMMARY, issuetype: { id: "10010" } } })]),
+  ];
+  for (const response of badSearchResponses) {
+    let searchCalls = 0;
+    const invalid = await connector(async () => { searchCalls += 1; return response; });
+    assert.equal((await invalid.search(SEARCH_REQUEST)).status, "failed");
+    assert.equal(searchCalls, 1, "Search must fail closed without retrying incomplete or conflicting evidence");
+  }
+
+  const emptySearch = await connector(async () => rovoSearchResponse([]));
+  assert.deepEqual(await emptySearch.search(SEARCH_REQUEST), { status: "none", tool_call_count: 1 });
+
+  const malformedStructuredSearch = await connector(async () => ({
+    structuredContent: [], content: [{ type: "text", text: JSON.stringify({ issues: [rawRovoIssue(rovoIssue())] }) }],
+  }));
+  assert.deepEqual(await malformedStructuredSearch.search(SEARCH_REQUEST), { status: "failed", tool_call_count: 1 });
+
+  const invalidGetResponses = [
+    { content: [{ type: "text", text: JSON.stringify({ issues: [] }) }],
+      structuredContent: { issues: { nodes: [] }, context: {} } },
+    { content: [{ type: "text", text: JSON.stringify({ issues: [rawRovoIssue(rovoIssue()), rawRovoIssue(rovoIssue({ key: "RPL-43", id: "10043" }))] }) }],
+      structuredContent: { issues: { nodes: [rovoIssue(), rovoIssue({ key: "RPL-43", id: "10043" })] }, context: {} } },
+    { content: [{ type: "text", text: JSON.stringify(rawRovoIssue(rovoIssue())) }],
+      structuredContent: { issues: { nodes: [rovoIssue()], pageInfo: { hasNextPage: true, endCursor: "next" } }, context: {} } },
+    { content: [{ type: "text", text: JSON.stringify({ issues: [rawRovoIssue(rovoIssue())], total: 2 }) }],
+      structuredContent: { issues: { nodes: [rovoIssue()] }, context: {} } },
+    rovoGetResponse(rovoIssue({ self: `https://api.atlassian.com/ex/jira/wrong-cloud/rest/api/3/issue/10042` })),
+    rovoGetResponse(rovoIssue({ self: `http://api.atlassian.com/ex/jira/${CLOUD}/rest/api/3/issue/10042` })),
+    rovoGetResponse(rovoIssue({ self: `https://api.atlassian.com:8443/ex/jira/${CLOUD}/rest/api/3/issue/10042` })),
+    rovoGetResponse(rovoIssue({ self: `https://api.atlassian.com/ex/jira/${CLOUD}/rest/api/3/issue/99999` })),
+    rovoGetResponse(rovoIssue({ webUrl: "https://other.example/browse/RPL-42" })),
+    rovoGetResponse(rovoIssue({ fields: { summary: SUMMARY, issuetype: { id: "10010" } } })),
+    rovoGetResponse(rovoIssue(), { raw: rawRovoIssue(rovoIssue({ id: "10043", key: "RPL-43" })) }),
+    { structuredContent: [], content: [{ type: "text", text: JSON.stringify(rawRovoIssue(rovoIssue())) }] },
+    { ...rovoGetResponse(rovoIssue()), content: [{ type: "text", text: "[]" }] },
+  ];
+  for (const response of invalidGetResponses) {
+    let readCalls = 0;
+    const invalid = await connector(async () => { readCalls += 1; return response; });
+    await assert.rejects(invalid.read({ key: "RPL-42", fields: ["issuetype"] }),
+      error => error.code === "JIRA_CONNECTOR_ERROR" && error.tool_call_count === 1);
+    assert.equal(readCalls, 1);
+  }
+
+  const apiOnlyGet = await connector(async () => ({ content: [{ type: "text", text: JSON.stringify(rawRovoIssue(rovoIssue())) }] }));
+  await assert.rejects(apiOnlyGet.read({ key: "RPL-42", fields: ["issuetype"] }),
+    error => error.code === "JIRA_CONNECTOR_ERROR");
+
+  const conflictNode = rovoIssue({ extraFields: { customfield_10108: { id: "101" } } });
+  const conflictRaw = rawRovoIssue({ ...conflictNode,
+    fields: { ...conflictNode.fields, customfield_10108: { id: "999" } } });
+  const conflictingRequestedField = await connector(async () => rovoGetResponse(conflictNode, { raw: conflictRaw }));
+  await assert.rejects(conflictingRequestedField.read({ key: "RPL-42", fields: ["issuetype", "customfield_10108"] }),
+    error => error.code === "JIRA_CONNECTOR_ERROR");
+
+  const apiCreate = await connector(async () => rovoGetResponse(rovoIssue({ summary: CREATE_REQUEST.summary })));
+  assert.equal((await apiCreate.create(CREATE_REQUEST)).url, `${SITE}/browse/RPL-42`);
+  for (const issue of [
+    rovoIssue({ summary: CREATE_REQUEST.summary, self: `https://api.atlassian.com/ex/jira/wrong-cloud/rest/api/3/issue/10042` }),
+    rovoIssue({ summary: CREATE_REQUEST.summary, self: `http://api.atlassian.com/ex/jira/${CLOUD}/rest/api/3/issue/10042` }),
+    rovoIssue({ summary: CREATE_REQUEST.summary, self: `https://api.atlassian.com:8443/ex/jira/${CLOUD}/rest/api/3/issue/10042` }),
+    rovoIssue({ summary: CREATE_REQUEST.summary, self: `https://api.atlassian.com/ex/jira/${CLOUD}/rest/api/3/issue/99999` }),
+    rovoIssue({ summary: CREATE_REQUEST.summary, webUrl: "https://other.example/browse/RPL-42" }),
+    rovoIssue({ summary: CREATE_REQUEST.summary, url: "" }),
+    rovoIssue({ summary: CREATE_REQUEST.summary, fields: { summary: CREATE_REQUEST.summary, issuetype: { id: "10010" } } }),
+    rovoIssue({ summary: CREATE_REQUEST.summary, webUrl: null }),
+  ]) {
+    let createCalls = 0;
+    const invalid = await connector(async () => { createCalls += 1; return rovoGetResponse(issue); });
+    await assert.rejects(invalid.create(CREATE_REQUEST), error => {
+      assert.equal(error.code, "JIRA_CREATE_POSSIBLY_APPLIED");
+      assert.equal(error.mutation_status, "possibly_applied");
+      assert.equal(error.automatic_retry, false);
+      return true;
+    });
+    assert.equal(createCalls, 1, "ambiguous Create results must not be retried");
+  }
 }
 
 async function searchFailuresAndPagination() {
@@ -242,20 +391,30 @@ async function authScopeAndGetValidation() {
   }), /canonical HTTPS origin/);
 }
 
-async function supervisedWorkflowIntegration() {
+async function supervisedWorkflowIntegration(rovoEnvelope = false) {
   const toolCalls = [];
   const jira = await connector(async (name, args) => {
     toolCalls.push({ name, args });
-    if (name === G3_JIRA_TOOL_NAMES.search) return { structuredContent: { issues: [], total: 0 } };
-    if (name === G3_JIRA_TOOL_NAMES.create) return { structuredContent: {
+    if (name === G3_JIRA_TOOL_NAMES.search) return rovoEnvelope ? rovoSearchResponse([])
+      : { structuredContent: { issues: [], total: 0 } };
+    if (name === G3_JIRA_TOOL_NAMES.create) {
+      const issue = {
       id: "10073", key: "RPL-73", self: `${SITE}/rest/api/3/issue/10073`,
       fields: { project: { key: args.projectKey }, issuetype: { id: "10010" }, summary: args.summary },
-    } };
-    if (name === G3_JIRA_TOOL_NAMES.read) return { structuredContent: {
+      };
+      return rovoEnvelope ? rovoGetResponse(rovoIssue({ id: "10073", key: "RPL-73", summary: args.summary }))
+        : { structuredContent: issue };
+    }
+    if (name === G3_JIRA_TOOL_NAMES.read) {
+      const issue = {
       id: "10073", key: "RPL-73", self: `${SITE}/rest/api/3/issue/10073`,
       fields: { project: { key: "RPL" }, issuetype: { id: "10010" },
         customfield_10108: { id: "101" }, customfield_10109: { id: "202" }, customfield_10110: null },
-    } };
+      };
+      return rovoEnvelope ? rovoGetResponse(rovoIssue({ id: "10073", key: "RPL-73", extraFields: {
+        customfield_10108: { id: "101" }, customfield_10109: { id: "202" }, customfield_10110: null,
+      } })) : { structuredContent: issue };
+    }
     throw new Error(`unexpected tool name: ${name}`);
   });
   const capabilityEvidence = {
@@ -348,8 +507,10 @@ async function supervisedWorkflowIntegration() {
 }
 
 await successPath();
+await rovoEnvelopeCompatibility();
 await searchFailuresAndPagination();
 await createAmbiguityAndNoRetry();
 await authScopeAndGetValidation();
 await supervisedWorkflowIntegration();
+await supervisedWorkflowIntegration(true);
 process.stdout.write("Synthetic G3 Jira connector checks passed.\n");
