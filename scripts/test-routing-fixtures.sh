@@ -183,4 +183,147 @@ printf '%s' "$work_json" | node -e '
 ' || fail "FX-RT-040: expected jira-ticket candidate"
 echo "passed: FX-RT-040-explicit-jira-create-routing"
 
+# Route substantial multi-service requests while leaving simple questions and
+# local fixes without a candidate. Keep this Skill-specific so broad keywords
+# such as "acceptance criteria" do not cause false positives.
+english_feature_request="I want to add a new subscription billing module across several services. The requirements and acceptance criteria are unclear; first review source of truth, surface Owner decisions, and define criteria before coding. Do not edit files."
+korean_feature_request="큰 구독 결제 기능을 여러 서비스에 추가하면서 요구사항과 인수 기준을 먼저 정의하고 Owner 결정을 정리한 뒤 구현해줘."
+simple_concept_question="What are acceptance criteria? How are they different from requirements?"
+small_fix_request="Fix this typo in one label."
+
+work_json="$(run_work_start_consumer "$real_index" "$english_feature_request")"
+prompt_json="$(run_prompt_consumer "$real_index" "$english_feature_request")"
+for json in "$work_json" "$prompt_json"; do
+  assert_field "FX-RT-050/english-substantial-change" "$json" routing_status matched
+  assert_field "FX-RT-050/english-substantial-change" "$json" skill_candidates 1
+  printf '%s' "$json" | node -e '
+    const input = JSON.parse(require("fs").readFileSync(0, "utf8"));
+    if (input.skill_candidates?.[0]?.name !== "spec-to-implementation") process.exit(1);
+  ' || fail "FX-RT-050/english-substantial-change: expected spec-to-implementation candidate"
+done
+assert_consumer_parity "FX-RT-050/english-substantial-change" "$real_index" "$english_feature_request"
+echo "passed: FX-RT-050/english-substantial-change"
+
+work_json="$(run_work_start_consumer "$real_index" "$korean_feature_request")"
+prompt_json="$(run_prompt_consumer "$real_index" "$korean_feature_request")"
+for json in "$work_json" "$prompt_json"; do
+  assert_field "FX-RT-050/korean-regression" "$json" routing_status matched
+  assert_field "FX-RT-050/korean-regression" "$json" skill_candidates 1
+  printf '%s' "$json" | node -e '
+    const input = JSON.parse(require("fs").readFileSync(0, "utf8"));
+    if (input.skill_candidates?.[0]?.name !== "spec-to-implementation") process.exit(1);
+  ' || fail "FX-RT-050/korean-regression: expected spec-to-implementation candidate"
+done
+assert_consumer_parity "FX-RT-050/korean-regression" "$real_index" "$korean_feature_request"
+echo "passed: FX-RT-050/korean-regression"
+
+for prompt in "$simple_concept_question" "$small_fix_request"; do
+  if [ "$prompt" = "$simple_concept_question" ]; then
+    fixture_id="FX-RT-050/english-simple-question"
+  else
+    fixture_id="FX-RT-050/small-fix"
+  fi
+  work_json="$(run_work_start_consumer "$real_index" "$prompt")"
+  prompt_json="$(run_prompt_consumer "$real_index" "$prompt")"
+  for json in "$work_json" "$prompt_json"; do
+    assert_field "$fixture_id" "$json" routing_status no_match
+    assert_field "$fixture_id" "$json" skill_candidates 0
+  done
+  assert_consumer_parity "$fixture_id" "$real_index" "$prompt"
+  echo "passed: $fixture_id"
+done
+
+# Regressions for multi-signal English requests: the old one-phrase
+# "across several services" keyword missed common large-feature requests and
+# incorrectly routed conceptual questions mentioning cross-service systems.
+english_build_request="Build a multi-tenant billing platform. First establish its requirements and acceptance criteria, then implement it."
+english_design_request="Before coding, the requirements and acceptance criteria need review; please design a new identity feature."
+for task in "$english_build_request" "$english_design_request"; do
+  work_json="$(run_work_start_consumer "$real_index" "$task")"
+  prompt_json="$(run_prompt_consumer "$real_index" "$task")"
+  for json in "$work_json" "$prompt_json"; do
+    assert_field "FX-RT-051/english-substantial-without-across" "$json" routing_status matched
+    assert_field "FX-RT-051/english-substantial-without-across" "$json" skill_candidates 1
+    printf '%s' "$json" | node -e '
+      const input = JSON.parse(require("fs").readFileSync(0, "utf8"));
+      if (input.skill_candidates?.[0]?.name !== "spec-to-implementation") process.exit(1);
+    ' || fail "FX-RT-051: expected spec-to-implementation"
+  done
+  assert_consumer_parity "FX-RT-051" "$real_index" "$task"
+done
+echo "passed: FX-RT-051 english multi-signal substantial change"
+
+for task in "What are the approaches for monitoring retries across several services?" \
+            "How should I handle retries across several services?" \
+            "What are requirements and acceptance criteria for designing a system?" \
+            "Can you explain requirements and acceptance criteria for building an app?"; do
+  work_json="$(run_work_start_consumer "$real_index" "$task")"
+  prompt_json="$(run_prompt_consumer "$real_index" "$task")"
+  for json in "$work_json" "$prompt_json"; do
+    assert_field "FX-RT-052/false-positive-prevention" "$json" routing_status no_match
+    assert_field "FX-RT-052/false-positive-prevention" "$json" skill_candidates 0
+  done
+  assert_consumer_parity "FX-RT-052" "$real_index" "$task"
+done
+echo "passed: FX-RT-052 no false-positive on cross-service / concept question"
+
+explicit_skill_name="spec-to-implementation"
+work_json="$(run_work_start_consumer "$real_index" "$explicit_skill_name")"
+prompt_json="$(run_prompt_consumer "$real_index" "$explicit_skill_name")"
+for json in "$work_json" "$prompt_json"; do
+  assert_field "FX-RT-055/explicit-skill-name" "$json" routing_status matched
+  assert_field "FX-RT-055/explicit-skill-name" "$json" skill_candidates 1
+  printf '%s' "$json" | node -e '
+    const d = JSON.parse(require("fs").readFileSync(0, "utf8"));
+    if (d.skill_candidates?.[0]?.name !== "spec-to-implementation") process.exit(1);
+  ' || fail "FX-RT-055: expected explicit spec-to-implementation candidate"
+done
+assert_consumer_parity "FX-RT-055" "$real_index" "$explicit_skill_name"
+echo "passed: FX-RT-055 bare explicit skill name"
+
+
+# Multi-line requirements, reversed phrasing, explicit no-implementation and
+# explanatory requests test recommendation only, never Skill execution/consent.
+for task in \
+  "Design a payment platform.
+Write the requirements and acceptance criteria before coding." \
+  "Implement the billing module after reviewing the acceptance criteria and requirements." \
+  "요구사항과 인수 기준을 정리한 뒤 결제 기능을 구현해줘."; do
+  work_json="$(run_work_start_consumer "$real_index" "$task")"
+  prompt_json="$(run_prompt_consumer "$real_index" "$task")"
+  for json in "$work_json" "$prompt_json"; do
+    assert_field "FX-RT-053/positive" "$json" routing_status matched
+    assert_field "FX-RT-053/positive" "$json" skill_candidates 1
+    printf '%s' "$json" | node -e '
+      const d = JSON.parse(require("fs").readFileSync(0, "utf8"));
+      if (d.skill_candidates?.[0]?.name !== "spec-to-implementation") process.exit(1);
+    ' || fail "FX-RT-053: expected spec-to-implementation candidate"
+  done
+  assert_consumer_parity "FX-RT-053" "$real_index" "$task"
+done
+echo "passed: FX-RT-053 multiline-and-order-reversal"
+
+for task in \
+  "Please do not implement a billing system; instead explain requirements and acceptance criteria." \
+  "Do not build a billing system. Write the requirements and acceptance criteria?" \
+  "Could you walk me through how to build a module with requirements and acceptance criteria?" \
+  "요구사항과 인수 기준이 뭐야?" \
+  "요구사항과 인수 기준을 설명해줘. 구현하지 마." \
+  "요구사항과 인수 기준을 정한 뒤 기능을 구현하려면 어떻게 해야 하나요?" \
+  "요구사항과 인수 기준을 먼저 정리하고 구현은 하지 마." \
+  "요구사항과 인수 기준을 정리하고 결제 기능 구현해줘. 아니, 구현하지 마." \
+  "요구사항과 인수 기준을 정리해줘. 구현해줘 말고 설명만 해줘." \
+  "요구사항과 인수 기준을 정리하고 구현 안 해." \
+  "요구사항과 인수 기준을 정리하고 결제 기능 만들지 말고 설명만 해줘." \
+  "Do not use spec-to-implementation; just answer my question."; do
+  work_json="$(run_work_start_consumer "$real_index" "$task")"
+  prompt_json="$(run_prompt_consumer "$real_index" "$task")"
+  for json in "$work_json" "$prompt_json"; do
+    assert_field "FX-RT-054/negative" "$json" routing_status no_match
+    assert_field "FX-RT-054/negative" "$json" skill_candidates 0
+  done
+  assert_consumer_parity "FX-RT-054" "$real_index" "$task"
+done
+echo "passed: FX-RT-054 explicit-negation-and-explanatory-question"
+
 echo "all routing fixtures passed"
