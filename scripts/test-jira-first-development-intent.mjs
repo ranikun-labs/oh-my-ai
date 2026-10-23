@@ -21,6 +21,20 @@ const cases = [
   ["일반적인 캐시 전략이 뭐야?", false],
   ["What is an API?", false],
   ["이 변경은 앞으로 개발할 수 있을까?", false],
+  // One explanatory/negative clause must not suppress a separate action.
+  ["Carelog OAuth가 뭐야? 로그인 API 오류도 수정해줘", true],
+  ["Finance API 구현하지 마. 대신 Carelog OAuth 로그인 오류 수정해줘", true],
+  // A bare question is not an implementation instruction.
+  ["Carelog OAuth 코드를 개발해?", false],
+  ["우리 Backend API 구현해준 적 있어?", false],
+  // Natural request variants absent from the original finite verb list.
+  ["로그인 기능 변경해줘", true],
+  ["PR #85 수정 좀 부탁해", true],
+  ["/async-batch RPL-113 이어서 처리해줘", true],
+  ["로그인 API 수정해줘?", true],
+  ["로그인 API 구현해?", false],
+  ["Carelog OAuth가 뭐야?", false],
+  ["그 OAuth 수정하지 마. API 문서 구현해줘", true],
 ];
 for (const [prompt, expected] of cases) {
   assert.equal(needsJiraFirstDevelopmentPreflight(prompt), expected, prompt);
@@ -31,6 +45,10 @@ for (const [prompt, expected] of [
   ["RPL-113 기존 이슈 확인하고 이어서 개발해", true],
   ["Jira 티켓이 뭔지 설명해줘", false],
   ["Finance API 구현하지 마", false],
+  ["로그인 기능 변경해줘", true],
+  ["PR #85 수정 좀 부탁해", true],
+  ["Carelog OAuth가 뭐야? 로그인 API 오류도 수정해줘", true],
+  ["Carelog OAuth 코드를 개발해?", false],
 ]) {
   const result = spawnSync(process.execPath, ["scripts/prompt-routing-hook.mjs", "--format=text"], {
     cwd: root,
