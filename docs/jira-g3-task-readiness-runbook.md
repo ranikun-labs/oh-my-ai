@@ -4,7 +4,7 @@
 > Policy SSOT: `ranikun-labs/harness-foundation-docs/docs/governance/jira-field-taxonomy.md` §8.0/§8.1 및
 > `portfolio-work-management-governance.md`. 정책과 충돌하면 Foundation `main` 및 별도 Owner 결정을 따른다.
 
-> **2026-10-27 최신 READ-ONLY 상태:** G2 118/118 저장 완료, Task Legacy/Target Admin 설정 PASS. 현재 Task Create는 Live Metadata Gate에서 차단된다. 실제 응답은 `{startAt,maxResults,total,fields:[{fieldId,...}]}`의 22개 필드이며, wrapper `assignee`/`priority`/`labels`가 없고 `reporter`는 required/default 플래그만 있고 값이 없다. `customfield_10045`는 required/default account지만 현재 `allowedValues`가 없으며 `customfield_10015`/`duedate`도 required/default 없음. Issue Type ID `10010`의 현재 localized name은 `작업`. 누락 필드·계정 목록·기본값을 합성해 Gate를 통과시키지 않는다. 이 관측으로 Task Admin 설정을 재변경하지 않으며 실제 Create/Owner 승인 상태도 바뀌지 않는다.
+> **2026-10-27 최신 READ-ONLY 상태:** G2 118/118 저장 완료, Task Legacy/Target Admin 설정 PASS. 현재 Task Create는 Live Metadata Gate에서 차단된다. 실제 응답은 `{startAt,maxResults,total,fields:[{fieldId,...}]}`의 22개 필드이며 pagination bounds는 signed digest에 포함되고 불완전한 단일 페이지는 거부된다. wrapper `assignee`/`priority`/`labels`가 없고 `reporter`는 required/default 플래그만 있고 값이 없다. `customfield_10045`는 required/default account지만 현재 `allowedValues`가 없으며 `customfield_10015`/`duedate`도 required/default 없음. Issue Type ID `10010`의 현재 localized name은 `작업`. Exact Create preflight는 Search 전과 Intent/replay CAS 전에 검증된다. 누락 필드·계정 목록·기본값을 합성해 Gate를 통과시키지 않는다. 이 관측으로 Task Admin 설정을 재변경하지 않으며 실제 Create/Owner 승인 상태도 바뀌지 않는다.
 
 ## 제3자가 30초에 이해해야 할 결론
 

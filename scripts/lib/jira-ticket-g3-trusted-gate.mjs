@@ -146,7 +146,19 @@ function isCurrentActivation(payload, now, stage) {
 
 function metadataContent(payload) {
   return { project: payload.project, issue_type: payload.issue_type,
-    issue_type_id: payload.issue_type_id, fields: payload.fields };
+    issue_type_id: payload.issue_type_id, startAt: payload.startAt,
+    maxResults: payload.maxResults, total: payload.total, fields: payload.fields };
+}
+
+function assertCompleteMetadataPage(metadata) {
+  const fieldCount = Array.isArray(metadata.fields) ? metadata.fields.length
+    : metadata.fields && typeof metadata.fields === "object" && !Array.isArray(metadata.fields)
+      ? Object.keys(metadata.fields).length : -1;
+  if (!Number.isSafeInteger(metadata.startAt) || metadata.startAt !== 0
+    || !Number.isSafeInteger(metadata.maxResults) || metadata.maxResults < 0
+    || !Number.isSafeInteger(metadata.total) || metadata.total < 0
+    || fieldCount < 0 || metadata.total !== fieldCount || metadata.maxResults < fieldCount)
+    throw new Error("live Jira metadata page is incomplete or has inconsistent pagination");
 }
 
 function metadataFieldsForGate(fields) {
@@ -202,6 +214,7 @@ function matchesPolicyAndMetadata(activation, policy, metadata) {
     || metadata.issue_type !== scope.issue_type || metadata.issue_type_id !== scope.issue_type_id
     || metadata.metadata_sha256 !== metadataHash || activation.metadata_sha256 !== metadataHash)
     throw new Error("live Jira metadata does not match Activation snapshot");
+  assertCompleteMetadataPage(metadata);
   const fields = metadataFieldsForGate(metadata.fields);
   const observedAt = timestamp(metadata.observed_at, "metadata observed_at");
   const issuedAt = timestamp(metadata.issued_at, "metadata issued_at");
@@ -491,6 +504,10 @@ export function createG3TrustedGate({ source, trustedKeys, now = Date.now, maxEv
       const project = context.project;
       if (project !== "RPL") throw new Error("G3 project outside approved scope");
       const records = await loadEvidence(stage, { project }, { current: true });
+      if (!context.create_preflight)
+        throw new Error("G3 Search requires a metadata-validated Create preflight");
+      assertCreateRequestMetadata(context.create_preflight, records.metadata, records.policy,
+        records.issue_type_binding);
       records.time = refreshRecords(records, stage);
       return { allowed: true, evidence_ref: signedRef([records.activationEnvelope, records.policyEnvelope, records.metadataEnvelope]) };
     }
@@ -519,6 +536,11 @@ export function createG3TrustedGate({ source, trustedKeys, now = Date.now, maxEv
       const { approval, envelope: approvalEnvelope } = await ownerEvidence(records, context);
       if (approval.fields_sha256 !== g3EvidenceSha256(context.fields))
         throw new Error("Owner approval does not bind the immutable Intent fields");
+      const approvedCreateRequest = context.create_request;
+      if (!approvedCreateRequest || g3EvidenceSha256(approvedCreateRequest) !== approval.create_request_sha256
+        || g3EvidenceSha256(approvedCreateRequest.fields ?? {}) !== g3EvidenceSha256(context.fields))
+        throw new Error("Intent preflight does not match the exact Owner-approved Create request");
+      assertCreateRequestMetadata(approvedCreateRequest, metadata, policy, records.issue_type_binding);
       const claimKey = g3EvidenceSha256({ activation_ref: activation.activation_ref,
         create_request_id: context.create_request_id, approved_preview_id: context.approved_preview_id });
       const claimEnvelope = await source.claimReplay({ claim_key: claimKey, activation_ref: activation.activation_ref,

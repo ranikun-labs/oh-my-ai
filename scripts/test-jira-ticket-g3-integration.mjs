@@ -111,7 +111,8 @@ try {
     summary: snapshot.contract.Summary, description: createDescription(snapshot),
     assignee: snapshot.assignee, priority: snapshot.priority, labels: snapshot.labels, fields: intent.fields };
   const policyHash = g3EvidenceSha256({ fixture: "policy", foundation_ref: "8d3ad283402e3a6d42b90ae457557b5751a041e4" });
-  const metadataContent = { project: "RPL", issue_type: "Task", issue_type_id: "10010", fields };
+  const metadataContent = { project: "RPL", issue_type: "Task", issue_type_id: "10010",
+    startAt: 0, maxResults: 100, total: Object.keys(fields).length, fields };
   const activation = { kind: "g3_activation", status: "active", activation_ref: activationRef,
     owner_approval_ref: approvalRef, policy_sha256: policyHash, metadata_sha256: g3EvidenceSha256(metadataContent),
     ...times, effective_from: target.cutover.effective_from, effective_to: target.cutover.effective_to,

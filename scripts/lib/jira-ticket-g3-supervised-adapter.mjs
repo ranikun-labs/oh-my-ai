@@ -93,8 +93,11 @@ export function createG3SupervisedAdapter({ jira, ledger, verifyGate, siteOrigin
     runtime_evidence: { jira_site_origin: siteOrigin },
     capabilities,
     async search(request) {
-      await gate("search", request);
-      const result = await jira.search(request);
+      const searchRequest = structuredClone(request);
+      const createPreflight = searchRequest.create_preflight;
+      delete searchRequest.create_preflight;
+      await gate("search", { ...searchRequest, create_preflight: createPreflight });
+      const result = await jira.search(searchRequest);
       if (result?.tool_call_count !== 1) throw new Error("Jira Search must have exactly one verified call");
       return result;
     },
@@ -102,7 +105,9 @@ export function createG3SupervisedAdapter({ jira, ledger, verifyGate, siteOrigin
       if (active || intentReserved) throw new Error("this supervised Writer already has an Intent or pending Intent gate");
       intentReserved = true; // Reserve synchronously before awaiting the external gate.
       const intent = structuredClone(request);
-      const proof = await gate("intent", intent);
+      const createRequest = intent.create_request;
+      delete intent.create_request;
+      const proof = await gate("intent", { ...intent, create_request: createRequest });
       const approvalRef = proof.cutover_approval_ref;
       if (typeof approvalRef !== "string" || !approvalRef.trim())
         throw new Error("G3 intent gate must prove a non-empty cutover approval reference");

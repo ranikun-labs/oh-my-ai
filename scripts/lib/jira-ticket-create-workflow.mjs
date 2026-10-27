@@ -246,13 +246,24 @@ function createDescription(snapshot) {
 }
 
 function searchRequest(contract, metadata) {
-  return {
+  const request = {
     project: "RPL", summary_keywords: contract.Summary, product: metadata.product,
     repository: metadata.repository, area: metadata.area, related_pr: metadata.pr ?? null,
     branch: metadata.branch ?? null, decision: metadata.decision ?? null,
     existing_issue_key: metadata.existing_issue_key ?? null, created_after: metadata.created_after ?? null,
     contract_fingerprint_candidate: `${contract.Summary}|${metadata.product}|${metadata.repository}|${metadata.area}`,
   };
+  if (metadata.target_create) {
+    request.create_preflight = createRequest({
+      project: metadata.project, issue_type: metadata.issue_type, contract,
+      assignee: metadata.assignee, priority: metadata.priority,
+      labels: canonicalLabels(metadata.labels), product: metadata.product,
+      primary_repository: metadata.repository, area: metadata.area,
+      branch: metadata.branch ?? null, pr: metadata.pr ?? null,
+      current_head: metadata.current_head ?? null, target_create: metadata.target_create,
+    });
+  }
+  return request;
 }
 
 function terminal(state, patch) {
@@ -402,7 +413,8 @@ export function applyJiraPreviewApproval(state, approval) {
       request: { create_request_id: target.request_id, ledger_ref: target.ledger_ref,
         activation_ref: target.cutover.activation_ref, status: "pending",
         approved_preview_id: state.preview_id, issue_type: state.approved_snapshot.issue_type,
-        fields: targetCreateFields(state.approved_snapshot) },
+        fields: targetCreateFields(state.approved_snapshot),
+        create_request: createRequest(state.approved_snapshot) },
     } };
   }
   return { state, report: state.report, required_action: { type: "jira.create_required", request: createRequest(state.approved_snapshot), preview_id: state.preview_id } };

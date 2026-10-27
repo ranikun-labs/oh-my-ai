@@ -66,22 +66,23 @@ const metadataFields = {
     schema: { type: "array", items: "option", custom: "com.atlassian.jira.plugin.system.customfieldtypes:multicheckboxes" },
     allowedValues: options.concern },
 };
-const metadataContent = { project: "RPL", issue_type: "Task", issue_type_id: "10010", fields: metadataFields };
+const metadataContent = { project: "RPL", issue_type: "Task", issue_type_id: "10010",
+  startAt: 0, maxResults: 100, total: Object.keys(metadataFields).length, fields: metadataFields };
 const metadataFieldRow = (fieldId, required, hasDefaultValue, schema, extra = {}) =>
   ({ fieldId, name: fieldId, required, hasDefaultValue, schema, ...extra });
-const fixtureOptions = count => Array.from({ length: count }, (_, index) => ({ id: `fixture-option-${index + 1}` }));
 // Redacted shape-only fixture from a read-only Task metadata response. Its
 // temporary test signature is synthetic and does not represent trusted live
-// evidence. No production account IDs or option payloads are stored here.
+// evidence. No production account IDs or option payloads are stored here;
+// empty allowedValues are redaction markers and cannot approve a Create option.
 const liveShapedMetadataContent = {
-  project: "RPL", issue_type: "Task", issue_type_id: "10010",
+  project: "RPL", issue_type: "Task", issue_type_id: "10010", startAt: 0, maxResults: 100, total: 22,
   fields: [
     metadataFieldRow("attachment", false, false, { type: "array", items: "attachment" }),
     metadataFieldRow("customfield_10000", false, false, { type: "any", custom: "devsummary" }),
     metadataFieldRow("customfield_10015", true, false, { type: "date", custom: "datepicker" }),
     metadataFieldRow("customfield_10019", false, false, { type: "any", custom: "rank" }),
     metadataFieldRow("customfield_10021", false, false,
-      { type: "array", items: "option", custom: "multicheckboxes" }, { allowedValues: fixtureOptions(1) }),
+      { type: "array", items: "option", custom: "multicheckboxes" }, { allowedValues: [] }),
     metadataFieldRow("customfield_10037", false, false, { type: "any", custom: "vulnerability" }),
     metadataFieldRow("customfield_10042", false, false,
       { type: "array", items: "string", custom: "labels" }),
@@ -94,13 +95,13 @@ const liveShapedMetadataContent = {
       { defaultValue: [{ accountId: "REDACTED_FIXTURE_ACCOUNT" }] }),
     metadataFieldRow("customfield_10108", true, false,
       { type: "option", custom: "com.atlassian.jira.plugin.system.customfieldtypes:select" },
-      { allowedValues: fixtureOptions(8) }),
+      { allowedValues: [] }),
     metadataFieldRow("customfield_10109", true, false,
       { type: "option", custom: "com.atlassian.jira.plugin.system.customfieldtypes:select" },
-      { allowedValues: fixtureOptions(5) }),
+      { allowedValues: [] }),
     metadataFieldRow("customfield_10110", false, false,
       { type: "array", items: "option", custom: "com.atlassian.jira.plugin.system.customfieldtypes:multicheckboxes" },
-      { allowedValues: fixtureOptions(14) }),
+      { allowedValues: [] }),
     metadataFieldRow("description", false, false, { type: "string" }),
     metadataFieldRow("duedate", true, false, { type: "date" }),
     metadataFieldRow("fixVersions", false, false, { type: "array", items: "version" }, { allowedValues: [] }),
@@ -220,12 +221,17 @@ function fixtureGate(options = {}) {
 
 function intent(overrides = {}) {
   return { create_request_id: requestId, ledger_ref: ledgerRef, activation_ref: activationRef,
-    status: "pending", approved_preview_id: previewId, issue_type: "Task", fields, ...overrides };
+    status: "pending", approved_preview_id: previewId, issue_type: "Task", fields,
+    create_request: createRequest, ...overrides };
+}
+function searchContext(overrides = {}) {
+  return { project: "RPL", create_preflight: createRequest, ...overrides };
 }
 
 const signedFlow = fixtureGate();
 assert.equal((await signedFlow.verifyGate({ stage: "search", context: {
   project: "RPL", summary_keywords: createRequest.summary, product: "dev-harness",
+  create_preflight: createRequest,
   repository: "oh-my-ai", area: "Jira", related_pr: null, branch: null, decision: null,
   existing_issue_key: null, created_after: null, contract_fingerprint_candidate: "fixture",
 } })).allowed, true);
@@ -283,15 +289,15 @@ assert.equal(replayAcrossInstance.fetchCounts.claim, 1);
 console.log("PASS: durable replay claim rejects a second gate instance for the same CreateRequestId");
 
 const tampered = fixtureGate({ tamperActivation: true });
-await assert.rejects(() => tampered.verifyGate({ stage: "search", context: { project: "RPL" } }), /signature/i);
+await assert.rejects(() => tampered.verifyGate({ stage: "search", context: searchContext() }), /signature/i);
 const wrongPolicy = fixtureGate({ policyPatch: { policy_sha256: "c".repeat(64) } });
-await assert.rejects(() => wrongPolicy.verifyGate({ stage: "search", context: { project: "RPL" } }), /policy/i);
+await assert.rejects(() => wrongPolicy.verifyGate({ stage: "search", context: searchContext() }), /policy/i);
 const staleMetadata = fixtureGate({ metadataAgeMs: 120_000 });
-await assert.rejects(() => staleMetadata.verifyGate({ stage: "search", context: { project: "RPL" } }), /stale/i);
+await assert.rejects(() => staleMetadata.verifyGate({ stage: "search", context: searchContext() }), /stale/i);
 const requiredLegacyMetadata = structuredClone(metadataContent);
 requiredLegacyMetadata.fields.customfield_10042.required = true;
 const requiredLegacy = fixtureGate({ metadataOverride: requiredLegacyMetadata });
-await assert.rejects(() => requiredLegacy.verifyGate({ stage: "search", context: { project: "RPL" } }), /Legacy/i);
+await assert.rejects(() => requiredLegacy.verifyGate({ stage: "search", context: searchContext() }), /Legacy/i);
 await assert.rejects(() => requiredLegacy.verifyGate({ stage: "create", context: {
   request: createRequest, create_request_id: requestId, activation_ref: activationRef,
   create_metadata: { fields: { customfield_10042: { required: false, hasDefaultValue: false } } },
@@ -300,19 +306,33 @@ const defaultedLegacyMetadata = structuredClone(metadataContent);
 defaultedLegacyMetadata.fields.customfield_10043.hasDefaultValue = true;
 defaultedLegacyMetadata.fields.customfield_10043.defaultValue = "legacy-default";
 const defaultedLegacy = fixtureGate({ metadataOverride: defaultedLegacyMetadata });
-await assert.rejects(() => defaultedLegacy.verifyGate({ stage: "search", context: { project: "RPL" } }), /Legacy/i);
+await assert.rejects(() => defaultedLegacy.verifyGate({ stage: "search", context: searchContext() }), /Legacy/i);
 const contradictoryLegacyDefaultMetadata = structuredClone(metadataContent);
 contradictoryLegacyDefaultMetadata.fields.customfield_10043.defaultValue = "legacy-default";
 const contradictoryLegacyDefault = fixtureGate({ metadataOverride: contradictoryLegacyDefaultMetadata });
-await assert.rejects(() => contradictoryLegacyDefault.verifyGate({ stage: "search", context: { project: "RPL" } }), /Legacy/i);
+await assert.rejects(() => contradictoryLegacyDefault.verifyGate({ stage: "search", context: searchContext() }), /Legacy/i);
 const currentAccountsMetadata = structuredClone(metadataContent);
 currentAccountsMetadata.fields.assignee.allowedValues = [{ accountId: "retired-account" }];
 const staleAssignee = fixtureGate({ metadataOverride: currentAccountsMetadata });
-await staleAssignee.verifyGate({ stage: "intent", context: intent() });
-await assert.rejects(() => staleAssignee.verifyGate({ stage: "create", context: {
-  request: createRequest, create_request_id: requestId, activation_ref: activationRef,
-  create_metadata: { fields: { customfield_10042: { required: false, hasDefaultValue: false } } },
-} }), /current Jira metadata/i);
+await assert.rejects(() => staleAssignee.verifyGate({ stage: "search", context: searchContext() }),
+  /Create account is absent from current Jira metadata for assignee/i);
+assert.equal(staleAssignee.fetchCounts.claim, 0,
+  "stale Assignee metadata must fail before Search can proceed or a replay claim is made");
+await assert.rejects(() => staleAssignee.verifyGate({ stage: "intent", context: intent() }),
+  /Create account is absent from current Jira metadata for assignee/i);
+assert.equal(staleAssignee.fetchCounts.claim, 0,
+  "stale Assignee metadata must fail before the durable replay claim");
+const missingAssigneeRequest = { ...createRequest };
+delete missingAssigneeRequest.assignee;
+const missingAssignee = fixtureGate({ createRequestOverride: missingAssigneeRequest });
+await assert.rejects(() => missingAssignee.verifyGate({ stage: "search",
+  context: searchContext({ create_preflight: missingAssigneeRequest }) }),
+/required live Jira Create field is missing: assignee/i);
+await assert.rejects(() => missingAssignee.verifyGate({ stage: "intent",
+  context: intent({ create_request: missingAssigneeRequest }) }),
+/required live Jira Create field is missing: assignee/i);
+assert.equal(missingAssignee.fetchCounts.claim, 0,
+  "missing required wrapper input must fail before a replay claim");
 const missingRequiredUserMetadata = structuredClone(metadataContent);
 missingRequiredUserMetadata.fields.customfield_10045.hasDefaultValue = false;
 delete missingRequiredUserMetadata.fields.customfield_10045.defaultValue;
@@ -322,7 +342,9 @@ await assert.rejects(() => missingRequiredUser.verifyGate({ stage: "intent", con
 const invalidDateFields = { ...fields, customfield_10015: "2026-02-30" };
 const invalidDateRequest = { ...createRequest, fields: invalidDateFields };
 const invalidDate = fixtureGate({ fieldsOverride: invalidDateFields, createRequestOverride: invalidDateRequest });
-await assert.rejects(() => invalidDate.verifyGate({ stage: "intent", context: intent({ fields: invalidDateFields }) }),
+await assert.rejects(() => invalidDate.verifyGate({ stage: "intent", context: intent({
+  fields: invalidDateFields, create_request: invalidDateRequest,
+}) }),
   /Create date/i);
 console.log("PASS: signed live metadata blocks Legacy required/default, stale accounts, missing required fields, and invalid dates");
 const badOption = fixtureGate();
@@ -343,13 +365,13 @@ console.log("PASS: forged, stale, expired, policy-mismatched and out-of-scope ev
 
 const boundary = fixtureGate();
 boundary.payloads.activation.effective_to = iso(clock);
-await assert.rejects(() => boundary.verifyGate({ stage: "search", context: { project: "RPL" } }), /effective window/i);
+await assert.rejects(() => boundary.verifyGate({ stage: "search", context: searchContext() }), /effective window/i);
 const signedExpiryBoundary = fixtureGate();
 signedExpiryBoundary.payloads.activation.expires_at = iso(clock);
-await assert.rejects(() => signedExpiryBoundary.verifyGate({ stage: "search", context: { project: "RPL" } }), /expired/i);
+await assert.rejects(() => signedExpiryBoundary.verifyGate({ stage: "search", context: searchContext() }), /expired/i);
 const futureEvidence = fixtureGate();
 futureEvidence.payloads.activation.issued_at = iso(clock + 1_000);
-await assert.rejects(() => futureEvidence.verifyGate({ stage: "search", context: { project: "RPL" } }), /future-dated/i);
+await assert.rejects(() => futureEvidence.verifyGate({ stage: "search", context: searchContext() }), /future-dated/i);
 console.log("PASS: Activation effective-window and signed-evidence expiry boundaries are exclusive; future evidence is rejected");
 
 const arrayMetadata = structuredClone(metadataContent);
@@ -360,7 +382,7 @@ arrayMetadata.fields.find(field => field.fieldId === "issuetype").allowedValues 
   { id: "10010", name: "작업" },
 ];
 const mappedArray = fixtureGate({ metadataOverride: arrayMetadata });
-assert.equal((await mappedArray.verifyGate({ stage: "search", context: { project: "RPL" } })).allowed, true);
+assert.equal((await mappedArray.verifyGate({ stage: "search", context: searchContext() })).allowed, true);
 await mappedArray.verifyGate({ stage: "intent", context: intent() });
 const localizedTypeProof = await mappedArray.verifyGate({ stage: "create", context: {
   request: createRequest, create_request_id: requestId, activation_ref: activationRef,
@@ -371,16 +393,37 @@ assert.deepEqual(localizedTypeProof.issue_type_binding, {
 });
 console.log("PASS: signed fields[] metadata maps by unique fieldId and binds canonical Task to ID 10010 and its current localized name");
 
+const incompletePageMetadata = structuredClone(arrayMetadata);
+incompletePageMetadata.total++;
+const incompletePage = fixtureGate({ metadataOverride: incompletePageMetadata });
+await assert.rejects(() => incompletePage.verifyGate({ stage: "search", context: searchContext() }), /pagination/i);
+const offsetPageMetadata = structuredClone(arrayMetadata);
+offsetPageMetadata.startAt = 1;
+const offsetPage = fixtureGate({ metadataOverride: offsetPageMetadata });
+await assert.rejects(() => offsetPage.verifyGate({ stage: "search", context: searchContext() }), /pagination/i);
+const undersizedPageMetadata = structuredClone(arrayMetadata);
+undersizedPageMetadata.maxResults = undersizedPageMetadata.fields.length - 1;
+const undersizedPage = fixtureGate({ metadataOverride: undersizedPageMetadata });
+await assert.rejects(() => undersizedPage.verifyGate({ stage: "search", context: searchContext() }), /pagination/i);
+const pageSizeDigest = fixtureGate({ metadataOverride: arrayMetadata });
+pageSizeDigest.payloads.metadata.maxResults--;
+await assert.rejects(() => pageSizeDigest.verifyGate({ stage: "search", context: searchContext() }), /Activation snapshot/i);
+assert.equal(incompletePage.fetchCounts.claim, 0);
+assert.equal(offsetPage.fetchCounts.claim, 0);
+assert.equal(undersizedPage.fetchCounts.claim, 0);
+console.log("PASS: signed metadata requires a complete single page and binds pagination fields in its digest");
+
 const duplicateFieldMetadata = structuredClone(arrayMetadata);
 duplicateFieldMetadata.fields.push(structuredClone(duplicateFieldMetadata.fields[0]));
+duplicateFieldMetadata.total = duplicateFieldMetadata.fields.length;
 const duplicateField = fixtureGate({ metadataOverride: duplicateFieldMetadata });
-await assert.rejects(() => duplicateField.verifyGate({ stage: "search", context: { project: "RPL" } }), /duplicate fieldId/i);
+await assert.rejects(() => duplicateField.verifyGate({ stage: "search", context: searchContext() }), /duplicate fieldId/i);
 const mismatchedTypeMetadata = structuredClone(arrayMetadata);
 mismatchedTypeMetadata.fields.find(field => field.fieldId === "issuetype").allowedValues = [
   { id: "10007", name: "작업" },
 ];
 const mismatchedType = fixtureGate({ metadataOverride: mismatchedTypeMetadata });
-await assert.rejects(() => mismatchedType.verifyGate({ stage: "search", context: { project: "RPL" } }), /issue type option/i);
+await assert.rejects(() => mismatchedType.verifyGate({ stage: "search", context: searchContext() }), /issue type option/i);
 console.log("PASS: duplicate field IDs and a localized name attached to the wrong type ID are rejected before use");
 
 const liveShapeBlocked = fixtureGate({ metadataOverride: liveShapedMetadataContent });
@@ -406,7 +449,8 @@ const blockedAdapter = createG3SupervisedAdapter({
   verifyGate: input => liveShapeBlocked.verifyGate(input),
   capabilityEvidence, siteOrigin: "https://jira.example.test",
 });
-await assert.rejects(() => blockedAdapter.search({ project: "RPL" }), /current accounts are unavailable/i);
+await assert.rejects(() => blockedAdapter.search({ project: "RPL", create_preflight: createRequest }),
+  /current accounts are unavailable/i);
 await assert.rejects(() => blockedAdapter.persistIntent(intent()), /current accounts are unavailable/i);
 await assert.rejects(() => blockedAdapter.create(createRequest), /Intent|replayed Jira Create/i);
 assert.deepEqual(sideEffects, { search: 0, intent: 0, create: 0 });
@@ -414,8 +458,34 @@ assert.equal(liveShapeBlocked.fetchCounts.approval, 0);
 assert.equal(liveShapeBlocked.fetchCounts.claim, 0);
 console.log("PASS: redacted live-shaped Task metadata stops before Jira Search, Intent persistence, Owner approval, replay claim, and Create");
 
+const staleAssigneeForAdapter = fixtureGate({ metadataOverride: currentAccountsMetadata });
+const staleSideEffects = { search: 0, intent: 0, create: 0 };
+const staleAdapter = createG3SupervisedAdapter({
+  jira: {
+    async search() { staleSideEffects.search++; return { status: "none", tool_call_count: 1 }; },
+    async create() { staleSideEffects.create++; throw new Error("unexpected Jira Create"); },
+    async read() { throw new Error("unexpected Jira GET"); },
+  },
+  ledger: {
+    async persistIntent() { staleSideEffects.intent++; throw new Error("unexpected Intent write"); },
+    async linkIssue() { throw new Error("unexpected Issue link"); },
+    async persistOrigin() { throw new Error("unexpected Origin write"); },
+    async readClassificationAuthority() { throw new Error("unexpected Reader access"); },
+  },
+  verifyGate: input => staleAssigneeForAdapter.verifyGate(input),
+  capabilityEvidence, siteOrigin: "https://jira.example.test",
+});
+await assert.rejects(() => staleAdapter.search({ project: "RPL", create_preflight: createRequest }),
+  /Create account is absent from current Jira metadata for assignee/i);
+await assert.rejects(() => staleAdapter.persistIntent(intent()),
+  /Create account is absent from current Jira metadata for assignee/i);
+await assert.rejects(() => staleAdapter.create(createRequest), /Intent|replayed Jira Create/i);
+assert.deepEqual(staleSideEffects, { search: 0, intent: 0, create: 0 });
+assert.equal(staleAssigneeForAdapter.fetchCounts.claim, 0);
+console.log("PASS: stale Assignee and missing wrapper inputs fail before Search, Intent persistence, replay CAS, and Create");
+
 clock += 6 * 60_000;
 const expiredActivation = fixtureGate({ activationExpiryMs: -1 });
-await assert.rejects(() => expiredActivation.verifyGate({ stage: "search", context: { project: "RPL" } }), /expired/i);
+await assert.rejects(() => expiredActivation.verifyGate({ stage: "search", context: searchContext() }), /expired/i);
 console.log("PASS: expired signed Activation cannot authorize a new search");
 console.log("G3 trusted gate offline fixtures passed");
