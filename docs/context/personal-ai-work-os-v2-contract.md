@@ -48,6 +48,8 @@ A/B는 Context·Knowledge 소유권을 유지하고 D는 문서 작성과 증거
 - `approval_boundary`: 수행 가능한 READ/WRITE/EXECUTE와 별도 Owner Gate
 - `evidence_refs[]`: 실제 Test/CI/Writer/Reviewer의 근거, PASS/FAIL/NOT_RUN
 - `drift_candidates[]`: 정본 변경으로 영향을 받는 문서 참조와 갱신 제안
+- `document_route`: 대상 Concern/Owner·문서 역할·상하위 관계를 확인한 후 선택하는 `PARENT_SUMMARY / EXISTING_CHILD / NEW_CHILD / CANONICAL_GATE / NO_WRITE`
+- `document_target`: 기존 페이지 ID 또는 새 하위의 Parent ID, 확인한 Source Revision·Target Version, Write Capability·승인 경계
 
 미확인 값은 추측하지 않는다. 위험한 원격 Write에 필수 근거·권한이 없으면 중단하되,
 단순 지식 질문까지 모두 실패 처리하지 않는다. 기존 `work-start`, `jira-work`의 Explicit-only 실행 계약 유지.
@@ -61,6 +63,8 @@ A/B는 Context·Knowledge 소유권을 유지하고 D는 문서 작성과 증거
 
 자동 양방향 동기화 금지. 후속 문서 Write 구현 전 Source ID/Version, 대상 Version,
 중복 반영 방지(Idempotency), 동시 편집 충돌, 부분 실패 복구, 감사 증거를 정의하고 Fixture로 검증.
+
+**계층별 콘텐츠 배치(후속 구현 계약):** 자료를 수집할 때 기존 문서의 목적·독자·Concern Owner·상하위 관계를 먼저 찾아 `EXISTING_CHILD`(동일 주제 상세·검증·절차의 국소 갱신)를 우선한다. 여러 활동의 방향·핵심 상태·결정만 달라지면 `PARENT_SUMMARY`로 상위에 한두 문장과 원본/하위 링크를 갱신한다. 기존 하위가 소유하지 않는 독립 책임·장기 인계 기록일 때만 `NEW_CHILD`를 제안하며 제목·Owner·기준일·Source ID/Revision·상위 링크를 포함한다. 기술 계약·Jira 정본 변경은 `CANONICAL_GATE`로 해당 소유 Writer/Owner에게 인계하고, 미검증·중복·권한 불명은 `NO_WRITE`로 기록한다. 자동 문서 작성·배포 전에 Source/Target Version 재조회, 중복 방지·부분 실패 복구·상위↔하위 링크 확인이 필요하다. **상위 로드맵에 Raw Log나 PR 본문을 복사하지 않는다.** 이는 라우팅 후보이며 자동 Wiki 쓰기 기능의 구현 완료가 아니다.
 
 ## 5. Engineering Communication — 한국어 산출물 품질 계약 (Skill 후보)
 
@@ -77,6 +81,7 @@ A/B는 Context·Knowledge 소유권을 유지하고 D는 문서 작성과 증거
 ## 6. Execution 및 E2E 책임
 
 - 단일 작업: Intent → 조건부 Context → 권한/Version Gate → 적합 실행기 → Writer → 고정 HEAD의 Independent Reviewer → Evidence 보고.
+- **업무 중심 실행 제목 및 모델 전달(계약 후보):** 각 실제 Task/Subagent의 표시 제목은 `[업무 대상] + [끝낼 결과] + [PR/Jira]`이며 `F4-NEXT-BATCH`, `Task A`, 모델명 같은 Orchestration 메타 정보는 제목으로 쓰지 않는다. Coordinator는 `title`, `role`, `requested_model`, `requested_reasoning_effort`, `requested_fast_mode`, `permissions`, `Primary Jira/Branch`, 고정 `Base/HEAD`를 별도로 지정한다. Executor가 실제 지원하면 Task 생성 설정 인자로 전달하고, 결과에서 `effective_model/effort/fast_mode`와 증거 출처를 대조한다. UI의 요청 수락만 확인했으면 `effective=UNKNOWN`, 미지원/미확인이면 `ROUTING_UNVERIFIED` 또는 `CAPABILITY_BLOCKED`로 보고한다. 이미 실행 중인 Task는 무단 재생성·중복 Dispatch하지 않는다. 사용자별 특정 모델·Fast 선호는 **Private 정책**에만 보관하고 Public Skill 계약에 복제하지 않는다.
 - `/async-batch`: Owner가 명시 승인한 **개인 사이드프로젝트**에서만, 작업별 Primary Jira·Writer·Branch/Worktree·변경 파일 영역을 분리해 Fan-out/Fan-in한다. 다른 Workstream으로의 확대는 Governance v1.3의 실제 발효와 해당 Owner의 별도 범위·실행 승인이 전제다. 그 전까지는 발효 중인 Governance v1.2의 WIP·착수 Gate를 유지한다.
 - **Objective 기반 실행 흐름(목표 계약):** 승인된 Objective·의존성·공유 API/DB/Auth 계약과 Writer 소유권을 확인 → 작업을 `READY`(현 승인 범위에서 실행 가능) / `REVIEW_ONLY`(새 Writer 수정 없이 기존 HEAD·Evidence 검수) / `BLOCKED`(승인·의존성·Runtime capability 부족)로 분류 → 독립된 READY만 실제 지원 가능한 실행기로 배정 → 완료된 실행 슬롯에 **같은 승인 범위의 다음 READY**가 있으면 재배정 → 안정된 Base/HEAD 독립 검수 → Objective Checkpoint/Fan-in. 재배정은 새 Jira/Repo/설정 Write 승인이나 자동 Merge 권한이 아니다.
 - **중단·재개:** BLOCKED 작업은 다른 READY의 실행을 무조건 막지 않지만 해당 작업의 Gate를 우회하지 않는다. Checkpoint에는 Objective·작업별 상태, Branch/Base/HEAD, 실제 Test/CI/Reviewer Evidence, Finding, 미결정·권한, 다음 READY 및 Resume 조건을 남긴다. Owner 확인 **약 1시간(협업)·3시간(집중 위임)·6시간(장기 위임)은 선택형 검토 주기 목표**이며 자동 타이머·장기 상주·세션 종료 후 재시작/알림을 보장하지 않는다. 지원하지 않는 Runtime은 명시적 Handoff로 종료한다.
