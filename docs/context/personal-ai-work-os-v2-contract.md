@@ -77,9 +77,12 @@ A/B는 Context·Knowledge 소유권을 유지하고 D는 문서 작성과 증거
 ## 6. Execution 및 E2E 책임
 
 - 단일 작업: Intent → 조건부 Context → 권한/Version Gate → 적합 실행기 → Writer → 고정 HEAD의 Independent Reviewer → Evidence 보고.
-- `/async-batch`: Owner가 명시 승인한 개인 프로젝트에서만, 작업별 Primary Jira·Writer·Branch/PR 분리 및 Fan-out/Fan-in.
-- 실제 지원되는 Tool/모델/Fast/Skill 로딩만 주장한다. Writer PASS, Reviewer PASS, CI PASS, 통합 E2E PASS, Source Merge, Production Gate는 다르다.
-- Fixture: 개발 요청/질문 오탐·미탐, 기존 이슈 중복, 정본 충돌, Wiki 접근 실패, 악성 문서 지시, 오래된 HEAD, 미승인 실행, 문서 내용 왜곡, 지원 없는 Subagent.
+- `/async-batch`: Owner가 명시 승인한 **개인 사이드프로젝트**에서만, 작업별 Primary Jira·Writer·Branch/Worktree·변경 파일 영역을 분리해 Fan-out/Fan-in한다. 다른 Workstream으로의 확대는 Governance v1.3의 실제 발효와 해당 Owner의 별도 범위·실행 승인이 전제다. 그 전까지는 발효 중인 Governance v1.2의 WIP·착수 Gate를 유지한다.
+- **Objective 기반 실행 흐름(목표 계약):** 승인된 Objective·의존성·공유 API/DB/Auth 계약과 Writer 소유권을 확인 → 작업을 `READY`(현 승인 범위에서 실행 가능) / `REVIEW_ONLY`(새 Writer 수정 없이 기존 HEAD·Evidence 검수) / `BLOCKED`(승인·의존성·Runtime capability 부족)로 분류 → 독립된 READY만 실제 지원 가능한 실행기로 배정 → 완료된 실행 슬롯에 **같은 승인 범위의 다음 READY**가 있으면 재배정 → 안정된 Base/HEAD 독립 검수 → Objective Checkpoint/Fan-in. 재배정은 새 Jira/Repo/설정 Write 승인이나 자동 Merge 권한이 아니다.
+- **중단·재개:** BLOCKED 작업은 다른 READY의 실행을 무조건 막지 않지만 해당 작업의 Gate를 우회하지 않는다. Checkpoint에는 Objective·작업별 상태, Branch/Base/HEAD, 실제 Test/CI/Reviewer Evidence, Finding, 미결정·권한, 다음 READY 및 Resume 조건을 남긴다. Owner 확인 **30~60분은 목표 주기**이며 자동 타이머·장기 상주·세션 종료 후 재시작/알림을 보장하지 않는다. 지원하지 않는 Runtime은 명시적 Handoff로 종료한다.
+- **검증 책임:** RPL-115는 기존 Guard Fixture와 별도로, 완료 후 다음 READY 재배정 1회, BLOCKED 격리, Checkpoint 이후 Resume, 고정 HEAD Review 및 Fan-in을 실제 지원 환경에서 재현하고 `PASS/FAIL/NOT_RUN/UNKNOWN`과 출처를 분리한다. Runtime별 지원·미지원과 합성 Fixture·실제 E2E는 혼동하지 않는다.
+- 실제 지원되는 Tool/모델/Fast/Skill 로딩만 주장한다. Worker의 `execution_status=complete`는 해당 Worker 보고이며 Human Review 승인·Objective 전체 완료가 아니다. Writer PASS, Reviewer PASS, CI PASS, 통합 E2E PASS, Source Merge, Production Gate는 각각 별개다.
+- 기존 Fixture: 개발 요청/질문 오탐·미탐, 기존 이슈 중복, 정본 충돌, Wiki 접근 실패, 악성 문서 지시, 오래된 HEAD, 미승인 실행, 문서 내용 왜곡, 지원 없는 Subagent.
 
 ## 7. 기존 자료 재사용 및 구현 경계
 
