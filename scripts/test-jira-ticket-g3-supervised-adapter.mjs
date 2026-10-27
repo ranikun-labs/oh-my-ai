@@ -78,7 +78,9 @@ function fakeJira({ throwCreate = false, throwOrigin = false, wrongRead = false 
   return { jira, calls: () => createCalls };
 }
 const gate = async ({ stage }) => ({ allowed: true, evidence_ref: "SYNTHETIC-TEST-ONLY",
-  ...(stage === "intent" ? { cutover_approval_ref: "fixture-owner-approval" } : {}) });
+  ...(stage === "intent" ? { cutover_approval_ref: "fixture-owner-approval" } : {}),
+  ...(stage === "create" ? { issue_type_binding: { canonical_issue_type: "Task", issue_type_id: "10010",
+    localized_issue_type_name: "작업", metadata_sha256: "c".repeat(64) } } : {}) });
 const pendingIntent = (requestId, fields = {
   customfield_10108: { id: "10027" }, customfield_10109: { id: "10028" }, customfield_10110: [],
 }) => ({ create_request_id: requestId, ledger_ref: ledgerRef, status: "pending",
@@ -228,7 +230,7 @@ try {
       return gate(input);
     }, siteOrigin: "https://jira.example", capabilityEvidence: fixtureCapabilities });
   await createRaceActor.persistIntent(pendingIntent("g3-fixture-create-race-0001"));
-  const createRequest = { summary: contract.Summary };
+  const createRequest = { issue_type: "Task", summary: contract.Summary };
   const concurrentCreates = [createRaceActor.create(createRequest), createRaceActor.create(createRequest)];
   releaseCreateGate();
   const createResults = await Promise.allSettled(concurrentCreates);
@@ -244,7 +246,7 @@ try {
   const mutablePending = pendingIntent("g3-fixture-mutable-intent-0001");
   await mutableIntentActor.persistIntent(mutablePending);
   mutablePending.fields.customfield_10108.id = "10020";
-  await mutableIntentActor.create({ summary: contract.Summary });
+  await mutableIntentActor.create({ issue_type: "Task", summary: contract.Summary });
   await assert.rejects(() => mutableIntentActor.read({ key: "RPL-201", fields: [] }),
     /inconsistent with the durable approved Intent/);
   console.log("PASS: caller mutation cannot change the adapter's approved Intent field snapshot");

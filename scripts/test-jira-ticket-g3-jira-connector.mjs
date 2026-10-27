@@ -17,6 +17,15 @@ const CREATE_REQUEST = {
   assignee: "account-id-1", priority: "High", labels: ["g3", "offline"],
   fields: { customfield_10108: { id: "101" }, customfield_10109: { id: "202" } },
 };
+const CREATE_GATE_PROOF = {
+  allowed: true, evidence_ref: "synthetic:verified-metadata",
+  issue_type_binding: { canonical_issue_type: "Task", issue_type_id: "10010",
+    localized_issue_type_name: "Task", metadata_sha256: "a".repeat(64) },
+};
+const LOCALIZED_CREATE_GATE_PROOF = {
+  ...CREATE_GATE_PROOF,
+  issue_type_binding: { ...CREATE_GATE_PROOF.issue_type_binding, localized_issue_type_name: "작업" },
+};
 
 function validProof({ capability, session }) {
   const now = Date.now();
@@ -97,14 +106,14 @@ async function successPath() {
   assert.equal(calls[0].args.searchResultMode, "issues");
   assert.equal(calls[0].args.maxResults, 100);
 
-  const created = await jira.create(CREATE_REQUEST);
+  const created = await jira.create(CREATE_REQUEST, LOCALIZED_CREATE_GATE_PROOF);
   assert.deepEqual(created, {
     kind: "created", key: "RPL-42", url: `${SITE}/browse/RPL-42`, project: "RPL",
     summary: SUMMARY, tool_call_count: 1,
   });
   assert.equal(calls[1].args.cloudId, CLOUD);
   assert.equal(calls[1].args.projectKey, "RPL");
-  assert.equal(calls[1].args.issueTypeName, "Task");
+  assert.equal(calls[1].args.issueTypeName, "작업");
   assert.equal(calls[1].args.assignee_account_id, "account-id-1");
   assert.deepEqual(calls[1].args.additional_fields, {
     priority: { name: "High" }, labels: ["g3", "offline"],
@@ -120,6 +129,17 @@ async function successPath() {
   assert.deepEqual(calls[2].args.fields, ["project", "issuetype", "customfield_10108", "customfield_10109", "customfield_10110"]);
   assert.equal(calls[2].args.failFast, true);
   assert.equal(calls.length, 3);
+}
+
+async function verifiedIssueTypeBindingRequired() {
+  let calls = 0;
+  const jira = await connector(async () => { calls++; return { structuredContent: {} }; });
+  await assert.rejects(jira.create(CREATE_REQUEST), error => error.code === "JIRA_CONNECTOR_ERROR"
+    && error.mutation_status === "not_started" && error.tool_call_count === 0);
+  await assert.rejects(jira.create(CREATE_REQUEST, { ...LOCALIZED_CREATE_GATE_PROOF,
+    issue_type_binding: { ...LOCALIZED_CREATE_GATE_PROOF.issue_type_binding, issue_type_id: "10007" } }),
+  error => error.code === "JIRA_CONNECTOR_ERROR" && error.tool_call_count === 0);
+  assert.equal(calls, 0, "missing or mismatched signed type binding must block before an MCP call");
 }
 
 async function rovoEnvelopeCompatibility() {
@@ -140,7 +160,7 @@ async function rovoEnvelopeCompatibility() {
   assert.equal(search.status, "exact_duplicate");
   assert.equal(search.issue.url, `${SITE}/browse/RPL-42`);
   assert.equal(search.tool_call_count, 1);
-  const created = await jira.create(CREATE_REQUEST);
+  const created = await jira.create(CREATE_REQUEST, CREATE_GATE_PROOF);
   assert.deepEqual(created, { kind: "created", key: "RPL-42", url: `${SITE}/browse/RPL-42`,
     project: "RPL", summary: SUMMARY, tool_call_count: 1 });
   const read = await jira.read({ key: "RPL-42", fields: ["issuetype", "customfield_10108", "customfield_10109", "customfield_10110"] });
@@ -220,7 +240,7 @@ async function rovoEnvelopeCompatibility() {
     error => error.code === "JIRA_CONNECTOR_ERROR");
 
   const apiCreate = await connector(async () => rovoGetResponse(rovoIssue({ summary: CREATE_REQUEST.summary })));
-  assert.equal((await apiCreate.create(CREATE_REQUEST)).url, `${SITE}/browse/RPL-42`);
+  assert.equal((await apiCreate.create(CREATE_REQUEST, CREATE_GATE_PROOF)).url, `${SITE}/browse/RPL-42`);
   for (const issue of [
     rovoIssue({ summary: CREATE_REQUEST.summary, self: `https://api.atlassian.com/ex/jira/wrong-cloud/rest/api/3/issue/10042` }),
     rovoIssue({ summary: CREATE_REQUEST.summary, self: `http://api.atlassian.com/ex/jira/${CLOUD}/rest/api/3/issue/10042` }),
@@ -233,7 +253,7 @@ async function rovoEnvelopeCompatibility() {
   ]) {
     let createCalls = 0;
     const invalid = await connector(async () => { createCalls += 1; return rovoGetResponse(issue); });
-    await assert.rejects(invalid.create(CREATE_REQUEST), error => {
+    await assert.rejects(invalid.create(CREATE_REQUEST, CREATE_GATE_PROOF), error => {
       assert.equal(error.code, "JIRA_CREATE_POSSIBLY_APPLIED");
       assert.equal(error.mutation_status, "possibly_applied");
       assert.equal(error.automatic_retry, false);
@@ -288,7 +308,7 @@ async function searchFailuresAndPagination() {
 async function createAmbiguityAndNoRetry() {
   let calls = 0;
   const timedOut = await connector(async () => { calls += 1; throw new Error("synthetic timeout"); });
-  await assert.rejects(timedOut.create(CREATE_REQUEST), error => {
+  await assert.rejects(timedOut.create(CREATE_REQUEST, CREATE_GATE_PROOF), error => {
     assert.equal(error.code, "JIRA_CREATE_POSSIBLY_APPLIED");
     assert.equal(error.tool_call_count, 1);
     assert.equal(error.mutation_status, "possibly_applied");
@@ -301,7 +321,7 @@ async function createAmbiguityAndNoRetry() {
     calls += 1;
     return { structuredContent: { key: "RPL-42", id: "10042", self: `${SITE}/rest/api/3/issue/10042` } };
   });
-  await assert.rejects(missingIdentity.create(CREATE_REQUEST), error => {
+  await assert.rejects(missingIdentity.create(CREATE_REQUEST, CREATE_GATE_PROOF), error => {
     assert.equal(error.code, "JIRA_CREATE_POSSIBLY_APPLIED");
     assert.equal(error.tool_call_count, 1);
     assert.equal(error.mutation_status, "possibly_applied");
@@ -313,49 +333,49 @@ async function createAmbiguityAndNoRetry() {
     calls += 1;
     return { structuredContent: jiraIssue({ self: "https://other.example/rest/api/3/issue/10042" }) };
   });
-  await assert.rejects(wrongSite.create(CREATE_REQUEST), error => error.code === "JIRA_CREATE_POSSIBLY_APPLIED");
+  await assert.rejects(wrongSite.create(CREATE_REQUEST, CREATE_GATE_PROOF), error => error.code === "JIRA_CREATE_POSSIBLY_APPLIED");
   assert.equal(calls, 3);
 
   const mismatchedNumericId = await connector(async () => {
     calls += 1;
     return { structuredContent: jiraIssue({ self: `${SITE}/rest/api/3/issue/99999` }) };
   });
-  await assert.rejects(mismatchedNumericId.create(CREATE_REQUEST), error => error.code === "JIRA_CREATE_POSSIBLY_APPLIED");
+  await assert.rejects(mismatchedNumericId.create(CREATE_REQUEST, CREATE_GATE_PROOF), error => error.code === "JIRA_CREATE_POSSIBLY_APPLIED");
   assert.equal(calls, 4);
 
   const conflictingIdentities = await connector(async () => {
     calls += 1;
     return { structuredContent: jiraIssue({ url: "https://other.example/browse/RPL-42" }) };
   });
-  await assert.rejects(conflictingIdentities.create(CREATE_REQUEST), error => error.code === "JIRA_CREATE_POSSIBLY_APPLIED");
+  await assert.rejects(conflictingIdentities.create(CREATE_REQUEST, CREATE_GATE_PROOF), error => error.code === "JIRA_CREATE_POSSIBLY_APPLIED");
   assert.equal(calls, 5);
 
   const credentialsOrQuery = await connector(async () => {
     calls += 1;
     return { structuredContent: jiraIssue({ url: `https://user@jira.example.test/browse/RPL-42?expand=fields` }) };
   });
-  await assert.rejects(credentialsOrQuery.create(CREATE_REQUEST), error => error.code === "JIRA_CREATE_POSSIBLY_APPLIED");
+  await assert.rejects(credentialsOrQuery.create(CREATE_REQUEST, CREATE_GATE_PROOF), error => error.code === "JIRA_CREATE_POSSIBLY_APPLIED");
   assert.equal(calls, 6);
 
   const wrongBrowseKey = await connector(async () => {
     calls += 1;
     return { structuredContent: jiraIssue({ url: `${SITE}/browse/RPL-43` }) };
   });
-  await assert.rejects(wrongBrowseKey.create(CREATE_REQUEST), error => error.code === "JIRA_CREATE_POSSIBLY_APPLIED");
+  await assert.rejects(wrongBrowseKey.create(CREATE_REQUEST, CREATE_GATE_PROOF), error => error.code === "JIRA_CREATE_POSSIBLY_APPLIED");
   assert.equal(calls, 7);
 
   const oldKeyPath = await connector(async () => {
     calls += 1;
     return { structuredContent: jiraIssue({ self: `${SITE}/rest/api/3/issue/RPL-42` }) };
   });
-  assert.equal((await oldKeyPath.create(CREATE_REQUEST)).key, "RPL-42");
+  assert.equal((await oldKeyPath.create(CREATE_REQUEST, CREATE_GATE_PROOF)).key, "RPL-42");
   assert.equal(calls, 8);
 
   const browsePath = await connector(async () => {
     calls += 1;
     return { structuredContent: jiraIssue({ self: `${SITE}/browse/RPL-42` }) };
   });
-  assert.equal((await browsePath.create(CREATE_REQUEST)).key, "RPL-42");
+  assert.equal((await browsePath.create(CREATE_REQUEST, CREATE_GATE_PROOF)).key, "RPL-42");
   assert.equal(calls, 9);
 }
 
@@ -448,7 +468,9 @@ async function supervisedWorkflowIntegration(rovoEnvelope = false) {
     jira,
     ledger,
     verifyGate: async ({ stage }) => ({ allowed: true, evidence_ref: `synthetic:owner-gate:${stage}`,
-      ...(stage === "intent" ? { cutover_approval_ref: "synthetic:approval" } : {}) }),
+      ...(stage === "intent" ? { cutover_approval_ref: "synthetic:approval" } : {}),
+      ...(stage === "create" ? { issue_type_binding: { canonical_issue_type: "Task",
+        issue_type_id: "10010", localized_issue_type_name: "작업", metadata_sha256: "b".repeat(64) } } : {}) }),
     siteOrigin: SITE,
     capabilityEvidence,
   });
@@ -507,6 +529,7 @@ async function supervisedWorkflowIntegration(rovoEnvelope = false) {
 }
 
 await successPath();
+await verifiedIssueTypeBindingRequired();
 await rovoEnvelopeCompatibility();
 await searchFailuresAndPagination();
 await createAmbiguityAndNoRetry();

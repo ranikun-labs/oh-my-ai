@@ -311,12 +311,20 @@ function assertCreateRequest(request) {
     throw new Error("Jira Create request does not match the G3 approved request shape");
 }
 
-function createArgs(request, cloudId) {
+function createArgs(request, cloudId, gateProof) {
   assertCreateRequest(request);
+  const binding = gateProof?.issue_type_binding;
+  const expectedIssueTypeId = ISSUE_TYPE_IDS.get(request.issue_type);
+  if (gateProof?.allowed !== true || !nonEmpty(gateProof.evidence_ref)
+    || !binding || binding.canonical_issue_type !== request.issue_type
+    || binding.issue_type_id !== expectedIssueTypeId
+    || !nonEmpty(binding.localized_issue_type_name)
+    || !/^[a-f0-9]{64}$/.test(binding.metadata_sha256 ?? ""))
+    throw createError("Jira Create requires the current verified issue type binding", { toolCallCount: 0 });
   return {
     cloudId,
     projectKey: request.project,
-    issueTypeName: request.issue_type,
+    issueTypeName: binding.localized_issue_type_name,
     summary: request.summary,
     description: request.description,
     assignee_account_id: request.assignee,
@@ -393,8 +401,8 @@ export async function createG3JiraConnector({ invokeTool, verifySession, session
       const data = responseObject(response, ["project", "issuetype", "summary"]);
       return data ? searchOutcome(data, request, siteOrigin, cloudId) : { status: "failed", tool_call_count: 1 };
     },
-    async create(request) {
-      const args = createArgs(request, cloudId);
+    async create(request, gateProof) {
+      const args = createArgs(request, cloudId, gateProof);
       await authorize("create");
       let response;
       try { response = await invokeTool(TOOL.create, args); }

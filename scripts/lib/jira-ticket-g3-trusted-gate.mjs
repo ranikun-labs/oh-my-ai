@@ -149,6 +149,45 @@ function metadataContent(payload) {
     issue_type_id: payload.issue_type_id, fields: payload.fields };
 }
 
+function metadataFieldsForGate(fields) {
+  if (Array.isArray(fields)) {
+    const byId = Object.create(null);
+    for (const entry of fields) {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)
+        || !Object.hasOwn(entry, "fieldId") || typeof entry.fieldId !== "string" || !entry.fieldId.trim()
+        || Object.hasOwn(byId, entry.fieldId))
+        throw new Error("live Jira field metadata list has a missing or duplicate fieldId");
+      const { fieldId, ...definition } = entry;
+      byId[fieldId] = definition;
+    }
+    return byId;
+  }
+  if (!fields || typeof fields !== "object" || Array.isArray(fields)
+    || Object.getPrototypeOf(fields) !== Object.prototype)
+    throw new Error("live Jira field metadata has an unsupported shape");
+  return fields;
+}
+
+function bindIssueType(metadata, fields) {
+  const canonicalName = metadata.issue_type;
+  const issueTypeId = metadata.issue_type_id;
+  if (ISSUE_TYPE_IDS[canonicalName] !== issueTypeId)
+    throw new Error("live Jira issue type does not match the canonical Task ID binding");
+  const field = fields.issuetype;
+  if (field?.schema?.type !== "issuetype" || typeof field.required !== "boolean"
+    || typeof field.hasDefaultValue !== "boolean" || !Array.isArray(field.allowedValues))
+    throw new Error("live Jira issue type metadata is incomplete");
+  const options = field.allowedValues.filter(option => option?.id === issueTypeId);
+  if (options.length !== 1 || typeof options[0].name !== "string" || !options[0].name.trim())
+    throw new Error("live Jira issue type option does not bind the signed ID to one current name");
+  return {
+    canonical_issue_type: canonicalName,
+    issue_type_id: issueTypeId,
+    localized_issue_type_name: options[0].name,
+    metadata_sha256: metadata.metadata_sha256,
+  };
+}
+
 function matchesPolicyAndMetadata(activation, policy, metadata) {
   const scope = activation.scope;
   if (policy.kind !== "g3_policy" || policy.status !== "active"
@@ -161,14 +200,14 @@ function matchesPolicyAndMetadata(activation, policy, metadata) {
   const metadataHash = g3EvidenceSha256(metadataContent(metadata));
   if (metadata.kind !== "g3_live_metadata" || metadata.project !== scope.project
     || metadata.issue_type !== scope.issue_type || metadata.issue_type_id !== scope.issue_type_id
-    || metadata.metadata_sha256 !== metadataHash || activation.metadata_sha256 !== metadataHash
-    || !metadata.fields || typeof metadata.fields !== "object" || Array.isArray(metadata.fields))
+    || metadata.metadata_sha256 !== metadataHash || activation.metadata_sha256 !== metadataHash)
     throw new Error("live Jira metadata does not match Activation snapshot");
+  const fields = metadataFieldsForGate(metadata.fields);
   const observedAt = timestamp(metadata.observed_at, "metadata observed_at");
   const issuedAt = timestamp(metadata.issued_at, "metadata issued_at");
   if (observedAt > issuedAt) throw new Error("live Jira metadata observation is future-dated");
-  const product = metadata.fields[TARGET_FIELDS.product], component = metadata.fields[TARGET_FIELDS.component];
-  const concern = metadata.fields[TARGET_FIELDS.concern];
+  const product = fields[TARGET_FIELDS.product], component = fields[TARGET_FIELDS.component];
+  const concern = fields[TARGET_FIELDS.concern];
   const selectSchema = f => f?.schema?.type === "option"
     && f.schema.custom === "com.atlassian.jira.plugin.system.customfieldtypes:select";
   if (product?.required !== true || component?.required !== true || concern?.required !== false
@@ -180,9 +219,15 @@ function matchesPolicyAndMetadata(activation, policy, metadata) {
     || !Array.isArray(product.allowedValues) || !Array.isArray(component.allowedValues)
     || !Array.isArray(concern.allowedValues))
     throw new Error("live Jira Target field schema is not approved");
-  assertLegacyFields(metadata.fields);
-  assertSupplementalMetadata(metadata.fields);
-  return { policy, metadata, policy_sha256: policy.policy_sha256 };
+  assertLegacyFields(fields);
+  assertSupplementalMetadata(fields);
+  const issueTypeBinding = bindIssueType(metadata, fields);
+  return {
+    policy,
+    metadata: { ...metadata, fields },
+    issue_type_binding: issueTypeBinding,
+    policy_sha256: policy.policy_sha256,
+  };
 }
 
 function assertTargetOptions(fields, metadata, policy) {
@@ -205,9 +250,9 @@ function assertTargetOptions(fields, metadata, policy) {
     throw new Error("Create option is absent from current Jira metadata");
 }
 
-function createValueForField(id, request) {
+function createValueForField(id, request, issueTypeBinding) {
   if (id === "project") return request.project;
-  if (id === "issuetype" || id === "issue_type") return request.issue_type;
+  if (id === "issuetype" || id === "issue_type") return { id: issueTypeBinding.issue_type_id };
   if (WRAPPER_FIELD_IDS.includes(id)) return request[id];
   return request.fields?.[id];
 }
@@ -266,10 +311,15 @@ function assertMetadataValue(id, value, field) {
   throw new Error(`Unsupported required live Jira schema for ${id}`);
 }
 
-function assertCreateRequestMetadata(request, metadata, policy) {
+function assertCreateRequestMetadata(request, metadata, policy, issueTypeBinding) {
   if (!request || typeof request !== "object" || Array.isArray(request)
     || !request.fields || typeof request.fields !== "object" || Array.isArray(request.fields))
     throw new Error("Create request fields are missing");
+  if (!issueTypeBinding || issueTypeBinding.canonical_issue_type !== request.issue_type
+    || issueTypeBinding.issue_type_id !== ISSUE_TYPE_IDS[request.issue_type]
+    || issueTypeBinding.issue_type_id !== metadata.issue_type_id
+    || issueTypeBinding.metadata_sha256 !== metadata.metadata_sha256)
+    throw new Error("Create request differs from the verified current issue type binding");
   assertTargetOptions(request.fields, metadata, policy);
   if (LEGACY_FIELD_IDS.some(id => Object.hasOwn(request.fields, id)))
     throw new Error("Create request includes a prohibited Legacy classification field");
@@ -282,7 +332,7 @@ function assertCreateRequestMetadata(request, metadata, policy) {
   for (const [id, field] of Object.entries(fields)) {
     if (typeof field?.required !== "boolean" || typeof field?.hasDefaultValue !== "boolean")
       throw new Error(`live Jira required/default metadata is incomplete: ${id}`);
-    const value = createValueForField(id, request);
+    const value = createValueForField(id, request, issueTypeBinding);
     if (!hasCreateValue(value)) {
       if (field.required && !field.hasDefaultValue)
         throw new Error(`required live Jira Create field is missing: ${id}`);
@@ -398,11 +448,13 @@ export function createG3TrustedGate({ source, trustedKeys, now = Date.now, maxEv
     if (!Number.isFinite(time)) throw new Error("invalid G3 gate clock");
     const policy = verifyG3SignedEvidence(policyEnvelope, pinnedKeys, { now: time, maxAgeMs: maxEvidenceAgeMs });
     const metadata = verifyG3SignedEvidence(metadataEnvelope, pinnedKeys, { now: time, maxAgeMs: maxEvidenceAgeMs });
-    matchesPolicyAndMetadata(activation, policy, metadata);
+    const matched = matchesPolicyAndMetadata(activation, policy, metadata);
     const ageLimit = Math.min(maxEvidenceAgeMs, policy.max_metadata_age_ms ?? maxEvidenceAgeMs);
     if (time - timestamp(metadata.observed_at, "metadata observed_at") > ageLimit)
       throw new Error("live Jira metadata is stale");
-    const records = { activation, activationEnvelope, policy, policyEnvelope, metadata, metadataEnvelope, time };
+    const records = { activation, activationEnvelope, policy, policyEnvelope,
+      metadata: matched.metadata, issue_type_binding: matched.issue_type_binding,
+      metadataEnvelope, time };
     records.time = refreshRecords(records, stage);
     return records;
   }
@@ -484,6 +536,7 @@ export function createG3TrustedGate({ source, trustedKeys, now = Date.now, maxEv
         approved_preview_id: context.approved_preview_id, fields_sha256: g3EvidenceSha256(context.fields),
         target_sha256: g3EvidenceSha256(targetsOnly(context.fields)), approval_ref: approval.approval_ref,
         create_request_sha256: approval.create_request_sha256, approvalEnvelope,
+        issue_type_binding: records.issue_type_binding,
         read_key: null, create_attempted: false, origin_attempted: false };
       bindings.set(context.create_request_id, bindingRecord);
       return { allowed: true, evidence_ref: signedRef([records.activationEnvelope, records.policyEnvelope,
@@ -506,7 +559,9 @@ export function createG3TrustedGate({ source, trustedKeys, now = Date.now, maxEv
         || request?.issue_type !== issueType || g3EvidenceSha256(request.fields ?? {}) !== binding.fields_sha256
         || g3EvidenceSha256(request) !== binding.create_request_sha256)
         throw new Error("Jira Create request differs from exact Owner-approved Preview");
-      assertCreateRequestMetadata(request, metadata, policy);
+      if (g3EvidenceSha256(records.issue_type_binding) !== g3EvidenceSha256(binding.issue_type_binding))
+        throw new Error("current Jira issue type binding changed after the signed Intent");
+      assertCreateRequestMetadata(request, metadata, policy, records.issue_type_binding);
     } else if (stage === "read") {
       const read = context;
       const expected = ["issuetype", ...TARGET_IDS];
@@ -536,6 +591,7 @@ export function createG3TrustedGate({ source, trustedKeys, now = Date.now, maxEv
       completed.add(createRequestId);
     }
     return { allowed: true, evidence_ref: signedRef([records.activationEnvelope, records.policyEnvelope,
-      records.metadataEnvelope, binding.approvalEnvelope]), cutover_approval_ref: binding.approval_ref };
+      records.metadataEnvelope, binding.approvalEnvelope]), cutover_approval_ref: binding.approval_ref,
+      ...(stage === "create" ? { issue_type_binding: records.issue_type_binding } : {}) };
   };
 }

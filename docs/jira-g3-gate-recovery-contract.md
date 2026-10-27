@@ -28,7 +28,9 @@
 | `claimReplay({ claim_key, activation_ref, create_request_id, approved_preview_id, expires_at })` | 재시작·다른 Gate 인스턴스 간 원자적 단일 사용 예약 |
 | `fetchReadAuthority({ issue_key })` | 이미 생성된 개별 이슈에 대한 유형별 기간과 독립된 Target 읽기 권한 |
 
-Activation은 `status: "active"`, 프로젝트/유형/ID, ledger, 고유 `request_id`, Preview digest, 허용 operation, Policy/metadata digest, 승인 참조와 유효 기간을 묶는다. Policy는 Activation과 digest가 일치하고 `mode: "single_supervised"`여야 한다. metadata digest는 `g3EvidenceSha256({ project, issue_type, issue_type_id, fields })`이며 Activation snapshot과 일치해야 한다.
+Activation은 `status: "active"`, 프로젝트/유형/ID, ledger, 고유 `request_id`, Preview digest, 허용 operation, Policy/metadata digest, 승인 참조와 유효 기간을 묶는다. Policy는 Activation과 digest가 일치하고 `mode: "single_supervised"`여야 한다. metadata digest는 `g3EvidenceSha256({ project, issue_type, issue_type_id, fields })`이며 Activation snapshot과 일치해야 한다. Rovo의 원본 `fields[]` 배열은 서명/digest 검증 전에 재정렬하거나 keyed object로 바꾸지 않는다. 검증 뒤에만 고유 `fieldId` 기준 내부 조회 map으로 변환하며 누락/중복 ID는 거부한다.
+
+Task Type binding은 canonical `Task` → 현재 signed Type ID `10010` → metadata `issuetype.allowedValues`의 정확히 하나인 `name` 순서로 검증한다. Adapter는 이 signed binding을 Create connector에 전달하고 `issueTypeName`은 그 검증된 `name`에서만 가져온다. ID/name 불일치나 metadata 변경은 Search/Intent/Create 앞에서 차단한다. 2026-10-27 READ-ONLY Task metadata에서 현재 name은 `작업`이지만, `assignee`/`priority`/`labels` wrapper 누락, `customfield_10045.allowedValues` 누락, `reporter` default 값 누락 및 필수 날짜 때문에 Gate는 계속 차단한다. 어떤 값도 합성하지 않는다.
 
 Gate는 서명된 live metadata로 Target 필드 schema/default/options를 확인한다. Legacy 분류 필드 `customfield_10042`, `customfield_10043`, `customfield_10044`는 모두 optional이고 default가 없어야 한다. Create에 포함된 필드는 현재 metadata에 있어야 하고 Policy `allowed_create_fields` 범위여야 한다. metadata가 표시하는 모든 필수 필드는 요청에 있거나 유효한 Jira default가 있어야 한다. Target 옵션·보조 date 값은 signed schema에 맞춰야 하고 user/assignee 값은 현재 허용 account와 일치해야 한다. caller/Core의 `create_metadata` 값은 이 검사에 사용하지 않는다.
 

@@ -118,9 +118,17 @@ export function createG3SupervisedAdapter({ jira, ledger, verifyGate, siteOrigin
       if (!active || createReserved) throw new Error("missing/new Intent or replayed Jira Create");
       const createRequest = structuredClone(request);
       createReserved = true; // Synchronous reservation closes the gate-await race.
-      await gate("create", { request: createRequest, create_request_id: active.id, activation_ref: active.activation });
+      const proof = await gate("create", { request: createRequest,
+        create_request_id: active.id, activation_ref: active.activation });
+      const typeBinding = proof.issue_type_binding;
+      if (!typeBinding || typeBinding.canonical_issue_type !== createRequest.issue_type
+        || typeBinding.issue_type_id !== typeId[createRequest.issue_type]
+        || typeof typeBinding.localized_issue_type_name !== "string"
+        || !typeBinding.localized_issue_type_name.trim()
+        || !/^[a-f0-9]{64}$/.test(typeBinding.metadata_sha256 ?? ""))
+        throw new Error("G3 Create requires the current signed Jira issue type binding");
       createStarted = true; // Any Jira call failure permanently prevents retry in this instance.
-      const result = await jira.create(createRequest);
+      const result = await jira.create(createRequest, proof);
       let identityValid = false;
       try {
         const u = new URL(result?.url);

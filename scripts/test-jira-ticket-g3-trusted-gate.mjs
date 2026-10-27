@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync, sign } from "node:crypto";
 import { g3EvidenceSha256, createG3TrustedGate } from "./lib/jira-ticket-g3-trusted-gate.mjs";
+import { createG3SupervisedAdapter } from "./lib/jira-ticket-g3-supervised-adapter.mjs";
 
 const keyId = "offline-fixture-owner-key";
 const { privateKey, publicKey } = generateKeyPairSync("ed25519");
@@ -66,6 +67,53 @@ const metadataFields = {
     allowedValues: options.concern },
 };
 const metadataContent = { project: "RPL", issue_type: "Task", issue_type_id: "10010", fields: metadataFields };
+const metadataFieldRow = (fieldId, required, hasDefaultValue, schema, extra = {}) =>
+  ({ fieldId, name: fieldId, required, hasDefaultValue, schema, ...extra });
+const fixtureOptions = count => Array.from({ length: count }, (_, index) => ({ id: `fixture-option-${index + 1}` }));
+// Redacted shape-only fixture from a read-only Task metadata response. Its
+// temporary test signature is synthetic and does not represent trusted live
+// evidence. No production account IDs or option payloads are stored here.
+const liveShapedMetadataContent = {
+  project: "RPL", issue_type: "Task", issue_type_id: "10010",
+  fields: [
+    metadataFieldRow("attachment", false, false, { type: "array", items: "attachment" }),
+    metadataFieldRow("customfield_10000", false, false, { type: "any", custom: "devsummary" }),
+    metadataFieldRow("customfield_10015", true, false, { type: "date", custom: "datepicker" }),
+    metadataFieldRow("customfield_10019", false, false, { type: "any", custom: "rank" }),
+    metadataFieldRow("customfield_10021", false, false,
+      { type: "array", items: "option", custom: "multicheckboxes" }, { allowedValues: fixtureOptions(1) }),
+    metadataFieldRow("customfield_10037", false, false, { type: "any", custom: "vulnerability" }),
+    metadataFieldRow("customfield_10042", false, false,
+      { type: "array", items: "string", custom: "labels" }),
+    metadataFieldRow("customfield_10043", false, false,
+      { type: "array", items: "string", custom: "labels" }),
+    metadataFieldRow("customfield_10044", false, false,
+      { type: "array", items: "string", custom: "labels" }),
+    metadataFieldRow("customfield_10045", true, true,
+      { type: "array", items: "user", custom: "people" },
+      { defaultValue: [{ accountId: "REDACTED_FIXTURE_ACCOUNT" }] }),
+    metadataFieldRow("customfield_10108", true, false,
+      { type: "option", custom: "com.atlassian.jira.plugin.system.customfieldtypes:select" },
+      { allowedValues: fixtureOptions(8) }),
+    metadataFieldRow("customfield_10109", true, false,
+      { type: "option", custom: "com.atlassian.jira.plugin.system.customfieldtypes:select" },
+      { allowedValues: fixtureOptions(5) }),
+    metadataFieldRow("customfield_10110", false, false,
+      { type: "array", items: "option", custom: "com.atlassian.jira.plugin.system.customfieldtypes:multicheckboxes" },
+      { allowedValues: fixtureOptions(14) }),
+    metadataFieldRow("description", false, false, { type: "string" }),
+    metadataFieldRow("duedate", true, false, { type: "date" }),
+    metadataFieldRow("fixVersions", false, false, { type: "array", items: "version" }, { allowedValues: [] }),
+    metadataFieldRow("issuelinks", false, false, { type: "array", items: "issuelinks" }),
+    metadataFieldRow("issuetype", false, false, { type: "issuetype" },
+      { allowedValues: [{ id: "10010", name: "작업" }] }),
+    metadataFieldRow("parent", false, false, { type: "issuelink" }),
+    metadataFieldRow("project", true, false, { type: "project" },
+      { allowedValues: [{ id: "fixture-project", key: "RPL" }] }),
+    metadataFieldRow("reporter", true, true, { type: "user" }),
+    metadataFieldRow("summary", true, false, { type: "string" }),
+  ],
+};
 const metadataHash = g3EvidenceSha256(metadataContent);
 const policyHash = "b".repeat(64);
 const activationRef = "fixture-activation-task-v1";
@@ -303,6 +351,68 @@ const futureEvidence = fixtureGate();
 futureEvidence.payloads.activation.issued_at = iso(clock + 1_000);
 await assert.rejects(() => futureEvidence.verifyGate({ stage: "search", context: { project: "RPL" } }), /future-dated/i);
 console.log("PASS: Activation effective-window and signed-evidence expiry boundaries are exclusive; future evidence is rejected");
+
+const arrayMetadata = structuredClone(metadataContent);
+arrayMetadata.fields = Object.entries(metadataFields).map(([fieldId, definition]) => ({
+  fieldId, name: fieldId, ...structuredClone(definition),
+}));
+arrayMetadata.fields.find(field => field.fieldId === "issuetype").allowedValues = [
+  { id: "10010", name: "작업" },
+];
+const mappedArray = fixtureGate({ metadataOverride: arrayMetadata });
+assert.equal((await mappedArray.verifyGate({ stage: "search", context: { project: "RPL" } })).allowed, true);
+await mappedArray.verifyGate({ stage: "intent", context: intent() });
+const localizedTypeProof = await mappedArray.verifyGate({ stage: "create", context: {
+  request: createRequest, create_request_id: requestId, activation_ref: activationRef,
+} });
+assert.deepEqual(localizedTypeProof.issue_type_binding, {
+  canonical_issue_type: "Task", issue_type_id: "10010", localized_issue_type_name: "작업",
+  metadata_sha256: g3EvidenceSha256(arrayMetadata),
+});
+console.log("PASS: signed fields[] metadata maps by unique fieldId and binds canonical Task to ID 10010 and its current localized name");
+
+const duplicateFieldMetadata = structuredClone(arrayMetadata);
+duplicateFieldMetadata.fields.push(structuredClone(duplicateFieldMetadata.fields[0]));
+const duplicateField = fixtureGate({ metadataOverride: duplicateFieldMetadata });
+await assert.rejects(() => duplicateField.verifyGate({ stage: "search", context: { project: "RPL" } }), /duplicate fieldId/i);
+const mismatchedTypeMetadata = structuredClone(arrayMetadata);
+mismatchedTypeMetadata.fields.find(field => field.fieldId === "issuetype").allowedValues = [
+  { id: "10007", name: "작업" },
+];
+const mismatchedType = fixtureGate({ metadataOverride: mismatchedTypeMetadata });
+await assert.rejects(() => mismatchedType.verifyGate({ stage: "search", context: { project: "RPL" } }), /issue type option/i);
+console.log("PASS: duplicate field IDs and a localized name attached to the wrong type ID are rejected before use");
+
+const liveShapeBlocked = fixtureGate({ metadataOverride: liveShapedMetadataContent });
+const sideEffects = { search: 0, intent: 0, create: 0 };
+const capabilityNames = ["jira.search", "jira.create", "jira.read", "jira.intent.persist", "jira.origin.persist"];
+const capabilityEvidence = Object.fromEntries(capabilityNames.map(name => [name, {
+  available: true, connection_verified: true, evidence_ref: `synthetic:${name}`,
+  ...(name.startsWith("jira.") && ["jira.search", "jira.create", "jira.read"].includes(name)
+    ? { jira_site_origin: "https://jira.example.test" } : {}),
+}]));
+const blockedAdapter = createG3SupervisedAdapter({
+  jira: {
+    async search() { sideEffects.search++; return { status: "none", tool_call_count: 1 }; },
+    async create() { sideEffects.create++; throw new Error("unexpected Jira Create"); },
+    async read() { throw new Error("unexpected Jira GET"); },
+  },
+  ledger: {
+    async persistIntent() { sideEffects.intent++; throw new Error("unexpected Intent write"); },
+    async linkIssue() { throw new Error("unexpected Issue link"); },
+    async persistOrigin() { throw new Error("unexpected Origin write"); },
+    async readClassificationAuthority() { throw new Error("unexpected Reader access"); },
+  },
+  verifyGate: input => liveShapeBlocked.verifyGate(input),
+  capabilityEvidence, siteOrigin: "https://jira.example.test",
+});
+await assert.rejects(() => blockedAdapter.search({ project: "RPL" }), /current accounts are unavailable/i);
+await assert.rejects(() => blockedAdapter.persistIntent(intent()), /current accounts are unavailable/i);
+await assert.rejects(() => blockedAdapter.create(createRequest), /Intent|replayed Jira Create/i);
+assert.deepEqual(sideEffects, { search: 0, intent: 0, create: 0 });
+assert.equal(liveShapeBlocked.fetchCounts.approval, 0);
+assert.equal(liveShapeBlocked.fetchCounts.claim, 0);
+console.log("PASS: redacted live-shaped Task metadata stops before Jira Search, Intent persistence, Owner approval, replay claim, and Create");
 
 clock += 6 * 60_000;
 const expiredActivation = fixtureGate({ activationExpiryMs: -1 });

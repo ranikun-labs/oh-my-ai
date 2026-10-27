@@ -23,6 +23,10 @@ const select = (id, value) => ({ required: true, hasDefaultValue: false,
   schema: { type: "option", custom: "com.atlassian.jira.plugin.system.customfieldtypes:select" },
   allowedValues: [{ id, value }] });
 const fields = {
+  project: { required: true, hasDefaultValue: false, schema: { type: "project" },
+    allowedValues: [{ id: "fixture-project", key: "RPL" }] },
+  issuetype: { required: false, hasDefaultValue: false, schema: { type: "issuetype" },
+    allowedValues: [{ id: "10010", name: "작업" }] },
   summary: { required: true, hasDefaultValue: false, schema: { type: "string" } },
   description: { required: true, hasDefaultValue: false, schema: { type: "textarea" } },
   assignee: { required: true, hasDefaultValue: false, schema: { type: "user" },

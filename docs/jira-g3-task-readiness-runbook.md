@@ -4,12 +4,14 @@
 > Policy SSOT: `ranikun-labs/harness-foundation-docs/docs/governance/jira-field-taxonomy.md` §8.0/§8.1 및
 > `portfolio-work-management-governance.md`. 정책과 충돌하면 Foundation `main` 및 별도 Owner 결정을 따른다.
 
+> **2026-10-27 최신 READ-ONLY 상태:** G2 118/118 저장 완료, Task Legacy/Target Admin 설정 PASS. 현재 Task Create는 Live Metadata Gate에서 차단된다. 실제 응답은 `{startAt,maxResults,total,fields:[{fieldId,...}]}`의 22개 필드이며, wrapper `assignee`/`priority`/`labels`가 없고 `reporter`는 required/default 플래그만 있고 값이 없다. `customfield_10045`는 required/default account지만 현재 `allowedValues`가 없으며 `customfield_10015`/`duedate`도 required/default 없음. Issue Type ID `10010`의 현재 localized name은 `작업`. 누락 필드·계정 목록·기본값을 합성해 Gate를 통과시키지 않는다. 이 관측으로 Task Admin 설정을 재변경하지 않으며 실제 Create/Owner 승인 상태도 바뀌지 않는다.
+
 ## 제3자가 30초에 이해해야 할 결론
 
-- G1: Target 필드는 생성됨. G2: 승인된 기존 이슈 27건에 Target 분류값 저장, **Legacy가 계속 분류 권위**.
+- G1: Target 필드는 생성됨. G2: 승인된 기존 이슈 **118/118**에 Target 분류값 저장, **Legacy가 계속 분류 권위**.
 - PR #81: 새로운 Target 분류로 Jira 이슈를 만들기 위한 **Core 프로토콜** 병합 완료.
-- 이 PR: **단일 Writer·단일 Host의 Reference Adapter + filesystem CAS Intent/Origin Ledger + Reader + Mock 테스트**. 실 서비스 배포·Jira 쓰기 없음.
-- 아직 실제 Atlassian Connector, 인증된 G3 Activation/Metadata verifier, 운영 영속 볼륨, Board/Filter/Automation의 Authority Reader 연결이 없다.
+- 이 PR: Connector, 서명 Gate, filesystem CAS Intent/Origin Ledger, Reader를 통합하고 합성 Native fixture로 검증한다. 실 서비스 배포·Jira 쓰기 없음.
+- Runtime의 실제 invokeTool 세션, signed evidence source, durable replay CAS, 운영 영속 볼륨, Board/Filter/Automation Reader 연결은 검증되지 않았다.
 - 따라서 **이 PR을 병합해도 G3 Task 실제 Create나 권위 전환은 금지**한다.
 
 ## 데이터 흐름
@@ -59,7 +61,9 @@ make test-jira-ticket-g3-integrations
 
 이 명령은 합성 Jira·임시 서명키·임시 원장만 사용한다. §8.0의 소량·단일 Writer·직렬 경량 대장 허용은 유지하며, 병렬 개발·테스트는 운영 동시 Writer 승인을 뜻하지 않는다. 이 통합 코드를 병합하더라도 실제 Connector 연결, Task Admin 변경, 시험 Create 최대 1건 및 G3 Cutover는 각각 Owner Gate를 통과해야 한다.
 
-| 항목 | 현행(READ-ONLY 확인) | 변경/검증 예정 | 권한 |
+> 아래 Admin 표는 Task 설정 변경 전 계획 Snapshot이다. 2026-10-27 기준 Task Admin 변경은 완료되었으며, 상단 Live Metadata Gate 차단 상태가 현재 기준이다.
+
+| 항목 | 당시 현행(READ-ONLY 확인) | 당시 변경/검증 계획 | 권한 |
 |---|---|---|---|
 | Legacy Product `customfield_10042` | Required, 기본값 있음 | Optional, default 해제, 기존 값 보존 | Jira Admin 별도 승인 |
 | Legacy Component `customfield_10043` | Required, 기본값 있음 | Optional, default 해제, 기존 값 보존 | Jira Admin 별도 승인 |
