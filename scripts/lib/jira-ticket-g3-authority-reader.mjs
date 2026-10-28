@@ -8,7 +8,7 @@
  */
 
 const KEY = /^RPL-[1-9][0-9]*$/;
-const FROZEN_KEYS = new Set(["RPL-112", "RPL-113", "RPL-114"]);
+const FROZEN_KEYS = new Set(["RPL-112", "RPL-113", "RPL-114", "RPL-122", "RPL-124"]);
 const TYPE_IDS = Object.freeze({ Task: "10010", Epic: "10007", Feature: "10009",
   Bug: "10012", Research: "10013" });
 const LEGACY_FIELDS = Object.freeze({

@@ -261,7 +261,7 @@ console.log("PASS: read methods ignore caller-supplied evidence and use only the
   const d = dependencies({ evidenceFor: key => legacyEvidence(key), targetFor: () => targetResult(),
     jiraFor: key => legacyGet(key), calls });
   const actor = reader(d);
-  for (const key of ["RPL-112", "RPL-113", "RPL-114"]) {
+  for (const key of ["RPL-112", "RPL-113", "RPL-114", "RPL-122", "RPL-124"]) {
     const result = await actor.readClassification(key);
     assert.equal(result.read_authority, "none");
     assert.equal(result.write_authority, "frozen");
@@ -271,7 +271,7 @@ console.log("PASS: read methods ignore caller-supplied evidence and use only the
   assert.equal(calls.targetRead ?? 0, 0);
   assert.equal(calls.jiraRead ?? 0, 0);
 }
-console.log("PASS: RPL-112/113/114 are frozen before any source lookup, regardless of proof");
+console.log("PASS: protected migration issues are frozen before any source lookup, regardless of proof");
 
 {
   const d = dependencies({ evidenceFor: key => {
