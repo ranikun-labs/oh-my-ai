@@ -903,5 +903,76 @@
       "Original 103 candidates array is type support only, not a Cutover eligibility/approval manifest.",
       "Do not treat a past status snapshot or this screen as authority to write Jira."
     ]
+  },
+  "current_jira_readonly_screen": {
+    "state": "READ_ONLY_OBSERVATION_NOT_CUTOVER_APPROVAL",
+    "observed_date_kst": "2026-10-28",
+    "method": "Atlassian Rovo JQL one page; 27 exact issue keys from static preliminary screen; fields=issuetype,status,customfield_10108,customfield_10109,customfield_10110,updated; no Jira writes",
+    "response": {
+      "requested": 27,
+      "received": 27,
+      "missing": 0,
+      "next_page_token": null
+    },
+    "g2_snapshot_comparison": {
+      "source_verified_at": "2026-10-23T03:47:22.084Z",
+      "type_and_target_product_component_concern_id_matches": 27,
+      "mismatches": 0,
+      "comparison_limits": "No full issue parity, current Origin/Legacy SnapshotRef/CutoverApprovalRef, changelog or Reader activation verified."
+    },
+    "status_category_counts": {
+      "new": 21,
+      "indeterminate": 5,
+      "done": 1
+    },
+    "now_done_excluded": [
+      "RPL-68"
+    ],
+    "non_done_but_separately_authorized_contract_work": [
+      "RPL-111"
+    ],
+    "indeterminate_status_keys": [
+      "RPL-51",
+      "RPL-55",
+      "RPL-63",
+      "RPL-93",
+      "RPL-95"
+    ],
+    "preliminary_review_unapproved_issue_keys": [
+      "RPL-1",
+      "RPL-2",
+      "RPL-3",
+      "RPL-4",
+      "RPL-5",
+      "RPL-6",
+      "RPL-7",
+      "RPL-11",
+      "RPL-27",
+      "RPL-34",
+      "RPL-36",
+      "RPL-37",
+      "RPL-41",
+      "RPL-46",
+      "RPL-47",
+      "RPL-51",
+      "RPL-55",
+      "RPL-62",
+      "RPL-63",
+      "RPL-64",
+      "RPL-88",
+      "RPL-93",
+      "RPL-95",
+      "RPL-98",
+      "RPL-107"
+    ],
+    "remaining_preliminary_review_unapproved_count": 25,
+    "signed_cutover_approval_count": 0,
+    "no_authority_grant": true,
+    "notes": [
+      "A read-only live snapshot is not a trusted signed migration approval or durable authority record.",
+      "RPL-68 became done after the G2 snapshot; RPL-111 is separately scoped for SQS Contract/Description and not auto-cutover.",
+      "RPL-112/113/114 and RPL-122/124 remain protected; existing 75 done and RPL-40 excluded.",
+      "Every proposed cutover still needs the exact Owner-approved scope, current per-issue Origin, Snapshot, parity, changelog preservation, rollback and Reader evidence."
+    ]
   }
 }
