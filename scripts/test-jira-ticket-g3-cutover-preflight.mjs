@@ -3,6 +3,10 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createG3AuthorityReader } from "./lib/jira-ticket-g3-authority-reader.mjs";
 import {
+  buildG3CutoverCandidateManifest,
+  runG3CutoverCandidateManifestCli,
+} from "./jira-ticket-g3-cutover-candidate-manifest.mjs";
+import {
   buildG3CutoverPreflightReport,
   gitBlobSha1,
 } from "./lib/jira-ticket-g3-cutover-preflight.mjs";
@@ -170,3 +174,31 @@ if (process.env.JIRA_G2_SNAPSHOT_PATH) {
     && row.target_component.value && row.unverified_per_issue_evidence.length === 6));
   console.log("PASS: pinned private G2 audit yields exactly 103 unapproved classified candidates");
 }
+
+const candidateManifest = buildG3CutoverCandidateManifest(text, { source: sourceFor(text) });
+assert.equal(candidateManifest.status, "READ_ONLY_PROPOSED_CANDIDATES");
+assert.equal(candidateManifest.execution_authorized, false);
+assert.equal(candidateManifest.cutover_approved, false);
+assert.equal(candidateManifest.summary.candidates, 103);
+assert.equal(candidateManifest.summary.candidate_cutover_ready, 0);
+assert.deepEqual(candidateManifest.summary.candidate_type_counts, {
+  Epic: 8, Feature: 33, Task: 49, Bug: 5, Research: 8,
+}); // synthetic fixture protected keys have different types from pinned real G2 data
+assert.equal(candidateManifest.candidates[0].candidate_status, "PROPOSED_CANDIDATE");
+assert.equal(candidateManifest.candidates[0].cutover_status, "NOT_APPROVED_FOR_CUTOVER");
+assert.deepEqual(candidateManifest.candidates[0].target_concerns, []);
+assert.equal(candidateManifest.candidates.some(row => ["RPL-112", "RPL-113", "RPL-114"]
+  .includes(row.issue_key)), false);
+assert.ok(candidateManifest.candidates.every(row => row.g3_evidence_status.authority_reader
+  === "NOT_VERIFIED"));
+assert.equal(buildG3CutoverCandidateManifest("{}", { source: sourceFor("{}") }).status, "BLOCKED");
+console.log("PASS: deterministic 103-row candidate Manifest preserves fields while denying cutover");
+
+const output = [];
+const cliCode = await runG3CutoverCandidateManifestCli(["/fake/private-source.json"], {
+  readInput: async () => text,
+  writeOutput: chunk => output.push(chunk),
+});
+assert.equal(cliCode, 1, "synthetic JSON must not pass the hard-pinned production Blob SHA");
+assert.equal(JSON.parse(output.join("")).status, "BLOCKED");
+console.log("PASS: candidate CLI blocks a synthetic source when production pinned Blob does not match");
