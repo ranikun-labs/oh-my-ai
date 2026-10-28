@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createG3SupervisedAdapter } from "./lib/jira-ticket-g3-supervised-adapter.mjs";
 import { runJiraTicketCreateWorkflow } from "./lib/jira-ticket-create-workflow.mjs";
-import { createG3JiraConnector, G3_JIRA_TOOL_NAMES } from "./lib/jira-ticket-g3-jira-connector.mjs";
+import { createG3JiraConnector, createG3ReadOnlyJiraConnector, G3_JIRA_TOOL_NAMES } from "./lib/jira-ticket-g3-jira-connector.mjs";
 
 const SITE = "https://jira.example.test";
 const CLOUD = "123e4567-e89b-12d3-a456-426614174000";
@@ -587,6 +587,72 @@ async function supervisedWorkflowIntegration(rovoEnvelope = false) {
   assert.deepEqual(toolCalls.map(call => call.name), [G3_JIRA_TOOL_NAMES.search, G3_JIRA_TOOL_NAMES.create, G3_JIRA_TOOL_NAMES.read]);
 }
 
+async function readOnlyCapabilityBoundary() {
+  let calls = 0, createVerifierCalls = 0;
+  let stale = false, wrongSite = false, wrongCloud = false;
+  const verifySession = input => {
+    if (input.capability === "jira.create") {
+      createVerifierCalls++;
+      throw new Error("synthetic create capability absent");
+    }
+    const proof = validProof(input);
+    if (stale) proof.expires_at = new Date(Date.now() - 1000).toISOString();
+    if (wrongSite) proof.site_origin = "https://other.example";
+    if (wrongCloud) proof.cloud_id = "00000000-0000-4000-8000-000000000000";
+    return proof;
+  };
+  const invokeTool = async name => {
+    calls++;
+    if (name === G3_JIRA_TOOL_NAMES.search) return { structuredContent: { issues: [], total: 0 } };
+    if (name === G3_JIRA_TOOL_NAMES.read) return { structuredContent: jiraIssue({
+      extraFields: { customfield_10108: { id: "101" } },
+    }) };
+    throw new Error("read-only connector invoked unauthorized create");
+  };
+  const options = { invokeTool, verifySession, session: SESSION, siteOrigin: SITE, cloudId: CLOUD };
+  const readOnly = await createG3ReadOnlyJiraConnector(options);
+  assert.deepEqual(Object.keys(readOnly.capabilities).sort(), ["jira.read", "jira.search"]);
+  assert.equal(Object.hasOwn(readOnly, "create"), false);
+  assert.equal(Object.getPrototypeOf(readOnly), null);
+  assert.equal(Object.getPrototypeOf(readOnly.capabilities), null);
+  assert.equal(Object.isFrozen(readOnly), true);
+  assert.equal(Object.isFrozen(readOnly.capabilities), true);
+  assert.equal(createVerifierCalls, 0);
+  assert.equal((await readOnly.search(SEARCH_REQUEST)).status, "none");
+  const actual = await readOnly.read({ key: "RPL-42", fields: ["issuetype", "customfield_10108"] });
+  assert.equal(actual.key, "RPL-42");
+  assert.equal(actual.fields.customfield_10108.id, "101");
+  assert.equal(calls, 2);
+  assert.throws(() => readOnly.create(CREATE_REQUEST, LOCALIZED_CREATE_GATE_PROOF), TypeError);
+  assert.equal(calls, 2, "Create must not reach the tool");
+
+  const originalCreate = Object.getOwnPropertyDescriptor(Object.prototype, "create");
+  Object.defineProperty(Object.prototype, "create", { configurable: true, value: () => {
+    throw new Error("unsafe inherited Create");
+  } });
+  try {
+    assert.equal("create" in readOnly, false, "inherited Create must remain inaccessible");
+    assert.equal(readOnly.create, undefined);
+    assert.equal(Object.hasOwn(readOnly.capabilities, "jira.create"), false);
+  } finally {
+    if (originalCreate) Object.defineProperty(Object.prototype, "create", originalCreate);
+    else delete Object.prototype.create;
+  }
+
+  stale = true;
+  await assert.rejects(readOnly.search(SEARCH_REQUEST), /proof missing, stale or out of scope/);
+  await assert.rejects(readOnly.read({ key: "RPL-42", fields: ["issuetype"] }), /proof missing, stale or out of scope/);
+  stale = false; wrongSite = true;
+  await assert.rejects(readOnly.search(SEARCH_REQUEST), /proof missing, stale or out of scope/);
+  wrongSite = false; wrongCloud = true;
+  await assert.rejects(readOnly.search(SEARCH_REQUEST), /proof missing, stale or out of scope/);
+  assert.equal(calls, 2, "invalid proof must fail before any read/search tool call");
+
+  wrongCloud = false;
+  await assert.rejects(createG3JiraConnector(options), /synthetic create capability absent/);
+  assert.equal(createVerifierCalls, 1, "full connector must still require create capability");
+}
+
 await successPath();
 await verifiedIssueTypeBindingRequired();
 await explicitReporterRejectedBeforeCreateTool();
@@ -595,6 +661,7 @@ await rovoEnvelopeCompatibility();
 await searchFailuresAndPagination();
 await createAmbiguityAndNoRetry();
 await authScopeAndGetValidation();
+await readOnlyCapabilityBoundary();
 await supervisedWorkflowIntegration();
 await supervisedWorkflowIntegration(true);
 process.stdout.write("Synthetic G3 Jira connector checks passed.\n");
