@@ -91,7 +91,9 @@ Jira `RPL` / Task(10010); Target Product `dev-harness (10027)`, Component `backe
 
 [**G3 103건 후보 색인**](jira-g3-cutover-candidate-index-20261028.json)에는 지원 유형 Epic 8 / Feature 31 / Task 50 / Bug 5 / Research 9 = **103건**, Story 4·Subtask 8 = **12건 제외**, Origin 불명 `RPL-112/113/114` = **3건 격리**가 고정돼 있다. `RPL-122/124`는 해당 G2 118건 Snapshot 밖의 추가 보호 대상이다. **G2 데이터 저장값 검증을 재실행하거나 Cutover 승인으로 승격하지 않았다.**
 
-이 색인은 IssueKey·IssueType의 **후보 목록만 입증**한다. Owner의 정확한 Cutover 승인, 이슈별 Origin/Legacy Snapshot/동등성/Changelog/영향 보존 근거, 승인된 Reader 기록·Rollback은 별도로 필요하다. 이 파일만으로 `ReadAuthority`, `WriteAuthority`, Jira 상태·필드·설정을 변경하거나 G4 Legacy를 삭제하지 않는다.
+이 색인의 `candidates` 103건은 **Issue Type 지원 여부만 분류한 정적 목록**이며 Cutover 적격·실행 승인 목록이 아니다. 같은 G2 Snapshot의 `statusCategory`로 추가 선별한 `cutover_scope_screen`은 완료 상태 **75건**과 정책상 폐기된 `RPL-40` **1건**을 기본 검토 대상에서 제외하고, 아직 미완료·비폐기인 **27건**만 추가 근거 수집 대상으로 남겼다. 이 27건도 **승인 0건 / Jira 현재 상태 미재조회**이며 `READ_ONLY / NOT_APPROVED`다. 역사적으로 완료된 76건을 제외한다는 Foundation 정책 수치와 이 Snapshot의 지원 유형 중 완료 상태 75건은 **서로 다른 집계 기준**이므로 혼동하지 않는다.
+
+Owner의 정확한 Cutover 승인, 이슈별 Origin/Legacy Snapshot/동등성/Changelog/영향 보존 근거, 승인된 Reader 기록·Rollback은 별도로 필요하다. `RPL-112/113/114` 격리 및 G2 Snapshot 밖 `RPL-122/124` 격리도 유지한다. 이 파일만으로 `ReadAuthority`, `WriteAuthority`, Jira 상태·필드·설정을 변경하거나 G4 Legacy를 삭제하지 않는다.
 
 ## Task(10010)만 실제 G3 시험할 때 필요한 Owner 결정
 
