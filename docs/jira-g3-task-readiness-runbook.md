@@ -54,6 +54,18 @@ Foundation 정책 경계: §8.0에 해당하는 Owner 승인 소량·단일 Writ
 
 검증 명령은 `make test-jira-ticket-g3-task-pilot-dry-run`이며 `make test-jira-ticket-g3-integrations`에도 포함된다. 이 사전검사를 통과해도 실제 Search/Create, Intent CAS, Origin 등록, Reader 확인은 별도 Runtime·서명·Owner Gate를 통과하기 전까지 금지한다.
 
+## 2026-10-28 Task Pilot 후보 — READ-ONLY / 미승인
+
+현재 Jira RPL Task(10010) Create Metadata를 READ-ONLY로 다시 관측했다. 응답은 단일 페이지 `startAt=0`, `maxResults=100`, `total=22`였다. Target Product(10108)와 Component(10109)는 필수·기본값 없음이며 현재 옵션에 `dev-harness (10027)` 및 `backend (10028)`가 각각 존재한다. Concern(10110)은 선택 필드이고 14개 허용 옵션이 있다. 시작일(10015)과 기한(`duedate`)은 필수 날짜이며 기본값이 없다. Reporter는 required/default 플래그가 있지만 `defaultValue`/`allowedValues` 키가 없다. `customfield_10045`는 required/default 플래그와 기본값이 응답됐지만 `allowedValues`는 없다. 계정 기본값은 이 문서나 출력에 복사하지 않는다. 이 Rovo 응답은 읽기 전용 관측이며 서명된 Trusted Gate Metadata 증거가 아니다.
+
+Owner에게 제안할 Pilot 값은 `[G3 PILOT] Target 분류 단일 Task 검증`, 설명 `G3 Target Product/Component/Concern 기반 신규 생성, 저장값 재조회 및 Origin 권위 검증용 비운영 시험 이슈. 실제 제품 개발 작업 아님.`, 시작일 `2026-10-29`, 기한 `2026-10-30`, `dev-harness (10027)` / `backend (10028)` / Concern `[]`이다. 상태는 **PROPOSED / NOT_APPROVED**이며 Jira Create에 사용하지 않았다.
+
+**Payload 정합성 미완료:** 현재 Core는 free-form Description을 직접 쓰지 않고 14개 필수 Ticket Contract 항목에서 Jira Description을 생성한다. 제안에 있는 Summary와 Description만으로는 승인된 Core 요청을 만들 수 없다. 실제 Preview를 통과시키려면 Owner가 14개 Contract의 최종 값과 생성될 전체 Description을 승인해야 한다. 계약을 채우기 위해 값을 추정하지 않는다. 별도로 Live Metadata의 현재 Rovo 응답은 unsigned이므로 서명된 Gate 입력으로 대체할 수 없다.
+
+기존 `createG3FileLedger`는 같은 파일시스템에서 immutable JSON pending/link/origin 레코드, create-if-absent와 fsync를 구현하지만, Codex Cloud의 승인된 지속 볼륨·백업·복원 또는 Git 버전 이력을 보증하지 않는다. §8.0 경량 Fast Track은 별도 Registry 서버를 요구하지 않아도 되지만, 실제 실행 전에는 Owner가 durable 저장 경로와 증거 대장을 지정하고 pending 기록을 Create보다 먼저 남겨야 한다. 승인 없는 후보 행을 실제 실행 기록으로 만들지 않는다.
+
+기존 Core/Gate/Adapter가 요청 digest·CreateRequestId·pending CAS·단일 Create·IssueKey link·GET/Target 대조·Origin·Reader와 불명확 결과 격리를 제공한다. 이 경로의 운영용 신뢰 발급원·durable replay/ledger 연결은 아직 검증되지 않았다. 기존 이슈 Cutover, Board/Filter/Automation의 실제 Legacy 소비처 export도 완료되지 않았으므로 G4 변경은 HOLD다.
+
 ## Task(10010)만 실제 G3 시험할 때 필요한 Owner 결정
 
 ### 후속 통합 코드의 검증 범위
