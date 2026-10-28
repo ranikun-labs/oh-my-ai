@@ -58,9 +58,28 @@ Foundation 정책 경계: §8.0에 해당하는 Owner 승인 소량·단일 Writ
 
 현재 Jira RPL Task(10010) Create Metadata를 READ-ONLY로 다시 관측했다. 응답은 단일 페이지 `startAt=0`, `maxResults=100`, `total=22`였다. Target Product(10108)와 Component(10109)는 필수·기본값 없음이며 현재 옵션에 `dev-harness (10027)` 및 `backend (10028)`가 각각 존재한다. Concern(10110)은 선택 필드이고 14개 허용 옵션이 있다. 시작일(10015)과 기한(`duedate`)은 필수 날짜이며 기본값이 없다. Reporter는 required/default 플래그가 있지만 `defaultValue`/`allowedValues` 키가 없다. `customfield_10045`는 required/default 플래그와 기본값이 응답됐지만 `allowedValues`는 없다. 계정 기본값은 이 문서나 출력에 복사하지 않는다. 이 Rovo 응답은 읽기 전용 관측이며 서명된 Trusted Gate Metadata 증거가 아니다.
 
-Owner에게 제안할 Pilot 값은 `[G3 PILOT] Target 분류 단일 Task 검증`, 설명 `G3 Target Product/Component/Concern 기반 신규 생성, 저장값 재조회 및 Origin 권위 검증용 비운영 시험 이슈. 실제 제품 개발 작업 아님.`, 시작일 `2026-10-29`, 기한 `2026-10-30`, `dev-harness (10027)` / `backend (10028)` / Concern `[]`이다. 상태는 **PROPOSED / NOT_APPROVED**이며 Jira Create에 사용하지 않았다.
+### Owner 검토 초안 — PROPOSED / NOT APPROVED
 
-**Payload 정합성 미완료:** 현재 Core는 free-form Description을 직접 쓰지 않고 14개 필수 Ticket Contract 항목에서 Jira Description을 생성한다. 제안에 있는 Summary와 Description만으로는 승인된 Core 요청을 만들 수 없다. 실제 Preview를 통과시키려면 Owner가 14개 Contract의 최종 값과 생성될 전체 Description을 승인해야 한다. 계약을 채우기 위해 값을 추정하지 않는다. 별도로 Live Metadata의 현재 Rovo 응답은 unsigned이므로 서명된 Gate 입력으로 대체할 수 없다.
+Jira `RPL` / Task(10010); Target Product `dev-harness (10027)`, Component `backend (10028)`, Concern `[]`; 시작일 `2026-10-29`, 기한 `2026-10-30`.
+
+1. **Summary:** `[G3 PILOT] Target 분류 단일 Task 검증`
+2. **Context:** G2의 기존 118건 Target 값 저장은 검증됐으나 신규 Task 생성 및 Target 권위 활성화는 미검증 상태다.
+3. **Goal:** 신규 Task 한 건의 Target 분류 저장, 재조회, Origin 등록 및 Reader 권위를 검증한다.
+4. **Source of Truth:** `harness-foundation-docs/docs/governance/jira-field-taxonomy.md` §8.0 및 `oh-my-ai/docs/jira-g3-task-readiness-runbook.md`.
+5. **In Scope:** 승인된 단일 Task Pilot, 필수 필드 검사, Create 1회, 재조회, 영속 증거 기록, 실패 격리.
+6. **Out of Scope:** 기존 118건 일괄 Cutover, Story/Subtask 이전, G4 레거시 삭제, 운영 자동 대량 생성.
+7. **Acceptance Criteria:** 정확한 승인·필드·서명 증거와 pending 기록이 선행돼야 한다. Create 후 IssueKey, Target 값, Origin과 Reader 권위가 일치해야 한다.
+8. **Repository:** `ranikun-labs/oh-my-ai`
+9. **Base Branch:** `fix/jira-g3-capability-evidence-fail-closed-20261022`
+10. **Expected Branch Name:** `feat/jira-g3-integration-offline-20261022`
+11. **Dependencies:** PR #84 코드, Jira Task Metadata, 승인된 Owner·Activation 증거, 단일 Writer, 영속 Ledger와 복구 경로.
+12. **Verification:** Core Dry-run → 승인 검증 → 생성 전 pending → Create 최대 1회 → GET → Origin/Reader 대조 → 실패 시 격리 및 수동 복구.
+13. **Do Not Touch:** 기존 이슈 Legacy 값, G2 Snapshot, 미지원 유형, Board/Filter/Automation 운영 설정, G4 필드 삭제.
+14. **Definition of Done:** 승인된 단일 Pilot이 생성되고 필드·Origin·권위 검증 및 감사 증거가 완료되었거나, 실패 상태가 중복 생성 없이 안전하게 격리되어야 한다.
+
+이 초안은 **Owner 승인·서명·Create 권한이 아니다**. Core Description은 위 14개 항목 외에 Workflow Metadata 헤더 `Product`, `Primary Repository`, `Area`, `Assignee`, `Priority`, `Branch`, `PR`, `Current HEAD`를 포함해 생성된다. Project/Issue Type, Repository, Branch, PR, Current HEAD는 현재 업무에서 확인되며 Product는 Target 값 `dev-harness`를 제안값으로 쓸 수 있다. **논리적 Assignee와 Priority는 아직 제안되지 않았다.** Area는 현재 `Jira Migration`으로 사용할지 Owner 확인이 필요하다. 이 값들은 Jira Create의 assignee/priority wrapper로 전송되지 않지만 Core가 Description을 만들기 위해 필요하다.
+
+따라서 현재 초안만으로는 전체 Core Description을 생성하거나 Offline Preflight를 통과시킬 수 없다. 필수 Workflow Metadata 중 논리적 Assignee와 Priority가 없고 Area도 Owner 확인 전이므로 Offline Preflight는 **NOT_RUN**이다. 이 값들을 임의로 채우지 않는다. 확정 뒤 Core가 만든 전체 Description을 초안의 핵심 설명과 함께 Owner가 검토해야 한다. **이번 초안은 아직 Create하지 않아 `NOT_CREATED`다.** Create 전 차단은 `NOT_CREATED / BLOCKED`로, Create 시도 후 결과가 불명확하면 실제 이슈가 생성됐을 수 있으므로 `POSSIBLY_APPLIED / QUARANTINED`로 보고하며 자동 재시도하지 않는다. 어느 격리 상태도 Pilot 성공이 아니다. Live Metadata의 Rovo 응답도 unsigned이므로 서명된 Gate 증거를 대신하지 않는다. 이 초안으로 Jira Create는 실행하지 않았다.
 
 기존 `createG3FileLedger`는 같은 파일시스템에서 immutable JSON pending/link/origin 레코드, create-if-absent와 fsync를 구현하지만, Codex Cloud의 승인된 지속 볼륨·백업·복원 또는 Git 버전 이력을 보증하지 않는다. §8.0 경량 Fast Track은 별도 Registry 서버를 요구하지 않아도 되지만, 실제 실행 전에는 Owner가 durable 저장 경로와 증거 대장을 지정하고 pending 기록을 Create보다 먼저 남겨야 한다. 승인 없는 후보 행을 실제 실행 기록으로 만들지 않는다.
 
