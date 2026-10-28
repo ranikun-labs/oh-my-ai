@@ -385,8 +385,8 @@ function validateProof(proof, { capability, session, siteOrigin, cloudId, maxPro
  * authenticated session and return a site/cloud/capability-scoped proof.
  * Injected tool functions alone never establish authentication.
  */
-export async function createG3JiraConnector({ invokeTool, verifySession, session, siteOrigin, cloudId,
-  maxProofAgeMs = DEFAULT_MAX_PROOF_AGE_MS, now = () => Date.now() } = {}) {
+async function createG3JiraConnectorWithMode({ invokeTool, verifySession, session, siteOrigin, cloudId,
+  maxProofAgeMs = DEFAULT_MAX_PROOF_AGE_MS, now = () => Date.now() } = {}, { readOnly = false } = {}) {
   assertOrigin(siteOrigin);
   cloudId = normalizeCloudId(cloudId);
   if (!nonEmpty(session?.id)
@@ -402,14 +402,14 @@ export async function createG3JiraConnector({ invokeTool, verifySession, session
     return normalized;
   }
 
-  const capabilities = {};
-  for (const operation of ["search", "create", "read"]) {
+  const capabilities = readOnly ? Object.create(null) : {};
+  for (const operation of (readOnly ? ["search", "read"] : ["search", "create", "read"])) {
     capabilities[CAPABILITY[operation]] = await authorize(operation);
   }
 
   // Capability evidence proves a current scoped session, not endpoint health;
   // each operation rechecks session freshness before making one Jira call.
-  return {
+  const connector = {
     capabilities,
     async search(request) {
       const args = searchArgs(request, cloudId);
@@ -420,7 +420,7 @@ export async function createG3JiraConnector({ invokeTool, verifySession, session
       const data = responseObject(response, ["project", "issuetype", "summary"]);
       return data ? searchOutcome(data, request, siteOrigin, cloudId) : { status: "failed", tool_call_count: 1 };
     },
-    async create(request, gateProof) {
+    ...(!readOnly ? { async create(request, gateProof) {
       const args = createArgs(request, cloudId, gateProof);
       await authorize("create");
       let response;
@@ -434,7 +434,7 @@ export async function createG3JiraConnector({ invokeTool, verifySession, session
       if (result) return result;
       throw createError("Jira Create returned no complete same-site key, summary and project identity; it may have applied. Do not retry.",
         { toolCallCount: 1, possibleApplied: true });
-    },
+    } } : {}),
     async read({ key, fields } = {}) {
       if (!ISSUE_KEY.test(key ?? "") || !Array.isArray(fields) || !fields.length
         || fields.some(name => typeof name !== "string" || !name.trim()))
@@ -454,6 +454,19 @@ export async function createG3JiraConnector({ invokeTool, verifySession, session
       return normalized;
     },
   };
+  // Null prototypes prevent inherited Create or capability injection.
+  // Read-only evidence and methods are immutable; Full Create keeps its previous contract.
+  return readOnly ? Object.freeze(Object.assign(Object.create(null), {
+    ...connector, capabilities: Object.freeze(capabilities),
+  })) : connector;
+}
+
+export async function createG3JiraConnector(options) {
+  return createG3JiraConnectorWithMode(options);
+}
+
+export async function createG3ReadOnlyJiraConnector(options) {
+  return createG3JiraConnectorWithMode(options, { readOnly: true });
 }
 
 export const G3_JIRA_TOOL_NAMES = TOOL;
