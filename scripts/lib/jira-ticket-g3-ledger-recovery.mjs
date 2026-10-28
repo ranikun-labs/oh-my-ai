@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { open, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { g3EvidenceSha256, verifyG3SignedEvidence } from "./jira-ticket-g3-trusted-gate.mjs";
+import { g3FileOriginRef } from "./jira-ticket-g3-file-ledger.mjs";
 
 const KEY = /^RPL-[1-9][0-9]*$/;
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/;
@@ -33,6 +34,7 @@ function immutableIntent(pending) {
     activation_ref: pending.activation_ref,
     cutover_approval_ref: pending.cutover_approval_ref,
     issue_type: pending.issue_type,
+    issue_type_id: pending.issue_type_id,
     fields: pending.fields,
   };
 }
@@ -83,6 +85,9 @@ function originMatches(origin, pending, requestId, key, verifiedFields) {
   return Boolean(origin && origin.create_request_id === requestId && origin.issue_key === key
     && origin.ledger_ref === pending.ledger_ref && origin.create_activation_ref === pending.activation_ref
     && origin.cutover_approval_ref === pending.cutover_approval_ref && origin.origin === "target_create"
+    && origin.issue_type === pending.issue_type && origin.issue_type_id === pending.issue_type_id
+    && origin.origin_ref === g3FileOriginRef({ ledger_ref: pending.ledger_ref,
+      create_request_id: requestId, issue_key: key, issue_type_id: pending.issue_type_id })
     && origin.phase === "create_ready" && origin.read_authority === "target"
     && origin.write_authority === "target" && origin.legacy_snapshot_ref === "not_applicable"
     && validOriginFields(origin.verified_fields)
@@ -125,6 +130,7 @@ export function createG3LedgerRecovery({ ledger, root, ledgerRef, jiraRead, trus
       allowed_action: "STOP; do not create or infer a Jira Issue" };
     if (pending.create_request_id !== requestId || pending.ledger_ref !== ledgerRef || pending.phase !== "pending"
       || !pending.fields || typeof pending.fields !== "object"
+      || TYPE_IDS[pending.issue_type] !== pending.issue_type_id
       || typeof pending.cutover_approval_ref !== "string" || !pending.cutover_approval_ref.trim())
       return { status: "blocked", code: "INVALID_OR_UNTRUSTED_INTENT", request_id: requestId,
         allowed_action: "FREEZE; preserve ledger evidence for a maintainer" };
@@ -268,6 +274,7 @@ export function createG3LedgerRecovery({ ledger, root, ledgerRef, jiraRead, trus
       const receipt = await ledger.persistOrigin({ create_request_id: requestId, issue_key: key,
         ledger_ref: ledgerRef, create_activation_ref: pending.activation_ref,
         cutover_approval_ref: pending.cutover_approval_ref, origin: "target_create",
+        issue_type: pending.issue_type, issue_type_id: pending.issue_type_id,
         phase: "create_ready", read_authority: "target", write_authority: "target",
         legacy_snapshot_ref: "not_applicable", verified_fields: verifiedFields });
       if (receipt?.status !== "persisted" || receipt.durable !== true)

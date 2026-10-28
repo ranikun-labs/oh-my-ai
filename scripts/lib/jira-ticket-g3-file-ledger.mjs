@@ -4,9 +4,16 @@ import { join, resolve } from "node:path";
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/;
 const KEY = /^RPL-[1-9][0-9]*$/;
+const ISSUE_TYPE_IDS = Object.freeze({ Task: "10010", Epic: "10007", Feature: "10009", Bug: "10012", Research: "10013" });
 const digest = text => createHash("sha256").update(text, "utf8").digest("hex");
 const TARGET_IDS = ["customfield_10108", "customfield_10109", "customfield_10110"];
 const nonEmptyRef = value => typeof value === "string" && value.trim().length > 0;
+export function g3FileOriginRef({ ledger_ref, create_request_id, issue_key, issue_type_id } = {}) {
+  if (!nonEmptyRef(ledger_ref) || !ID.test(create_request_id ?? "") || !KEY.test(issue_key ?? "")
+    || !Object.values(ISSUE_TYPE_IDS).includes(issue_type_id))
+    throw new Error("cannot derive a G3 Origin reference from incomplete identity");
+  return `g3-file-origin-v1:${digest(JSON.stringify({ ledger_ref, create_request_id, issue_key, issue_type_id }))}`;
+}
 function sameVerifiedTargets(intentFields, verifiedFields) {
   if (!intentFields || !verifiedFields || typeof verifiedFields !== "object"
     || Object.keys(verifiedFields).sort().join("|") !== [...TARGET_IDS].sort().join("|")
@@ -79,6 +86,8 @@ export function createG3FileLedger({ root, ledgerRef }) {
         || typeof snapshot?.approved_preview_id !== "string"
         || typeof snapshot?.activation_ref !== "string"
         || typeof snapshot?.issue_type !== "string"
+        || !Object.hasOwn(ISSUE_TYPE_IDS, snapshot.issue_type)
+        || ISSUE_TYPE_IDS[snapshot.issue_type] !== snapshot.issue_type_id
         || !nonEmptyRef(snapshot?.cutover_approval_ref)
         || !snapshot?.fields || typeof snapshot.fields !== "object")
         throw new Error("incomplete immutable pending Intent");
@@ -116,6 +125,7 @@ export function createG3FileLedger({ root, ledgerRef }) {
         || pending.ledger_ref !== ledgerRef || request.ledger_ref !== ledgerRef
         || request.create_activation_ref !== pending.activation_ref
         || request.origin !== "target_create" || request.phase !== "create_ready"
+        || request.issue_type !== pending.issue_type || request.issue_type_id !== pending.issue_type_id
         || request.read_authority !== "target" || request.write_authority !== "target"
         || request.legacy_snapshot_ref !== "not_applicable"
         || !nonEmptyRef(request.cutover_approval_ref)
@@ -123,8 +133,12 @@ export function createG3FileLedger({ root, ledgerRef }) {
         || !sameVerifiedTargets(pending.fields, request.verified_fields))
         throw new Error("Origin does not match linked, verified pending Intent");
       // One IssueKey can only be assigned one Origin. Existing data is not overwritten.
+      const originRef = g3FileOriginRef({ ledger_ref: ledgerRef, create_request_id: id,
+        issue_key: request.issue_key, issue_type_id: pending.issue_type_id });
+      if (request.origin_ref != null && request.origin_ref !== originRef)
+        throw new Error("Origin reference differs from the immutable G3 Origin identity");
       const created = await writeOnce(originDir, originPath(request.issue_key), {
-        ...request, verified_at: new Date().toISOString(),
+        ...request, origin_ref: originRef, verified_at: new Date().toISOString(),
       });
       if (!created) throw new Error("Origin already exists; manual reconciliation required");
       return { status: "persisted", durable: true, issue_key: request.issue_key,
@@ -148,12 +162,18 @@ export function createG3FileLedger({ root, ledgerRef }) {
         || !nonEmptyRef(pending.cutover_approval_ref)
         || origin.cutover_approval_ref !== pending.cutover_approval_ref
         || !sameVerifiedTargets(pending.fields, origin.verified_fields)
+        || !Object.hasOwn(ISSUE_TYPE_IDS, pending.issue_type)
+        || ISSUE_TYPE_IDS[pending.issue_type] !== pending.issue_type_id
+        || origin.issue_type !== pending.issue_type || origin.issue_type_id !== pending.issue_type_id
+        || origin.origin_ref !== g3FileOriginRef({ ledger_ref: ledgerRef,
+          create_request_id: origin.create_request_id, issue_key: issueKey, issue_type_id: pending.issue_type_id })
         || origin.phase !== "create_ready" || origin.read_authority !== "target"
         || origin.write_authority !== "target" || origin.create_activation_ref !== pending.activation_ref)
         return { origin: "UNKNOWN_ORIGIN", read_authority: "none",
           write_authority: "frozen", phase: "create_quarantined" };
       return { origin: "target_create", phase: "create_ready",
         read_authority: "target", write_authority: "target", issue_type: pending.issue_type,
+        issue_type_id: pending.issue_type_id, origin_ref: origin.origin_ref,
         product: origin.verified_fields?.customfield_10108 ?? null,
         component: origin.verified_fields?.customfield_10109 ?? null,
         concern: origin.verified_fields?.customfield_10110 ?? [] };

@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { CONTRACT_FIELDS, beginJiraTicketCreateWorkflow, applyJiraSearchResult,
   applyJiraPreviewApproval, createDescription, runJiraTicketCreateWorkflow } from "./lib/jira-ticket-create-workflow.mjs";
-import { createG3FileLedger } from "./lib/jira-ticket-g3-file-ledger.mjs";
+import { createG3FileLedger, g3FileOriginRef } from "./lib/jira-ticket-g3-file-ledger.mjs";
 import { createG3SupervisedAdapter } from "./lib/jira-ticket-g3-supervised-adapter.mjs";
 import { createG3JiraConnector, G3_JIRA_TOOL_NAMES } from "./lib/jira-ticket-g3-jira-connector.mjs";
 import { createG3TrustedGate, g3EvidenceSha256 } from "./lib/jira-ticket-g3-trusted-gate.mjs";
@@ -135,7 +135,8 @@ try {
     fetchOwnerApproval: async () => signed(approval),
     fetchReadAuthority: async ({ issue_key }) => signed({ kind: "g3_read_authority", status: "approved",
       issue_key, project: "RPL", issue_type: "Task", issue_type_id: "10010", origin: "target_create",
-      origin_ref: "offline-ledger-origin:" + issue_key, read_authority: "target", policy_sha256: policyHash, ...times }),
+      origin_ref: g3FileOriginRef({ ledger_ref: ledgerRef, create_request_id: requestId,
+        issue_key, issue_type_id: "10010" }), read_authority: "target", policy_sha256: policyHash, ...times }),
     claimReplay: async claim => {
       const directory = join(root, "claims"); await mkdir(directory, { recursive: true });
       let status = "claimed";

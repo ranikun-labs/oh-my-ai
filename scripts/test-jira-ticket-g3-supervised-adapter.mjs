@@ -5,7 +5,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CONTRACT_FIELDS, runJiraTicketCreateWorkflow } from "./lib/jira-ticket-create-workflow.mjs";
-import { createG3FileLedger } from "./lib/jira-ticket-g3-file-ledger.mjs";
+import { createG3FileLedger, g3FileOriginRef } from "./lib/jira-ticket-g3-file-ledger.mjs";
 import { createG3SupervisedAdapter } from "./lib/jira-ticket-g3-supervised-adapter.mjs";
 
 // All actors, approvals, metadata and Jira IssueKeys below are SYNTHETIC.
@@ -58,7 +58,7 @@ function config(requestId = "g3-fixture-request-0001") {
     supplemental_fields: { customfield_10015: today, duedate: tomorrow },
   };
 }
-function fakeJira({ throwCreate = false, throwOrigin = false, wrongRead = false } = {}) {
+function fakeJira({ throwCreate = false, throwOrigin = false, wrongRead = false, wrongTypeRead = false } = {}) {
   let createCalls = 0;
   const jira = {
     async search() { return { status: "none", tool_call_count: 1 }; },
@@ -70,15 +70,21 @@ function fakeJira({ throwCreate = false, throwOrigin = false, wrongRead = false 
         summary: request.summary };
     },
     async read(request) {
-      return { tool_call_count: 1, key: request.key, issue_type_id: "10010",
+      return { tool_call_count: 1, key: request.key, issue_type_id: wrongTypeRead ? "10007" : "10010",
         fields: { customfield_10108: { id: wrongRead ? "10020" : "10027" },
           customfield_10109: { id: "10028" }, customfield_10110: [] } };
     },
   };
   return { jira, calls: () => createCalls };
 }
-const gate = async ({ stage }) => ({ allowed: true, evidence_ref: "SYNTHETIC-TEST-ONLY",
-  ...(stage === "intent" ? { cutover_approval_ref: "fixture-owner-approval" } : {}),
+const gate = async ({ stage, context }) => ({ allowed: true, evidence_ref: "SYNTHETIC-TEST-ONLY",
+  ...(stage === "intent" ? { cutover_approval_ref: "fixture-owner-approval",
+    issue_type_binding: { canonical_issue_type: "Task", issue_type_id: "10010",
+      localized_issue_type_name: "작업", metadata_sha256: "c".repeat(64) } } : {}),
+  ...(stage === "authority_read" ? { project: "RPL", issue_key: context.issue_key,
+    issue_type: "Task", issue_type_id: "10010", origin: "target_create",
+    origin_ref: g3FileOriginRef({ ledger_ref: ledgerRef, create_request_id: "g3-fixture-request-0001",
+      issue_key: context.issue_key, issue_type_id: "10010" }), read_authority: "target" } : {}),
   ...(stage === "create" ? { issue_type_binding: { canonical_issue_type: "Task", issue_type_id: "10010",
     localized_issue_type_name: "작업", metadata_sha256: "c".repeat(64) } } : {}) });
 const pendingIntent = (requestId, fields = {
@@ -144,6 +150,7 @@ try {
   assert.equal(link.link.issue_key, "RPL-201");
   assert.equal(link.pending.cutover_approval_ref, "fixture-owner-approval",
     "trusted Intent gate reference must be frozen in pending Intent");
+  assert.equal(link.pending.issue_type_id, "10010", "signed Issue Type ID must be frozen in the pending Intent");
   console.log("PASS: durable Intent > at-most-one Create attempt > IssueKey link > GET > Origin/Reader");
 
   const readerTamper = createG3SupervisedAdapter({ ledger: pass.ledger,
@@ -151,6 +158,23 @@ try {
   assert.equal((await readerTamper.readVerifiedClassification("RPL-201")).read_authority, "none");
   assert.equal((await readerTamper.readClassificationAuthority("RPL-201")).read_authority, "none",
     "public Reader alias must not expose raw Ledger authority");
+  const wrongSignedOrigin = createG3SupervisedAdapter({ ledger: pass.ledger, jira: fakeJira().jira,
+    verifyGate: async input => ({ ...await gate(input), ...(input.stage === "authority_read"
+      ? { origin_ref: "signed-proof-for-another-ledger-origin" } : {}) }),
+    siteOrigin: "https://jira.example", capabilityEvidence: fixtureCapabilities });
+  assert.equal((await wrongSignedOrigin.readVerifiedClassification("RPL-201")).read_authority, "none",
+    "the signed Origin reference must equal the durable Ledger Origin reference");
+  const wrongSignedType = createG3SupervisedAdapter({ ledger: pass.ledger, jira: fakeJira().jira,
+    verifyGate: async input => ({ ...await gate(input), ...(input.stage === "authority_read"
+      ? { issue_type: "Epic", issue_type_id: "10007" } : {}) }),
+    siteOrigin: "https://jira.example", capabilityEvidence: fixtureCapabilities });
+  assert.equal((await wrongSignedType.readVerifiedClassification("RPL-201")).read_authority, "none",
+    "the signed Issue Type must equal the durable Ledger Issue Type");
+  const wrongJiraType = createG3SupervisedAdapter({ ledger: pass.ledger,
+    jira: fakeJira({ wrongTypeRead: true }).jira, verifyGate: gate,
+    siteOrigin: "https://jira.example", capabilityEvidence: fixtureCapabilities });
+  assert.equal((await wrongJiraType.readVerifiedClassification("RPL-201")).read_authority, "none",
+    "Jira GET Issue Type ID must equal the signed proof and Ledger");
   await assert.rejects(() => pass.actor.persistOrigin({
     create_request_id: "g3-fixture-request-0001", issue_key: "RPL-999",
     verified_fields: { customfield_10108: { id: "10027" },
@@ -257,7 +281,7 @@ try {
   const intent = { create_request_id: "g3-fixture-race-0001", ledger_ref: ledgerRef,
     status: "pending", approved_preview_id: "sha-fixture", activation_ref: "fixture-task-activation",
     cutover_approval_ref: "fixture-owner-approval",
-    issue_type: "Task", fields: { customfield_10108: { id: "10027" } } };
+    issue_type: "Task", issue_type_id: "10010", fields: { customfield_10108: { id: "10027" } } };
   const outcomes = await Promise.all([a.persistIntent(intent), b.persistIntent(intent)]);
   assert.equal(outcomes.filter(x => x.created_new).length, 1);
   console.log("PASS: concurrent file CAS allows one pending Intent");
@@ -304,6 +328,11 @@ try {
     cutover_approval_ref: "different-owner-approval" }) + "\n", "utf8");
   assert.equal((await pass.ledger.readClassificationAuthority("RPL-201")).read_authority, "none");
   console.log("PASS: Reader quarantines an Origin approval reference that differs from pending Intent");
+  await writeFile(originFile, JSON.stringify({ ...persistedOrigin, issue_type_id: "10007" }) + "\n", "utf8");
+  assert.equal((await pass.ledger.readClassificationAuthority("RPL-201")).read_authority, "none");
+  await writeFile(originFile, JSON.stringify({ ...persistedOrigin, origin_ref: "tampered-origin-ref" }) + "\n", "utf8");
+  assert.equal((await pass.ledger.readClassificationAuthority("RPL-201")).read_authority, "none");
+  console.log("PASS: Reader quarantines Ledger Origin Type ID and OriginRef tampering");
 
 
   console.log("G3 offline supervised Adapter/Origin Ledger fixtures passed");

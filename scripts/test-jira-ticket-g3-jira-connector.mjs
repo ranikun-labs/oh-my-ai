@@ -142,6 +142,35 @@ async function verifiedIssueTypeBindingRequired() {
   assert.equal(calls, 0, "missing or mismatched signed type binding must block before an MCP call");
 }
 
+async function optionalCreateWrappersAndCanonicalCloudId() {
+  const request = { ...CREATE_REQUEST };
+  delete request.assignee;
+  delete request.priority;
+  delete request.labels;
+  let received;
+  const jira = await connector(async (_name, args) => {
+    received = args;
+    return { structuredContent: jiraIssue({ extraFields: { summary: request.summary } }) };
+  });
+  await jira.create(request, LOCALIZED_CREATE_GATE_PROOF);
+  assert.equal(Object.hasOwn(received, "assignee_account_id"), false);
+  assert.deepEqual(received.additional_fields, {
+    customfield_10108: { id: "101" }, customfield_10109: { id: "202" },
+  });
+
+  let verificationCalls = 0;
+  await assert.rejects(createG3JiraConnector({ invokeTool: async () => {},
+    verifySession: async input => { verificationCalls++; return validProof(input); },
+    session: SESSION, siteOrigin: SITE, cloudId: SITE }), /requires a Cloud UUID/i);
+  assert.equal(verificationCalls, 0, "site URLs must be rejected before session verification");
+
+  const upperCaseCloudId = await createG3JiraConnector({ invokeTool: async () => ({}),
+    verifySession: async input => validProof(input), session: SESSION, siteOrigin: SITE,
+    cloudId: CLOUD.toUpperCase() });
+  assert.equal(upperCaseCloudId.capabilities["jira.read"].connection_verified, true,
+    "UUID casing is normalized before comparing signed session scope");
+}
+
 async function rovoEnvelopeCompatibility() {
   // Sanitized shape captured from Rovo Search/Get: webUrl exists only in the
   // structured node; content preserves the underlying Jira API issue fields.
@@ -170,6 +199,14 @@ async function rovoEnvelopeCompatibility() {
   assert.deepEqual(calls.map(call => call.name), [G3_JIRA_TOOL_NAMES.search, G3_JIRA_TOOL_NAMES.create, G3_JIRA_TOOL_NAMES.read]);
 
   const badSearchResponses = [
+    { content: [{ type: "text", text: JSON.stringify({ issues: {
+      nodes: [rawRovoIssue(rovoIssue())], pageInfo: { hasNextPage: true, endCursor: "untrusted-next" },
+    } }) }], structuredContent: { issues: { nodes: [rovoIssue()], webUrl: `${SITE}/issues`,
+      pageInfo: { hasNextPage: false, endCursor: null } }, context: {} } },
+    { content: [{ type: "text", text: JSON.stringify({ issues: {
+      nodes: [rawRovoIssue(rovoIssue())], pageInfo: { hasNextPage: false, endCursor: "conflicting-cursor" },
+    } }) }], structuredContent: { issues: { nodes: [rovoIssue()], webUrl: `${SITE}/issues`,
+      pageInfo: { hasNextPage: false, endCursor: null } }, context: {} } },
     rovoSearchResponse([rovoIssue()], { hasNextPage: true }),
     rovoSearchResponse([rovoIssue()], { pageInfo: {} }),
     rovoSearchResponse([rovoIssue()], { webUrl: "https://other.example/issues" }),
@@ -468,7 +505,9 @@ async function supervisedWorkflowIntegration(rovoEnvelope = false) {
     jira,
     ledger,
     verifyGate: async ({ stage }) => ({ allowed: true, evidence_ref: `synthetic:owner-gate:${stage}`,
-      ...(stage === "intent" ? { cutover_approval_ref: "synthetic:approval" } : {}),
+      ...(stage === "intent" ? { cutover_approval_ref: "synthetic:approval",
+        issue_type_binding: { canonical_issue_type: "Task", issue_type_id: "10010",
+          localized_issue_type_name: "작업", metadata_sha256: "b".repeat(64) } } : {}),
       ...(stage === "create" ? { issue_type_binding: { canonical_issue_type: "Task",
         issue_type_id: "10010", localized_issue_type_name: "작업", metadata_sha256: "b".repeat(64) } } : {}) }),
     siteOrigin: SITE,
@@ -530,6 +569,7 @@ async function supervisedWorkflowIntegration(rovoEnvelope = false) {
 
 await successPath();
 await verifiedIssueTypeBindingRequired();
+await optionalCreateWrappersAndCanonicalCloudId();
 await rovoEnvelopeCompatibility();
 await searchFailuresAndPagination();
 await createAmbiguityAndNoRetry();

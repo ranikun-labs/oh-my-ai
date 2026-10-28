@@ -61,15 +61,18 @@ export function createG3SupervisedAdapter({ jira, ledger, verifyGate, siteOrigin
   // Both public Reader entry points enforce Jira GET parity; raw Ledger reads
   // are available only through the injected Ledger for privileged diagnostics.
   async function readVerifiedClassificationInternal(issueKey) {
-    await gate("authority_read", { issue_key: issueKey });
+    const signedAuthority = await gate("authority_read", { issue_key: issueKey });
     const authority = await ledger.readClassificationAuthority(issueKey);
     if (authority.read_authority !== "target") return authority;
-    const typeIds = { Task: "10010", Epic: "10007", Feature: "10009",
-      Bug: "10012", Research: "10013" };
-    const expectedType = typeIds[authority.issue_type];
     const fail = { origin: "UNKNOWN_ORIGIN", phase: "create_quarantined",
       read_authority: "none", write_authority: "frozen" };
-    if (!expectedType) return fail;
+    const expectedType = typeId[authority.issue_type];
+    if (!expectedType || authority.issue_type_id !== expectedType
+      || signedAuthority.issue_key !== issueKey || signedAuthority.project !== "RPL"
+      || signedAuthority.issue_type !== authority.issue_type
+      || signedAuthority.issue_type_id !== authority.issue_type_id
+      || signedAuthority.origin !== authority.origin || signedAuthority.origin_ref !== authority.origin_ref
+      || signedAuthority.read_authority !== "target" || !authority.origin_ref) return fail;
     let current;
     try { current = await jira.read({ key: issueKey,
       fields: ["issuetype", "customfield_10108", "customfield_10109", "customfield_10110"] }); }
@@ -111,11 +114,19 @@ export function createG3SupervisedAdapter({ jira, ledger, verifyGate, siteOrigin
       const approvalRef = proof.cutover_approval_ref;
       if (typeof approvalRef !== "string" || !approvalRef.trim())
         throw new Error("G3 intent gate must prove a non-empty cutover approval reference");
-      const immutablePending = { ...intent, cutover_approval_ref: approvalRef };
+      const typeBinding = proof.issue_type_binding;
+      if (!typeBinding || typeBinding.canonical_issue_type !== intent.issue_type
+        || typeBinding.issue_type_id !== typeId[intent.issue_type]
+        || typeof typeBinding.localized_issue_type_name !== "string" || !typeBinding.localized_issue_type_name.trim()
+        || !/^[a-f0-9]{64}$/.test(typeBinding.metadata_sha256 ?? ""))
+        throw new Error("G3 intent gate must bind the signed Issue Type and live metadata");
+      const immutablePending = { ...intent, issue_type_id: typeBinding.issue_type_id,
+        cutover_approval_ref: approvalRef };
       const receipt = await ledger.persistIntent(immutablePending);
       if (receipt.status === "persisted" && receipt.created_new === true)
         active = { id: immutablePending.create_request_id, activation: immutablePending.activation_ref,
-          issueType: immutablePending.issue_type, expectedFields: structuredClone(immutablePending.fields),
+          issueType: immutablePending.issue_type, issueTypeId: immutablePending.issue_type_id,
+          expectedFields: structuredClone(immutablePending.fields),
           cutoverApprovalRef: approvalRef };
       return { ...receipt, tool_call_count: 1 };
     },
@@ -128,6 +139,7 @@ export function createG3SupervisedAdapter({ jira, ledger, verifyGate, siteOrigin
       const typeBinding = proof.issue_type_binding;
       if (!typeBinding || typeBinding.canonical_issue_type !== createRequest.issue_type
         || typeBinding.issue_type_id !== typeId[createRequest.issue_type]
+        || typeBinding.issue_type_id !== active.issueTypeId
         || typeof typeBinding.localized_issue_type_name !== "string"
         || !typeBinding.localized_issue_type_name.trim()
         || !/^[a-f0-9]{64}$/.test(typeBinding.metadata_sha256 ?? ""))
@@ -156,7 +168,7 @@ export function createG3SupervisedAdapter({ jira, ledger, verifyGate, siteOrigin
       await gate("read", { ...readRequest, create_request_id: active.id });
       const result = await jira.read(readRequest);
       if (result?.tool_call_count !== 1 || result?.key !== readRequest.key
-        || result?.key !== createdKey || result?.issue_type_id !== typeId[active.issueType]
+        || result?.key !== createdKey || result?.issue_type_id !== active.issueTypeId
         || !sameTargets(active.expectedFields, result?.fields))
         throw new Error("Jira GET is inconsistent with the durable approved Intent");
       // A successful GET is tied to exactly the Issue created by this Adapter.
@@ -169,10 +181,13 @@ export function createG3SupervisedAdapter({ jira, ledger, verifyGate, siteOrigin
       if (!active || !createStarted || !readConfirmed
         || originRequest?.create_request_id !== active.id || originRequest?.issue_key !== createdKey
         || originRequest?.cutover_approval_ref !== active.cutoverApprovalRef
+        || (originRequest?.issue_type != null && originRequest.issue_type !== active.issueType)
+        || (originRequest?.issue_type_id != null && originRequest.issue_type_id !== active.issueTypeId)
         || !sameTargets(verifiedReadFields, originRequest?.verified_fields))
         throw new Error("Origin without same-Issue, verified GET Target values and Intent");
-      await gate("origin", originRequest);
-      const receipt = await ledger.persistOrigin(originRequest);
+      const boundOrigin = { ...originRequest, issue_type: active.issueType, issue_type_id: active.issueTypeId };
+      await gate("origin", boundOrigin);
+      const receipt = await ledger.persistOrigin(boundOrigin);
       return { ...receipt, tool_call_count: 1 };
     },
     async readClassificationAuthority(issueKey) {

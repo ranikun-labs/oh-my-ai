@@ -50,6 +50,8 @@ const metadataFields = {
   priority: { required: true, hasDefaultValue: false, schema: { type: "option" },
     allowedValues: [{ id: "3", name: "High" }] },
   labels: { required: false, hasDefaultValue: false, schema: { type: "array", items: "string" } },
+  reporter: { required: true, hasDefaultValue: true, defaultValue: { accountId: "fixture-owner" },
+    schema: { type: "user" }, allowedValues: [{ accountId: "fixture-owner" }] },
   customfield_10042: { required: false, hasDefaultValue: false, defaultValue: [] },
   customfield_10043: { required: false, hasDefaultValue: false },
   customfield_10044: { required: false, hasDefaultValue: false },
@@ -238,6 +240,8 @@ assert.equal((await signedFlow.verifyGate({ stage: "search", context: {
 const intentProof = await signedFlow.verifyGate({ stage: "intent", context: intent() });
 assert.equal(intentProof.allowed, true);
 assert.equal(intentProof.cutover_approval_ref, approvalRef);
+assert.deepEqual(intentProof.issue_type_binding, { canonical_issue_type: "Task", issue_type_id: "10010",
+  localized_issue_type_name: "Task", metadata_sha256: metadataHash });
 assert.match(intentProof.evidence_ref, /^signed-g3:[a-f0-9]{64}$/);
 await assert.rejects(() => signedFlow.verifyGate({ stage: "intent", context: intent() }), /one-time|replay/i);
 await assert.rejects(() => signedFlow.verifyGate({ stage: "create", context: {
@@ -251,13 +255,24 @@ await signedFlow.verifyGate({ stage: "read", context: {
   key: "RPL-901", fields: ["issuetype", "customfield_10108", "customfield_10109", "customfield_10110"],
   create_request_id: requestId,
 } });
+await assert.rejects(() => signedFlow.verifyGate({ stage: "origin", context: {
+  issue_key: "RPL-901", create_request_id: requestId, ledger_ref: ledgerRef,
+  create_activation_ref: activationRef, cutover_approval_ref: approvalRef,
+  issue_type: "Task", issue_type_id: "10007", origin: "target_create", phase: "create_ready",
+  read_authority: "target", write_authority: "target",
+  verified_fields: { customfield_10108: { id: "10027" }, customfield_10109: { id: "10028" }, customfield_10110: [] },
+} }), /Origin does not match/i);
 await signedFlow.verifyGate({ stage: "origin", context: {
   issue_key: "RPL-901", create_request_id: requestId, ledger_ref: ledgerRef,
   create_activation_ref: activationRef, cutover_approval_ref: approvalRef,
+  issue_type: "Task", issue_type_id: "10010",
   origin: "target_create", phase: "create_ready", read_authority: "target", write_authority: "target",
   verified_fields: { customfield_10108: { id: "10027" }, customfield_10109: { id: "10028" }, customfield_10110: [] },
 } });
-assert.equal((await signedFlow.verifyGate({ stage: "authority_read", context: { issue_key: "RPL-901" } })).allowed, true);
+const readAuthorityProof = await signedFlow.verifyGate({ stage: "authority_read", context: { issue_key: "RPL-901" } });
+assert.equal(readAuthorityProof.allowed, true);
+assert.equal(readAuthorityProof.origin_ref, `fixture-origin-RPL-901`);
+assert.equal(readAuthorityProof.issue_type_id, "10010");
 console.log("PASS: signed current Activation, policy, live metadata, exact Owner approval and all adapter stages");
 
 // Existing Target-created issues retain their per-Issue read authority after
@@ -339,6 +354,47 @@ delete missingRequiredUserMetadata.fields.customfield_10045.defaultValue;
 const missingRequiredUser = fixtureGate({ metadataOverride: missingRequiredUserMetadata });
 await assert.rejects(() => missingRequiredUser.verifyGate({ stage: "intent", context: intent() }),
   /required live Jira Intent field/i);
+const missingReporterDefaultMetadata = structuredClone(metadataContent);
+delete missingReporterDefaultMetadata.fields.reporter.defaultValue;
+const missingReporterDefault = fixtureGate({ metadataOverride: missingReporterDefaultMetadata });
+await assert.rejects(() => missingReporterDefault.verifyGate({ stage: "search", context: searchContext() }),
+  /default value is missing despite hasDefaultValue for reporter/i);
+assert.equal(missingReporterDefault.fetchCounts.claim, 0);
+const defaultWithoutAllowedPeople = structuredClone(metadataContent);
+delete defaultWithoutAllowedPeople.fields.customfield_10045.allowedValues;
+const acceptedSignedPeopleDefault = fixtureGate({ metadataOverride: defaultWithoutAllowedPeople });
+assert.equal((await acceptedSignedPeopleDefault.verifyGate({ stage: "search", context: searchContext() })).allowed, true,
+  "the exact signed Jira default is usable without an allowedValues list");
+const explicitPeople = { ...fields, customfield_10045: [{ accountId: "unverified-fixture-account" }] };
+const explicitPeopleRequest = { ...createRequest, fields: explicitPeople };
+const unverifiedExplicitPeople = fixtureGate({ metadataOverride: defaultWithoutAllowedPeople,
+  policyPatch: { allowed_create_fields: ["customfield_10108", "customfield_10109", "customfield_10110",
+    "customfield_10015", "customfield_10045", "duedate"] },
+  fieldsOverride: explicitPeople, createRequestOverride: explicitPeopleRequest });
+await assert.rejects(() => unverifiedExplicitPeople.verifyGate({ stage: "intent", context: intent({
+  fields: explicitPeople, create_request: explicitPeopleRequest,
+}) }), /Create accounts are absent from current Jira metadata for customfield_10045/i);
+const missingDueDateFields = { ...fields };
+delete missingDueDateFields.duedate;
+const missingDueDateRequest = { ...createRequest, fields: missingDueDateFields };
+const missingDueDate = fixtureGate({ fieldsOverride: missingDueDateFields,
+  createRequestOverride: missingDueDateRequest });
+await assert.rejects(() => missingDueDate.verifyGate({ stage: "intent", context: intent({
+  fields: missingDueDateFields, create_request: missingDueDateRequest,
+}) }), /required live Jira Intent field is missing: duedate/i);
+const unavailableOptionalMetadata = structuredClone(metadataContent);
+for (const id of ["assignee", "priority", "labels"]) delete unavailableOptionalMetadata.fields[id];
+unavailableOptionalMetadata.total = Object.keys(unavailableOptionalMetadata.fields).length;
+const omittedOptionalWrappers = { ...createRequest };
+delete omittedOptionalWrappers.assignee;
+delete omittedOptionalWrappers.priority;
+delete omittedOptionalWrappers.labels;
+const optionalFieldsAbsent = fixtureGate({ metadataOverride: unavailableOptionalMetadata,
+  createRequestOverride: omittedOptionalWrappers });
+assert.equal((await optionalFieldsAbsent.verifyGate({ stage: "search", context: searchContext({
+  create_preflight: omittedOptionalWrappers,
+}) })).allowed, true,
+"optional wrapper fields absent from Metadata are allowed only when omitted from the approved request");
 const invalidDateFields = { ...fields, customfield_10015: "2026-02-30" };
 const invalidDateRequest = { ...createRequest, fields: invalidDateFields };
 const invalidDate = fixtureGate({ fieldsOverride: invalidDateFields, createRequestOverride: invalidDateRequest });
@@ -450,8 +506,8 @@ const blockedAdapter = createG3SupervisedAdapter({
   capabilityEvidence, siteOrigin: "https://jira.example.test",
 });
 await assert.rejects(() => blockedAdapter.search({ project: "RPL", create_preflight: createRequest }),
-  /current accounts are unavailable/i);
-await assert.rejects(() => blockedAdapter.persistIntent(intent()), /current accounts are unavailable/i);
+  /Create option is absent from current Jira metadata/i);
+await assert.rejects(() => blockedAdapter.persistIntent(intent()), /Create option is absent from current Jira metadata/i);
 await assert.rejects(() => blockedAdapter.create(createRequest), /Intent|replayed Jira Create/i);
 assert.deepEqual(sideEffects, { search: 0, intent: 0, create: 0 });
 assert.equal(liveShapeBlocked.fetchCounts.approval, 0);

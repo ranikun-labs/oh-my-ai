@@ -12,6 +12,7 @@ const ISSUE_TYPE_IDS = new Map([
 ]);
 const CAPABILITY = Object.freeze({ search: "jira.search", create: "jira.create", read: "jira.read" });
 const DEFAULT_MAX_PROOF_AGE_MS = 5 * 60 * 1000;
+const CLOUD_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const APPROVED_CREATE_FIELD_NAMES = new Set([
   "customfield_10108", "customfield_10109", "customfield_10110",
   "customfield_10015", "customfield_10045", "duedate",
@@ -34,12 +35,10 @@ function assertOrigin(value) {
   if (!validOrigin(value)) throw new Error("Jira siteOrigin must be a canonical HTTPS origin");
 }
 
-function siteCloudId(value, siteOrigin) {
-  if (!nonEmpty(value)) return false;
-  if (/^https:\/\//i.test(value)) {
-    try { return new URL(value).origin === siteOrigin; } catch { return false; }
-  }
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+function normalizeCloudId(value) {
+  if (typeof value !== "string" || !CLOUD_UUID.test(value))
+    throw new Error("G3 Jira connector requires a Cloud UUID; resolve site URLs to Cloud IDs first");
+  return value.toLowerCase();
 }
 
 function hasSiteIdentity(issue, siteOrigin, key, cloudId) {
@@ -52,7 +51,7 @@ function hasSiteIdentity(issue, siteOrigin, key, cloudId) {
         const match = /^\/ex\/jira\/([^/]+)\/rest\/api\/3\/issue\/([1-9][0-9]*)$/.exec(self.pathname);
         const id = String(issue.id ?? "");
         const browserUrl = `${siteOrigin}/browse/${key}`;
-        return Boolean(self.origin === "https://api.atlassian.com" && match && match[1] === cloudId
+        return Boolean(self.origin === "https://api.atlassian.com" && match && match[1].toLowerCase() === cloudId
           && match[2] === id && issue.key === key
           && ISSUE_KEY.test(key ?? "") && issue.webUrl === `${siteOrigin}/browse/${key}`
           && !self.username && !self.password && !self.search && !self.hash
@@ -151,6 +150,13 @@ function validRovoEnvelope(result, data, expectedFields) {
   if (!payloads.length) return true;
   const raw = payloads[0];
   if (!isRecord(raw) || hasSemanticError(raw)) return false;
+  if (isRecord(raw.issues) && Array.isArray(raw.issues.nodes)) {
+    const rawPageInfo = raw.issues.pageInfo;
+    const structuredPageInfo = wrapper.pageInfo;
+    if (!isRecord(rawPageInfo) || !isRecord(structuredPageInfo)
+      || rawPageInfo.hasNextPage !== structuredPageInfo.hasNextPage
+      || rawPageInfo.endCursor !== structuredPageInfo.endCursor) return false;
+  }
   const rawIssues = rovoRawIssues(raw);
   if (!rawIssues || rawIssues.length !== nodes.length
     || !rawIssues.every((issue, index) => sameRovoIssueEvidence(issue, nodes[index], expectedFields))) return false;
@@ -304,8 +310,10 @@ function searchOutcome(data, request, siteOrigin, cloudId) {
 function assertCreateRequest(request) {
   if (!request || typeof request !== "object" || Array.isArray(request)
     || request.project !== "RPL" || !nonEmpty(request.issue_type) || !nonEmpty(request.summary)
-    || !nonEmpty(request.description) || !nonEmpty(request.assignee) || !nonEmpty(request.priority)
-    || !Array.isArray(request.labels) || request.labels.some(label => typeof label !== "string")
+    || !nonEmpty(request.description)
+    || (request.assignee != null && !nonEmpty(request.assignee))
+    || (request.priority != null && !nonEmpty(request.priority))
+    || (request.labels != null && (!Array.isArray(request.labels) || request.labels.some(label => typeof label !== "string")))
     || (request.fields != null && (!request.fields || typeof request.fields !== "object" || Array.isArray(request.fields)
       || Object.keys(request.fields).some(name => !APPROVED_CREATE_FIELD_NAMES.has(name)))) )
     throw new Error("Jira Create request does not match the G3 approved request shape");
@@ -321,18 +329,19 @@ function createArgs(request, cloudId, gateProof) {
     || !nonEmpty(binding.localized_issue_type_name)
     || !/^[a-f0-9]{64}$/.test(binding.metadata_sha256 ?? ""))
     throw createError("Jira Create requires the current verified issue type binding", { toolCallCount: 0 });
+  const additionalFields = {
+    ...(nonEmpty(request.priority) ? { priority: { name: request.priority } } : {}),
+    ...(Array.isArray(request.labels) && request.labels.length > 0 ? { labels: [...request.labels] } : {}),
+    ...(request.fields ?? {}),
+  };
   return {
     cloudId,
     projectKey: request.project,
     issueTypeName: binding.localized_issue_type_name,
     summary: request.summary,
     description: request.description,
-    assignee_account_id: request.assignee,
-    additional_fields: {
-      priority: { name: request.priority },
-      labels: [...request.labels],
-      ...(request.fields ?? {}),
-    },
+    ...(nonEmpty(request.assignee) ? { assignee_account_id: request.assignee } : {}),
+    additional_fields: additionalFields,
   };
 }
 
@@ -352,7 +361,8 @@ function parseProofTime(value) {
 
 function validateProof(proof, { capability, session, siteOrigin, cloudId, maxProofAgeMs, now }) {
   if (!proof || proof.allowed !== true || proof.capability !== capability
-    || proof.site_origin !== siteOrigin || proof.cloud_id !== cloudId
+    || proof.site_origin !== siteOrigin || typeof proof.cloud_id !== "string"
+    || proof.cloud_id.toLowerCase() !== cloudId
     || proof.session_id !== session.id || !nonEmpty(proof.evidence_ref)) return null;
   const checked = parseProofTime(proof.checked_at), expires = parseProofTime(proof.expires_at);
   if (!Number.isFinite(checked) || !Number.isFinite(expires) || checked > now
@@ -370,7 +380,8 @@ function validateProof(proof, { capability, session, siteOrigin, cloudId, maxPro
 export async function createG3JiraConnector({ invokeTool, verifySession, session, siteOrigin, cloudId,
   maxProofAgeMs = DEFAULT_MAX_PROOF_AGE_MS, now = () => Date.now() } = {}) {
   assertOrigin(siteOrigin);
-  if (!siteCloudId(cloudId, siteOrigin) || !nonEmpty(session?.id)
+  cloudId = normalizeCloudId(cloudId);
+  if (!nonEmpty(session?.id)
     || typeof invokeTool !== "function" || typeof verifySession !== "function"
     || !Number.isSafeInteger(maxProofAgeMs) || maxProofAgeMs <= 0 || typeof now !== "function")
     throw new Error("G3 Jira connector requires a scoped session verifier, Jira tools and site identity");

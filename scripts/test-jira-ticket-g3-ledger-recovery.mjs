@@ -31,13 +31,13 @@ const targetFields = {
 function pending(requestId, fields = targetFields) {
   return { create_request_id: requestId, ledger_ref: ledgerRef, status: "pending",
     approved_preview_id: "d".repeat(64), activation_ref: "fixture-recovery-activation",
-    cutover_approval_ref: "fixture-recovery-owner-approval", issue_type: "Task", fields };
+    cutover_approval_ref: "fixture-recovery-owner-approval", issue_type: "Task", issue_type_id: "10010", fields };
 }
 function immutableIntent(record) {
   return { create_request_id: record.create_request_id, ledger_ref: record.ledger_ref,
     status: record.status, approved_preview_id: record.approved_preview_id,
     activation_ref: record.activation_ref, cutover_approval_ref: record.cutover_approval_ref,
-    issue_type: record.issue_type, fields: record.fields };
+    issue_type: record.issue_type, issue_type_id: record.issue_type_id, fields: record.fields };
 }
 function authorization(record, issueKey, patch = {}) {
   return envelope({ kind: "g3_manual_recovery_authorization", status: "approved",

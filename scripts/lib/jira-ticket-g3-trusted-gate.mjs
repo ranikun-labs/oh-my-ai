@@ -10,6 +10,8 @@ const ISSUE_TYPE_IDS = { Task: "10010", Epic: "10007", Feature: "10009", Bug: "1
 const LEGACY_FIELD_IDS = ["customfield_10042", "customfield_10043", "customfield_10044"];
 const SUPPLEMENTAL_FIELD_IDS = ["customfield_10015", "duedate", "customfield_10045"];
 const WRAPPER_FIELD_IDS = ["summary", "description", "assignee", "priority", "labels"];
+const REQUIRED_WRAPPER_FIELD_IDS = ["summary", "description"];
+const OPTIONAL_WRAPPER_FIELD_IDS = ["assignee", "priority", "labels"];
 const SIGNED_KEYS = ["key_id", "payload", "signature"];
 
 function canonical(value, path = "$") {
@@ -97,6 +99,26 @@ function validAccount(value, allowedValues) {
   return allowedValues.some(option => option?.accountId === accountId);
 }
 
+function validSignedUserDefault(value, field) {
+  return field?.schema?.type === "array" && field.schema.items === "user"
+    && Array.isArray(value) && value.length > 0
+    && value.every(account => typeof account?.accountId === "string" && account.accountId.trim()
+      && account.active !== false);
+}
+
+function assertMetadataDefault(id, field) {
+  if (!Object.hasOwn(field ?? {}, "defaultValue") || field.defaultValue == null)
+    throw new Error(`live Jira default value is missing despite hasDefaultValue for ${id}`);
+  if (id === "customfield_10045" && !Object.hasOwn(field, "allowedValues")) {
+    // The signed live metadata itself supplies this exact server default. It
+    // may be used only as-is; an explicit account still requires allowedValues.
+    if (!validSignedUserDefault(field.defaultValue, field))
+      throw new Error("live Jira people default is incomplete without current allowed accounts");
+    return;
+  }
+  assertMetadataValue(id, field.defaultValue, field);
+}
+
 function assertLegacyFields(fields) {
   for (const id of LEGACY_FIELD_IDS) {
     const field = fields[id];
@@ -113,13 +135,10 @@ function assertSupplementalMetadata(fields) {
     if (!field || typeof field.required !== "boolean" || typeof field.hasDefaultValue !== "boolean")
       throw new Error("live Jira required supplementary metadata is incomplete");
     if (id === "customfield_10045") {
-      if (schema?.type !== "array" || schema.items !== "user" || !Array.isArray(field.allowedValues))
-        throw new Error("live Jira people supplementary schema or current accounts are unavailable");
-      if (field.hasDefaultValue) {
-        if (!Array.isArray(field.defaultValue) || field.defaultValue.length === 0
-          || field.defaultValue.some(value => !validAccount(value, field.allowedValues)))
-          throw new Error("live Jira people default is not a current allowed account");
-      } else if (field.defaultValue != null) throw new Error("live Jira people default contradicts metadata");
+      if (schema?.type !== "array" || schema.items !== "user")
+        throw new Error("live Jira people supplementary schema is unavailable");
+      if (field.hasDefaultValue) assertMetadataDefault(id, field);
+      else if (field.defaultValue != null) throw new Error("live Jira people default contradicts metadata");
       continue;
     }
     if (schema?.type !== "date") throw new Error("live Jira supplementary date schema is invalid");
@@ -337,7 +356,8 @@ function assertCreateRequestMetadata(request, metadata, policy, issueTypeBinding
   if (LEGACY_FIELD_IDS.some(id => Object.hasOwn(request.fields, id)))
     throw new Error("Create request includes a prohibited Legacy classification field");
   const fields = metadata.fields;
-  for (const id of [...WRAPPER_FIELD_IDS, ...Object.keys(request.fields)]) {
+  const suppliedOptionalWrappers = OPTIONAL_WRAPPER_FIELD_IDS.filter(id => hasCreateValue(request[id]));
+  for (const id of [...REQUIRED_WRAPPER_FIELD_IDS, ...suppliedOptionalWrappers, ...Object.keys(request.fields)]) {
     if (!fields[id]) throw new Error(`Create field is absent from current Jira metadata: ${id}`);
     if (typeof fields[id].required !== "boolean" || typeof fields[id].hasDefaultValue !== "boolean")
       throw new Error(`Create field required/default metadata is incomplete: ${id}`);
@@ -349,7 +369,7 @@ function assertCreateRequestMetadata(request, metadata, policy, issueTypeBinding
     if (!hasCreateValue(value)) {
       if (field.required && !field.hasDefaultValue)
         throw new Error(`required live Jira Create field is missing: ${id}`);
-      if (field.hasDefaultValue) assertMetadataValue(id, field.defaultValue, field);
+      if (field.hasDefaultValue) assertMetadataDefault(id, field);
       continue;
     }
     assertMetadataValue(id, value, field);
@@ -435,7 +455,9 @@ export function createG3TrustedGate({ source, trustedKeys, now = Date.now, maxEv
       || typeof proof.origin_ref !== "string" || !proof.origin_ref.trim()
       || !isHash(proof.policy_sha256))
       throw new Error("signed per-Issue G3 read authority does not bind this exact Target Origin");
-    return { allowed: true, evidence_ref: signedRef([envelope]) };
+    return { allowed: true, evidence_ref: signedRef([envelope]),
+      project: proof.project, issue_key: proof.issue_key, issue_type: proof.issue_type, issue_type_id: proof.issue_type_id,
+      origin: proof.origin, origin_ref: proof.origin_ref, read_authority: proof.read_authority };
   }
 
   async function loadEvidence(stage, context, { current = false } = {}) {
@@ -562,7 +584,8 @@ export function createG3TrustedGate({ source, trustedKeys, now = Date.now, maxEv
         read_key: null, create_attempted: false, origin_attempted: false };
       bindings.set(context.create_request_id, bindingRecord);
       return { allowed: true, evidence_ref: signedRef([records.activationEnvelope, records.policyEnvelope,
-        records.metadataEnvelope, approvalEnvelope, claimEnvelope]), cutover_approval_ref: approval.approval_ref };
+        records.metadataEnvelope, approvalEnvelope, claimEnvelope]), cutover_approval_ref: approval.approval_ref,
+        issue_type_binding: records.issue_type_binding };
     }
 
     const ledgerRef = stage === "intent" ? context.ledger_ref : binding?.ledger_ref;
@@ -595,6 +618,8 @@ export function createG3TrustedGate({ source, trustedKeys, now = Date.now, maxEv
       if (!binding.create_attempted || !binding.read_key || binding.origin_attempted
         || context.issue_key !== binding.read_key || context.create_activation_ref !== activation.activation_ref
         || context.cutover_approval_ref !== binding.approval_ref || context.ledger_ref !== binding.ledger_ref
+        || context.issue_type !== binding.issue_type
+        || context.issue_type_id !== binding.issue_type_binding.issue_type_id
         || context.origin !== "target_create" || context.phase !== "create_ready"
         || context.read_authority !== "target" || context.write_authority !== "target"
         || Object.keys(context.verified_fields ?? {}).sort().join("|") !== TARGET_IDS.slice().sort().join("|")
