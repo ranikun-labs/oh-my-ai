@@ -274,9 +274,12 @@ function terminal(state, patch) {
 function createRequest(snapshot) {
   return {
     project: snapshot.project, issue_type: snapshot.issue_type, summary: snapshot.contract.Summary,
-    description: createDescription(snapshot), assignee: snapshot.assignee,
-    priority: snapshot.priority, labels: snapshot.labels,
-    ...(snapshot.target_create ? { fields: targetCreateFields(snapshot) } : {}),
+    description: createDescription(snapshot),
+    // Logical Ticket Contract metadata is not automatically a Jira Create field.
+    // The live G3 Task schema omits these wrappers. Legacy Create is unchanged.
+    ...(snapshot.target_create
+      ? { fields: targetCreateFields(snapshot) }
+      : { assignee: snapshot.assignee, priority: snapshot.priority, labels: snapshot.labels }),
   };
 }
 
