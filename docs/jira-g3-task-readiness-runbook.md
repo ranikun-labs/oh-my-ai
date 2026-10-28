@@ -77,25 +77,13 @@ Jira `RPL` / Task(10010); Target Product `dev-harness (10027)`, Component `backe
 13. **Do Not Touch:** 기존 이슈 Legacy 값, G2 Snapshot, 미지원 유형, Board/Filter/Automation 운영 설정, G4 필드 삭제.
 14. **Definition of Done:** 승인된 단일 Pilot이 생성되고 필드·Origin·권위 검증 및 감사 증거가 완료되었거나, 실패 상태가 중복 생성 없이 안전하게 격리되어야 한다.
 
-이 초안은 **Owner 승인·서명·Create 권한이 아니다**. Core Description은 위 14개 항목 외에 Workflow Metadata 헤더 `Product`, `Primary Repository`, `Area`, `Assignee`, `Priority`, `Branch`, `PR`, `Current HEAD`를 포함해 생성된다. 이후 F4에서 `RPL-122` 실제 Jira 담당자에 대응하는 논리적 Assignee `박성환`, Jira 우선순위 `Medium`, 제안 Area `Jira Migration`을 포함한 후보 Metadata로 전체 Core Description 및 **`PREVIEW_ONLY`를 생성했다고 보고**했다. 이 값들은 여전히 **Owner 미승인 후보**이며 Jira assignee/priority wrapper로 전송하지 않는다. 조회된 22필드 Rovo Metadata는 서명된 Trusted Gate Metadata 증거가 아니다.
+이 초안은 **Owner 승인·서명·Create 권한이 아니다**. Core Description은 위 14개 항목 외에 Workflow Metadata 헤더 `Product`, `Primary Repository`, `Area`, `Assignee`, `Priority`, `Branch`, `PR`, `Current HEAD`를 포함해 생성된다. Project/Issue Type, Repository, Branch, PR, Current HEAD는 현재 업무에서 확인되며 Product는 Target 값 `dev-harness`를 제안값으로 쓸 수 있다. **논리적 Assignee와 Priority는 아직 제안되지 않았다.** Area는 현재 `Jira Migration`으로 사용할지 Owner 확인이 필요하다. 이 값들은 Jira Create의 assignee/priority wrapper로 전송되지 않지만 Core가 Description을 만들기 위해 필요하다.
 
-**정합성 재생성 필요:** 당시 출력된 Description의 `## Base Branch`에는 `fix/jira-g3-capability-evidence-fail-20261022`가 기록됐으나, 실제 PR #84 Base는 `fix/jira-g3-capability-evidence-fail-closed-20261022`이다. 이 문서의 14개 계약 초안은 올바른 값을 가진다. 실제 Owner 검토용 **정확한 Core Description/Preview는 올바른 Base Branch와 현재 PR HEAD로 다시 생성해야 한다**. 이전 Preview의 성공 보고를 새 정확한 Preview/서명·실행 승인으로 승격하지 않는다. 현재 Pilot은 `NOT_CREATED / BLOCKED`다. Create 시도 후 결과가 불명확한 경우만 `POSSIBLY_APPLIED / QUARANTINED`로 분류하며 자동 재시도하지 않는다. Jira Create 호출은 하지 않았다.
+따라서 현재 초안만으로는 전체 Core Description을 생성하거나 Offline Preflight를 통과시킬 수 없다. 필수 Workflow Metadata 중 논리적 Assignee와 Priority가 없고 Area도 Owner 확인 전이므로 Offline Preflight는 **NOT_RUN**이다. 이 값들을 임의로 채우지 않는다. 확정 뒤 Core가 만든 전체 Description을 초안의 핵심 설명과 함께 Owner가 검토해야 한다. **이번 초안은 아직 Create하지 않아 `NOT_CREATED`다.** Create 전 차단은 `NOT_CREATED / BLOCKED`로, Create 시도 후 결과가 불명확하면 실제 이슈가 생성됐을 수 있으므로 `POSSIBLY_APPLIED / QUARANTINED`로 보고하며 자동 재시도하지 않는다. 어느 격리 상태도 Pilot 성공이 아니다. Live Metadata의 Rovo 응답도 unsigned이므로 서명된 Gate 증거를 대신하지 않는다. 이 초안으로 Jira Create는 실행하지 않았다.
 
 기존 `createG3FileLedger`는 같은 파일시스템에서 immutable JSON pending/link/origin 레코드, create-if-absent와 fsync를 구현하지만, Codex Cloud의 승인된 지속 볼륨·백업·복원 또는 Git 버전 이력을 보증하지 않는다. §8.0 경량 Fast Track은 별도 Registry 서버를 요구하지 않아도 되지만, 실제 실행 전에는 Owner가 durable 저장 경로와 증거 대장을 지정하고 pending 기록을 Create보다 먼저 남겨야 한다. 승인 없는 후보 행을 실제 실행 기록으로 만들지 않는다.
 
 기존 Core/Gate/Adapter가 요청 digest·CreateRequestId·pending CAS·단일 Create·IssueKey link·GET/Target 대조·Origin·Reader와 불명확 결과 격리를 제공한다. 이 경로의 운영용 신뢰 발급원·durable replay/ledger 연결은 아직 검증되지 않았다. 기존 이슈 Cutover, Board/Filter/Automation의 실제 Legacy 소비처 export도 완료되지 않았으므로 G4 변경은 HOLD다.
-
-## G3 Cutover 후보 색인 회수 — READ-ONLY / 미승인 (2026-10-28)
-
-기존 조사에서 `oh-my-ai` 저장소에 103건 후보 Manifest가 없다고 보고했지만, 정본 G2 감사 자료는 **별도 저장소** `ranikun-labs/platform-services`의 `audit/jira-g2-full-118-20261023` 브랜치에 있었다. 증거 Commit `530dd0f88e5819158362b620ca1591779a50cba5`, `governance/jira-g2-full-118/final118-verification-20261023.json` (Blob `aea968a4dca76194b0de96db6fe20c1c20648470`)의 `current_118`를 읽기 전용으로 기계 분류했다.
-
-[**G3 103건 후보 색인**](jira-g3-cutover-candidate-index-20261028.json)에는 지원 유형 Epic 8 / Feature 31 / Task 50 / Bug 5 / Research 9 = **103건**, Story 4·Subtask 8 = **12건 제외**, Origin 불명 `RPL-112/113/114` = **3건 격리**가 고정돼 있다. `RPL-122/124`는 해당 G2 118건 Snapshot 밖의 추가 보호 대상이다. **G2 데이터 저장값 검증을 재실행하거나 Cutover 승인으로 승격하지 않았다.**
-
-이 색인의 `candidates` 103건은 **Issue Type 지원 여부만 분류한 정적 목록**이며 Cutover 적격·실행 승인 목록이 아니다. 같은 G2 Snapshot의 `statusCategory`로 추가 선별한 `cutover_scope_screen`은 완료 상태 **75건**과 정책상 폐기된 `RPL-40` **1건**을 기본 검토 대상에서 제외하고, 아직 미완료·비폐기인 **27건**만 추가 근거 수집 대상으로 남겼다. 이 27건도 **승인 0건 / Jira 현재 상태 미재조회**이며 `READ_ONLY / NOT_APPROVED`다. 역사적으로 완료된 76건을 제외한다는 Foundation 정책 수치와 이 Snapshot의 지원 유형 중 완료 상태 75건은 **서로 다른 집계 기준**이므로 혼동하지 않는다.
-
-**실시간 READ-ONLY 후속 확인:** 27건을 단일 JQL로 조회하여 **27/27 반환**, Issue Type과 Target Product/Component/Concern 옵션 ID가 G2 Snapshot과 **27/27 일치**함을 확인했다. 현재 상태는 `new=21`, `in progress=5`, `done=1`이며, `RPL-68`이 새로 완료 상태다. 별도 계약·Description 승인이 필요한 `RPL-111`도 분리해, 다음 심층 Origin/승인 근거 검토 대상으로는 **25건**을 남겼다. 이 25건은 **승인 0건**이며 ReadAuthority 전환이 아니다. 상세 IssueKey와 제한은 같은 JSON의 `current_jira_readonly_screen`에 기록했다. 읽기 전용 Rovo 조회에는 서명된 권위·Changelog·SnapshotParity 승인이 포함되지 않는다.
-
-Owner의 정확한 Cutover 승인, 이슈별 Origin/Legacy Snapshot/동등성/Changelog/영향 보존 근거, 승인된 Reader 기록·Rollback은 별도로 필요하다. `RPL-112/113/114` 격리 및 G2 Snapshot 밖 `RPL-122/124` 격리도 유지한다. 이 파일만으로 `ReadAuthority`, `WriteAuthority`, Jira 상태·필드·설정을 변경하거나 G4 Legacy를 삭제하지 않는다.
 
 ## Task(10010)만 실제 G3 시험할 때 필요한 Owner 결정
 
@@ -104,7 +92,9 @@ Owner의 정확한 Cutover 승인, 이슈별 Origin/Legacy Snapshot/동등성/Ch
 - `jira-ticket-g3-jira-connector.mjs`: 현재 Plugin 도구의 Search/Create/GET 인자에 매핑하고, 별도로 주입된 세션 검증자의 Site/Cloud/Capability·유효기간 증거를 매 호출 전에 검사한다. 합성 응답만 검증했으며 실제 운영 인증·도구 응답 호환성·연결 상태는 **NOT_VERIFIED**다. Create 응답이 `{id,key,self}`뿐이거나 반환 Project/Summary/IssueType 근거가 부족하면 `possibly_applied`로 격리하며 자동 재시도하지 않는다.
 - `jira-ticket-g3-trusted-gate.mjs`: 독립적으로 고정한 공개키로 Owner 승인·Activation·정책·실시간 Metadata의 서명과 기간·정확한 Preview/Create 범위를 검증한다. Legacy required/default와 필수 일정·담당자도 신뢰 Metadata로 확인한다. 기존 Target 읽기는 별도의 이슈별 서명 권한을 검증하므로 미래 Create의 만료·Rollback과 분리된다. 실제 발급자, 키 배포·폐기, 신뢰 원천 조회 및 영속 Replay CAS 연결은 운영 환경에서 별도 검증해야 한다. 테스트의 임시 서명자는 운영 Owner가 아니다.
 - `jira-ticket-g3-ledger-recovery.mjs`: 기존 파일 원장과 별도 서명된 수동 복구 승인으로 알려진 IssueKey를 GET·대조하고 연결/Origin을 복구한다. Create/Search/Admin 호출은 없으며 손상·불일치·조회 소실 시 격리한다. 운영 원장 버전 보존·백업·복구를 대신하지 않는다.
-- `jira-ticket-g3-authority-reader.mjs`: 인증된 Legacy 출처 resolver와 Target Origin+GET Reader를 결합한다. Legacy 다중 선택값은 전부 보존하고, 기존 이전 이슈는 별도 `cutover` 근거를 요구한다. 현 파일 Ledger는 `target_create`만 저장하므로 기존 이전 이슈에는 별도 검증된 Migration Reader가 필요하다. RPL-112/113/114는 항상 격리하고, UNKNOWN은 집계의 분류 건수에서 제외한다. Board/Filter/Automation 설정을 변경하는 코드는 없다.
+- `jira-ticket-g3-authority-reader.mjs`: 인증된 Legacy 출처 resolver와 Target Origin+GET Reader를 결합한다. Legacy 다중 선택값은 전부 보존하고, 기존 이전 이슈는 별도 `cutover` 근거를 요구한다. 현 파일 Ledger는 `target_create`만 저장하므로 기존 이전 이슈에는 별도 검증된 Migration Reader가 필요하다. RPL-112/113/114/122/124는 항상 격리하고, UNKNOWN은 집계의 분류 건수에서 제외한다. Board/Filter/Automation 설정을 변경하는 코드는 없다.
+
+`node scripts/jira-ticket-g3-cutover-preflight.mjs <pinned-g2-snapshot.json>`은 `platform-services`의 G2 final118 snapshot Blob SHA와 118행·유형별 수를 검증하고, 지원 106건에서 RPL-112/113/114를 제외한 103개 IssueKey만 출력한다. 각 행은 G2 저장값 요약만 참조하며 issue 내용 전체를 복제하지 않는다. OriginRef, ChangelogRef, OwnerApprovalRef, CutoverApprovalRef가 이 per-issue snapshot에 없으므로 현재 103건은 모두 `NOT_READY`다. 별도 검증된 Reader/Origin/GET 근거와 Owner Cutover 승인 전에는 어떤 ReadAuthority도 바꾸지 않는다. 이 preflight는 Jira를 호출하지 않는다.
 
 ```bash
 make test-jira-ticket-g3-integrations

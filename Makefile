@@ -48,6 +48,7 @@ test-jira-ticket-g3-integrations:
 	node scripts/test-jira-ticket-g3-authority-reader.mjs
 	node scripts/test-jira-ticket-g3-integration.mjs
 	node scripts/test-jira-ticket-g3-task-pilot-dry-run.mjs
+	node scripts/test-jira-ticket-g3-cutover-preflight.mjs
 
 .PHONY: test-jira-ticket-g3-task-pilot-dry-run
 test-jira-ticket-g3-task-pilot-dry-run:
