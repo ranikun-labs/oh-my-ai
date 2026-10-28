@@ -151,3 +151,12 @@ git diff --check
 - **보장하지 않음:** Jira 서버 자체의 `CreateRequestId` 멱등 API, 전역/다중 호스트 exactly-once 생성, 다른 RequestId로 같은 이슈를 중복 요청하는 경우, 응답 소실 뒤 자동 결과 복구.
 - **복구:** Create가 성공했지만 응답·IssueKey 연결을 잃으면 `possibly_applied / UNKNOWN_ORIGIN`으로 격리하고 Maintainer가 Jira와 대장을 수동 대조한다. Create 재실행은 금지.
 - **권위 Reader:** 노출하는 두 Adapter Reader API 모두 Live Jira GET와 Ledger Origin 대조를 거쳐야 Target 값을 반환한다. Ledger 단독 조회는 특권 감사·복구 용도로만 사용한다.
+
+
+## G2 118건 기반 G3 103건 후보 Manifest 생성 — READ-ONLY
+
+- **원본:** 비공개 `ranikun-labs/platform-services@530dd0f88e5819158362b620ca1591779a50cba5`의 `governance/jira-g2-full-118/final118-verification-20261023.json`, Git Blob `aea968a4dca76194b0de96db6fe20c1c20648470`, 검증 시각 `2026-10-23T03:47:22.084Z`.
+- **대상 유형:** Epic 8 / Feature 31 / Task 50 / Bug 5 / Research 9, 합계 **103건**. Story 4, Subtask 8 제외. 출처 불명 `RPL-112/113/114` 3건 격리. `RPL-122/124`는 감사 Snapshot 외부 격리.
+- **생성:** `node scripts/jira-ticket-g3-cutover-preflight.mjs <private-g2-final118.json>`으로 Git Blob SHA와 원본 구조/118건·유형 분포를 검증해 이슈별 Key, Type, Target Product/Component/Concern의 `id/value`와 미승인 상태를 출력한다. JSON 파일로 저장할 때는 개인/비공개 보관소에서만 `umask 077`로 권한을 제한하고 공개 CI 로그·PR·Issue 코멘트에 원본 및 후보 목록을 붙여넣지 않는다.
+- **회귀 검증:** `node scripts/test-jira-ticket-g3-cutover-preflight.mjs`는 합성 118건 Fixture로 동작하며, 비공개 G2 파일을 가진 실행자만 `JIRA_G2_SNAPSHOT_PATH=<private-g2-final118.json> node scripts/test-jira-ticket-g3-cutover-preflight.mjs`로 추가 원본 검증을 실행한다. 승인 상태를 바꾸거나 Jira에 접근하지 않는다.
+- **권한 경계:** `PROPOSED_CANDIDATE / NOT_APPROVED_FOR_CUTOVER`는 **분류 후보일 뿐**이다. G2 저장 검증은 이슈별 Legacy Snapshot·Changelog·Origin·OwnerApprovalRef·CutoverApprovalRef·Trusted Reader 근거를 충족하지 않는다. `ReadAuthority=target` 변경, 분류 WriteAuthority 해제, G4 Legacy 정리는 각각 별도의 Gate가 있다.
