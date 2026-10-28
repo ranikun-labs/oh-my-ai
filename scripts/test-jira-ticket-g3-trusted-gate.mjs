@@ -354,11 +354,31 @@ delete missingRequiredUserMetadata.fields.customfield_10045.defaultValue;
 const missingRequiredUser = fixtureGate({ metadataOverride: missingRequiredUserMetadata });
 await assert.rejects(() => missingRequiredUser.verifyGate({ stage: "intent", context: intent() }),
   /required live Jira Intent field/i);
+const implicitReporterDefaultMetadata = structuredClone(metadataContent);
+delete implicitReporterDefaultMetadata.fields.reporter.defaultValue;
+delete implicitReporterDefaultMetadata.fields.reporter.allowedValues;
+const implicitReporterDefault = fixtureGate({ metadataOverride: implicitReporterDefaultMetadata });
+assert.equal((await implicitReporterDefault.verifyGate({ stage: "search", context: searchContext() })).allowed, true,
+  "a signed required reporter default may be left to Jira when metadata omits its account value");
+assert.equal((await implicitReporterDefault.verifyGate({ stage: "intent", context: intent() })).allowed, true,
+  "the reporter account is not invented or added to the signed intent");
+const explicitReporterFields = { ...fields, reporter: { accountId: "unverified-reporter" } };
+const explicitReporterRequest = { ...createRequest, fields: explicitReporterFields };
+const explicitReporter = fixtureGate({ metadataOverride: implicitReporterDefaultMetadata,
+  policyPatch: { allowed_create_fields: ["customfield_10108", "customfield_10109", "customfield_10110",
+    "customfield_10015", "duedate", "reporter"] },
+  fieldsOverride: explicitReporterFields, createRequestOverride: explicitReporterRequest });
+await assert.rejects(() => explicitReporter.verifyGate({ stage: "search",
+  context: searchContext({ create_preflight: explicitReporterRequest }) }),
+/Create account is absent from current Jira metadata for reporter/i);
+assert.equal(explicitReporter.fetchCounts.claim, 0,
+  "an explicit reporter must fail before the durable replay claim without current allowed accounts");
 const missingReporterDefaultMetadata = structuredClone(metadataContent);
+missingReporterDefaultMetadata.fields.reporter.hasDefaultValue = false;
 delete missingReporterDefaultMetadata.fields.reporter.defaultValue;
 const missingReporterDefault = fixtureGate({ metadataOverride: missingReporterDefaultMetadata });
 await assert.rejects(() => missingReporterDefault.verifyGate({ stage: "search", context: searchContext() }),
-  /default value is missing despite hasDefaultValue for reporter/i);
+  /required live Jira Create field is missing: reporter/i);
 assert.equal(missingReporterDefault.fetchCounts.claim, 0);
 const defaultWithoutAllowedPeople = structuredClone(metadataContent);
 delete defaultWithoutAllowedPeople.fields.customfield_10045.allowedValues;

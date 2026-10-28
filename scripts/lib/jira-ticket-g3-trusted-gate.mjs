@@ -107,6 +107,14 @@ function validSignedUserDefault(value, field) {
 }
 
 function assertMetadataDefault(id, field) {
+  // Jira's Task Create metadata reports reporter as required with a default,
+  // but omits both the concrete defaultValue and allowedValues. Trust that
+  // server-side default only when the signed request omits reporter; an
+  // explicit reporter still needs a current, allowed account below.
+  const implicitReporterDefault = id === "reporter" && field?.required === true
+    && field?.hasDefaultValue === true && field?.schema?.type === "user"
+    && field.defaultValue == null && !Object.hasOwn(field ?? {}, "allowedValues");
+  if (implicitReporterDefault) return;
   if (!Object.hasOwn(field ?? {}, "defaultValue") || field.defaultValue == null)
     throw new Error(`live Jira default value is missing despite hasDefaultValue for ${id}`);
   if (id === "customfield_10045" && !Object.hasOwn(field, "allowedValues")) {
