@@ -67,6 +67,7 @@ cases.push(...scopeCases);
 const additionalCases = [
   ['로그인 API 오류를 고쳐줘. 그런데 나머지는 수정하지 마',true],
   ['로그인 API 버그를 수정해줘, 다만 테스트는 추가하지 마',true],
+  ['로그인 API 버그를 수정해줘, 단 테스트는 추가하지 마',true],
   ['로그인 API 인증 오류를 수정하지 마, 다른 건 로그인 기능 개선해줘',true],
   ['로그인 API 오류 수정해줘, 그 외는 손대지 마',true],
   ['로그인 API 오류 수정해줘, 기존 코드는 변경하지 마',true],
@@ -77,6 +78,7 @@ const additionalCases = [
   ['로그인 API 오류 고쳐줘 하지만 실제로는 수정하지 마',false],
   ['로그인 API 추가해줘 단 실제로는 추가하지 마',false],
   ['로그인 API를 추가해줘? 아니, 취소할게',false],
+  ['로그인 API 추가해줘. 아니, 취소할게',false],
   ['로그인 API 코드를 고쳐줘, 아니 그냥 설명해줘',false],
   ['로그인 API 수정해줘(실행하지 말고 예시만)',false],
   ['로그인 API에 토큰 체크를 추가해 주세요',true],
@@ -90,6 +92,7 @@ const additionalCases = [
   ['로그인 API 개선해줘, 대신 Finance API는 건드리지 마',true],
   ['로그인 API 개선해줘, 대신 Finance API 오류도 수정해줘',true],
   ['로그인 API에 변경 사항을 추가해 줘',true],
+  ['로그인 API에 검증 추가해 줬어.',false],
   ['로그인 API 추가하는 법만 설명해줘',false],
   ['API 구현하지 말고 기능 개선 방법 설명해줘',false],
   ['로그인 API 수정하지 말고 기능 개선만 해줘',true],
@@ -112,8 +115,11 @@ for (const [prompt, expected] of [
   ["로그인 API에 토큰 만료 검증을 추가해줘", true],
   ["로그인 API 검증을 추가하지 마", false],
   ["로그인 API 버그를 수정해줘, 다만 테스트는 추가하지 마", true],
+  ["로그인 API 버그를 수정해줘, 단 테스트는 추가하지 마", true],
   ["로그인 API를 추가해줘? 아니, 취소할게", false],
+  ["로그인 API 추가해줘. 아니, 취소할게", false],
   ["RPL-113 진행시켜", true],
+  ["로그인 API에 검증 추가해 줬어.", false],
   ["로그인 API 오류 고쳐줘 하지만 실제로는 수정하지 마", false],
 ]) {
   const result = spawnSync(process.execPath, ["scripts/prompt-routing-hook.mjs", "--format=text"], {
