@@ -85,6 +85,14 @@ Jira `RPL` / Task(10010); Target Product `dev-harness (10027)`, Component `backe
 
 기존 Core/Gate/Adapter가 요청 digest·CreateRequestId·pending CAS·단일 Create·IssueKey link·GET/Target 대조·Origin·Reader와 불명확 결과 격리를 제공한다. 이 경로의 운영용 신뢰 발급원·durable replay/ledger 연결은 아직 검증되지 않았다. 기존 이슈 Cutover, Board/Filter/Automation의 실제 Legacy 소비처 export도 완료되지 않았으므로 G4 변경은 HOLD다.
 
+## G3 Cutover 후보 색인 회수 — READ-ONLY / 미승인 (2026-10-28)
+
+기존 조사에서 `oh-my-ai` 저장소에 103건 후보 Manifest가 없다고 보고했지만, 정본 G2 감사 자료는 **별도 저장소** `ranikun-labs/platform-services`의 `audit/jira-g2-full-118-20261023` 브랜치에 있었다. 증거 Commit `530dd0f88e5819158362b620ca1591779a50cba5`, `governance/jira-g2-full-118/final118-verification-20261023.json` (Blob `aea968a4dca76194b0de96db6fe20c1c20648470`)의 `current_118`를 읽기 전용으로 기계 분류했다.
+
+[**G3 103건 후보 색인**](jira-g3-cutover-candidate-index-20261028.json)에는 지원 유형 Epic 8 / Feature 31 / Task 50 / Bug 5 / Research 9 = **103건**, Story 4·Subtask 8 = **12건 제외**, Origin 불명 `RPL-112/113/114` = **3건 격리**가 고정돼 있다. `RPL-122/124`는 해당 G2 118건 Snapshot 밖의 추가 보호 대상이다. **G2 데이터 저장값 검증을 재실행하거나 Cutover 승인으로 승격하지 않았다.**
+
+이 색인은 IssueKey·IssueType의 **후보 목록만 입증**한다. Owner의 정확한 Cutover 승인, 이슈별 Origin/Legacy Snapshot/동등성/Changelog/영향 보존 근거, 승인된 Reader 기록·Rollback은 별도로 필요하다. 이 파일만으로 `ReadAuthority`, `WriteAuthority`, Jira 상태·필드·설정을 변경하거나 G4 Legacy를 삭제하지 않는다.
+
 ## Task(10010)만 실제 G3 시험할 때 필요한 Owner 결정
 
 ### 후속 통합 코드의 검증 범위
