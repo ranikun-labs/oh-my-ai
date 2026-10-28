@@ -150,13 +150,20 @@ function validRovoEnvelope(result, data, expectedFields) {
   if (!payloads.length) return true;
   const raw = payloads[0];
   if (!isRecord(raw) || hasSemanticError(raw)) return false;
-  if (isRecord(raw.issues) && Array.isArray(raw.issues.nodes)) {
-    const rawPageInfo = raw.issues.pageInfo;
-    const structuredPageInfo = wrapper.pageInfo;
-    if (!isRecord(rawPageInfo) || !isRecord(structuredPageInfo)
-      || rawPageInfo.hasNextPage !== structuredPageInfo.hasNextPage
-      || rawPageInfo.endCursor !== structuredPageInfo.endCursor) return false;
-  }
+  const structuredPageInfo = wrapper.pageInfo;
+  const rawPageInfos = [];
+  if (Object.hasOwn(raw, "pageInfo")) rawPageInfos.push(raw.pageInfo);
+  if (isRecord(raw.issues) && Object.hasOwn(raw.issues, "pageInfo"))
+    rawPageInfos.push(raw.issues.pageInfo);
+  if (isRecord(raw.issues) && Array.isArray(raw.issues.nodes)
+    && !Object.hasOwn(raw.issues, "pageInfo")) return false;
+  if ((rawPageInfos.length > 0 || Object.hasOwn(raw, "hasMore")) && !isRecord(structuredPageInfo)) return false;
+  if (rawPageInfos.some(pageInfo => !isRecord(pageInfo)
+    || typeof pageInfo.hasNextPage !== "boolean" || !Object.hasOwn(pageInfo, "endCursor")
+    || pageInfo.hasNextPage !== structuredPageInfo.hasNextPage
+    || pageInfo.endCursor !== structuredPageInfo.endCursor)) return false;
+  if (Object.hasOwn(raw, "hasMore") && (typeof raw.hasMore !== "boolean"
+    || raw.hasMore !== structuredPageInfo.hasNextPage)) return false;
   const rawIssues = rovoRawIssues(raw);
   if (!rawIssues || rawIssues.length !== nodes.length
     || !rawIssues.every((issue, index) => sameRovoIssueEvidence(issue, nodes[index], expectedFields))) return false;

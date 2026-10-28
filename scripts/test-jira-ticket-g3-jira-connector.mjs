@@ -199,6 +199,13 @@ async function rovoEnvelopeCompatibility() {
   assert.deepEqual(calls.map(call => call.name), [G3_JIRA_TOOL_NAMES.search, G3_JIRA_TOOL_NAMES.create, G3_JIRA_TOOL_NAMES.read]);
 
   const badSearchResponses = [
+    { content: [{ type: "text", text: JSON.stringify({ issues: [], hasMore: true }) }],
+      structuredContent: { issues: { nodes: [], webUrl: `${SITE}/issues`,
+        pageInfo: { hasNextPage: false, endCursor: null } }, context: {} } },
+    { content: [{ type: "text", text: JSON.stringify({ issues: [],
+      pageInfo: { hasNextPage: true, endCursor: "top-level-next" } }) }],
+      structuredContent: { issues: { nodes: [], webUrl: `${SITE}/issues`,
+        pageInfo: { hasNextPage: false, endCursor: null } }, context: {} } },
     { content: [{ type: "text", text: JSON.stringify({ issues: {
       nodes: [rawRovoIssue(rovoIssue())], pageInfo: { hasNextPage: true, endCursor: "untrusted-next" },
     } }) }], structuredContent: { issues: { nodes: [rovoIssue()], webUrl: `${SITE}/issues`,
