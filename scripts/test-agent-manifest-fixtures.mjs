@@ -22,7 +22,8 @@ const observation = () => ({
   dispatched:true,
   attestation:{ref:"runtime-dispatch-1",runtime_id:"synthetic-runtime",agent_id:"review-51",
     effective:{model:"example-review-model",reasoning:"high",fast:false},
-    independent_context:true,independent_context_ref:"isolated-session-1"},
+    independent_context:true,independent_context_ref:"isolated-session-1",
+    reviewed:{base_sha:BASE,head_sha:HEAD}},
   reviewed:{base_sha:BASE,head_sha:HEAD},
 });
 let count=0;
@@ -54,7 +55,7 @@ run("FX-AGM-032-unknown-effective-fast",(m,c,o)=>{o.attestation.effective.fast="
 run("FX-AGM-033-inherited-fast-on",(m,c,o)=>{o.attestation.effective.fast=true},post,"SETTING_MISMATCH");
 run("FX-AGM-034-quiet-model-fallback",(m,c,o)=>{o.attestation.effective.model="default-model"},post,"SETTING_MISMATCH");
 run("FX-AGM-035-unknown-context",(m,c,o)=>{o.attestation.independent_context=false},post,"REVIEW_UNVERIFIED");
-run("FX-AGM-036-stale-review-target",(m,c,o)=>{o.reviewed.head_sha="c".repeat(40)},post,"REVIEW_UNVERIFIED");
+run("FX-AGM-036-stale-review-target",(m,c,o)=>{o.attestation.reviewed.head_sha="c".repeat(40)},post,"REVIEW_UNVERIFIED");
 run("FX-AGM-037-positive-attestation-synthetic",null,post,"SETTINGS_VERIFIED");
 run("FX-AGM-038-fake-attestation-rejected",null,(m,c,o)=>verifyDispatchEvidence(m,o,()=>false),"ROUTING_UNVERIFIED");
 run("FX-AGM-015-missing-reasoning",m=>{delete m.requested.reasoning},syntax,"F4_PROMPT_INVALID");
@@ -63,4 +64,8 @@ run("FX-AGM-025-reasoning-support-unavailable",(m,c)=>{c.reasoning_selection.sup
 run("FX-AGM-026-runtime-id-mismatch",(m,c)=>{c.runtime_id="other-runtime"},preflight,"CAPABILITY_BLOCKED");
 run("FX-AGM-039-attestation-agent-id-mismatch",(m,c,o)=>{o.attestation.agent_id="different-agent"},post,"ROUTING_UNVERIFIED");
 run("FX-AGM-040-reasoning-fallback",(m,c,o)=>{o.attestation.effective.reasoning="medium"},post,"SETTING_MISMATCH");
+run("FX-AGM-041-caller-only-reviewed-target",(m,c,o)=>{delete o.attestation.reviewed},post,"REVIEW_UNVERIFIED");
+run("FX-AGM-042-attested-target-mismatch",(m,c,o)=>{o.attestation.reviewed.head_sha="c".repeat(40);o.reviewed.head_sha=HEAD},post,"REVIEW_UNVERIFIED");
+run("FX-AGM-043-normalized-unknown-requested-model",m=>{m.requested.model="  unknown  "},syntax,"F4_PROMPT_INVALID");
+run("FX-AGM-044-normalized-unknown-effective-model",(m,c,o)=>{o.attestation.effective.model=" UnKnown "},post,"ROUTING_UNVERIFIED");
 console.log("FX-AGM: "+count+"/"+count+" synthetic fixtures passed");

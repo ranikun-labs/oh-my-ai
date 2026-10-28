@@ -9,6 +9,7 @@ const REASONING = new Set(["low", "medium", "high", "max"]);
 const PERMISSIONS = new Set(["read-only", "scoped-write"]);
 const SHA = /^[0-9a-f]{40}$/i;
 const present = value => typeof value === "string" && value.trim().length > 0;
+const unknownModel = value => typeof value === "string" && value.trim().toUpperCase() === "UNKNOWN";
 const record = value => value !== null && typeof value === "object" && !Array.isArray(value);
 const result = (status, code, reasons, extra = {}) => ({ status, code, reasons, ...extra });
 
@@ -22,7 +23,7 @@ export function validateAgentManifest(manifest) {
   if (!PERMISSIONS.has(manifest.permissions)) errors.push("permissions invalid/missing");
   if (!record(manifest.requested)) errors.push("requested missing");
   else {
-    if (!present(manifest.requested.model) || manifest.requested.model === "UNKNOWN") errors.push("requested.model missing");
+    if (!present(manifest.requested.model) || unknownModel(manifest.requested.model)) errors.push("requested.model missing");
     if (!REASONING.has(manifest.requested.reasoning)) errors.push("requested.reasoning missing/invalid");
     if (typeof manifest.requested.fast !== "boolean") errors.push("requested.fast missing/not boolean");
   }
@@ -93,7 +94,7 @@ export function verifyDispatchEvidence(manifest, observation, verifyRuntimeAttes
   catch { trusted = false; }
   if (!trusted) return result("BLOCKED", "ROUTING_UNVERIFIED", ["runtime attestation did not verify"]);
   const effective = observation.attestation.effective;
-  if (!record(effective) || !present(effective.model) || !REASONING.has(effective.reasoning) || typeof effective.fast !== "boolean") {
+  if (!record(effective) || !present(effective.model) || unknownModel(effective.model) || !REASONING.has(effective.reasoning) || typeof effective.fast !== "boolean") {
     return result("BLOCKED", "ROUTING_UNVERIFIED", ["effective settings incomplete or unknown"]);
   }
   if (effective.model !== manifest.requested.model || effective.reasoning !== manifest.requested.reasoning || effective.fast !== manifest.requested.fast) {
@@ -103,7 +104,7 @@ export function verifyDispatchEvidence(manifest, observation, verifyRuntimeAttes
     if (observation.attestation.independent_context !== true || !present(observation.attestation.independent_context_ref)) {
       return result("BLOCKED", "REVIEW_UNVERIFIED", ["independent review context not verified"]);
     }
-    const reviewed = observation.reviewed;
+    const reviewed = observation.attestation.reviewed;
     if (!record(reviewed) || reviewed.base_sha !== manifest.target.base_sha || reviewed.head_sha !== manifest.target.head_sha) {
       return result("BLOCKED", "REVIEW_UNVERIFIED", ["review target stale or different from fixed Base/HEAD"]);
     }

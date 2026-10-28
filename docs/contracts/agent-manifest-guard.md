@@ -8,7 +8,7 @@ A parent Writer's requested model, reasoning effort, or Fast mode must not silen
 
 - `scripts/lib/agent-manifest-guard.mjs`: pure `validateAgentManifest`, `preflightDispatch`, `verifyDispatchEvidence`.
 - `scripts/validate-agent-manifest.mjs`: JSON **shape-only** CLI. Exit 0 means a well-formed manifest, **not approved/supported/dispatched**.
-- `scripts/test-agent-manifest-fixtures.mjs`: 26 synthetic `FX-AGM-*` cases. Positive callback stubs are **not real runtime attestations**.
+- `scripts/test-agent-manifest-fixtures.mjs`: 30 synthetic `FX-AGM-*` cases. Positive callback stubs are **not real runtime attestations**.
 - `make test-agent-manifest-fixtures`: run just these fixtures. Existing `FX-CAP-*` checks cover **static** runtime declarations and are intentionally separate.
 
 ## Manifest input (public generic role contract)
@@ -34,7 +34,7 @@ A parent Writer's requested model, reasoning effort, or Fast mode must not silen
 }
 ```
 
-A Reviewer needs `read-only` permission, fixed 40-hex `target.base_sha` and `target.head_sha`, and a distinct `reviewing_agent_id` (Writer being reviewed). The requester must provide an actual valid model/reasoning/Fast setting; public source **must not** hard-code a particular person's preferred model. A text `authorization.evidence_ref` or `authorization.status=approved` is only a claim: the caller must check its authority against the real permission system before dispatch.
+A Reviewer needs `read-only` permission, fixed 40-hex `target.base_sha` and `target.head_sha`, and a distinct `reviewing_agent_id` (Writer being reviewed). The reviewed Base/HEAD must be inside the runtime-verified attestation; caller-supplied `observation.reviewed` is not trusted. The requester must provide an actual valid model/reasoning/Fast setting; public source **must not** hard-code a particular person's preferred model. A text `authorization.evidence_ref` or `authorization.status=approved` is only a claim: the caller must check its authority against the real permission system before dispatch.
 
 ## Fail-closed outcomes
 
@@ -51,7 +51,7 @@ A Reviewer needs `read-only` permission, fixed 40-hex `target.base_sha` and `tar
 
 ## Current evidence and remaining gate
 
-Run `make test-agent-manifest-fixtures` and `node --check` for the 3 script files. These tests use synthetic adapter capability objects and an intentionally fake positive verifier; **26/26 fixtures do not prove real Codex/ChatGPT setting control**.
+Run `make test-agent-manifest-fixtures` and `node --check` for the 3 script files. These tests use synthetic adapter capability objects and an intentionally fake positive verifier; **30/30 fixtures do not prove real Codex/ChatGPT setting control**.
 
 The repository's current V1 CLI/work-start flow does **not** itself spawn independent subagents. **Dispatch integration remains NOT_IMPLEMENTED** until a real controllable/verifiable Runtime Adapter entry point exists and the Guard is invoked before *every* agent creation path. Unknown effective model/reasoning/Fast or unsupported reviewer isolation => **do not auto-dispatch the Reviewer**; hand off fixed Base/HEAD to a separately controlled, verified Standard session. Actual Writer→Reviewer E2E and independent PR review are **NOT_RUN** for this Draft.
 
