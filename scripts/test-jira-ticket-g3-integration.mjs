@@ -28,19 +28,27 @@ const fields = {
   issuetype: { required: false, hasDefaultValue: false, schema: { type: "issuetype" },
     allowedValues: [{ id: "10010", name: "작업" }] },
   summary: { required: true, hasDefaultValue: false, schema: { type: "string" } },
-  description: { required: true, hasDefaultValue: false, schema: { type: "textarea" } },
-  assignee: { required: true, hasDefaultValue: false, schema: { type: "user" },
-    allowedValues: [{ accountId: "offline-owner" }] },
-  priority: { required: true, hasDefaultValue: false, schema: { type: "option" },
-    allowedValues: [{ id: "3", name: "High" }] },
-  labels: { required: false, hasDefaultValue: false, schema: { type: "array", items: "string" } },
+  description: { required: false, hasDefaultValue: false, schema: { type: "string" } },
+  // Synthetic values, but the same 22 field IDs and missing wrappers as the
+  // current RPL Task Create Metadata. No real account IDs are checked in.
+  reporter: { required: true, hasDefaultValue: true, schema: { type: "user" } },
+  ...Object.fromEntries([
+    ["attachment", "array", "attachment"],
+    ["customfield_10000", "any"],
+    ["customfield_10019", "any"],
+    ["customfield_10021", "array", "option"],
+    ["customfield_10037", "any"],
+    ["fixVersions", "array", "version"],
+    ["issuelinks", "array", "issuelinks"],
+    ["parent", "issuelink"],
+  ].map(([id, type, items]) => [id, { required: false, hasDefaultValue: false,
+    schema: { type, ...(items ? { items } : {}) } }])),
   ...Object.fromEntries(["customfield_10042", "customfield_10043", "customfield_10044"]
     .map(id => [id, { required: false, hasDefaultValue: false }])),
   customfield_10015: { required: true, hasDefaultValue: false, schema: { type: "date" } },
   duedate: { required: true, hasDefaultValue: false, schema: { type: "date" } },
   customfield_10045: { required: true, hasDefaultValue: true,
-    defaultValue: [{ accountId: "offline-owner" }], schema: { type: "array", items: "user" },
-    allowedValues: [{ accountId: "offline-owner" }] },
+    defaultValue: [{ accountId: "offline-owner" }], schema: { type: "array", items: "user" } },
   customfield_10108: select("10027", "dev-harness"),
   customfield_10109: select("10028", "backend"),
   customfield_10110: { required: false, hasDefaultValue: false,
@@ -88,6 +96,9 @@ try {
           customfield_10109: { id: "10028" }, customfield_10110: [] } };
       if (name === G3_JIRA_TOOL_NAMES.create) {
         calls.create++; assert.equal(args.projectKey, "RPL");
+        assert.equal(Object.hasOwn(args, "assignee_account_id"), false);
+        assert.equal(Object.hasOwn(args.additional_fields, "priority"), false);
+        assert.equal(Object.hasOwn(args.additional_fields, "labels"), false);
         assert.equal(args.additional_fields.customfield_10042, undefined);
         return { structuredContent: issue };
       }
@@ -108,8 +119,14 @@ try {
   assert.equal(approved.required_action.type, "jira.intent_persist_required");
   const intent = approved.required_action.request, snapshot = approved.state.approved_snapshot;
   const expectedCreate = { project: snapshot.project, issue_type: snapshot.issue_type,
-    summary: snapshot.contract.Summary, description: createDescription(snapshot),
-    assignee: snapshot.assignee, priority: snapshot.priority, labels: snapshot.labels, fields: intent.fields };
+    summary: snapshot.contract.Summary, description: createDescription(snapshot), fields: intent.fields };
+  assert.equal(Object.keys(fields).length, 22, "offline fixture must mirror the live 22-field Task shape");
+  for (const wrapper of ["assignee", "priority", "labels"]) {
+    assert.equal(Object.hasOwn(fields, wrapper), false,
+      "offline metadata must not fabricate unsupported Jira wrappers");
+    assert.equal(Object.hasOwn(expectedCreate, wrapper), false,
+      "G3 Create request must omit unsupported wrappers");
+  }
   const policyHash = g3EvidenceSha256({ fixture: "policy", foundation_ref: "8d3ad283402e3a6d42b90ae457557b5751a041e4" });
   const metadataContent = { project: "RPL", issue_type: "Task", issue_type_id: "10010",
     startAt: 0, maxResults: 100, total: Object.keys(fields).length, fields };
