@@ -1,0 +1,57 @@
+name: Skill routing and install fixtures
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/validate-skill-routing.yml'
+      - 'skills/**'
+      - 'scripts/**'
+      - 'fixtures/install/**'
+      - 'instructions/**'
+      - 'setup.sh'
+      - 'Makefile'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  routing:
+    name: Routing regression and generated artifact parity
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout PR code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check shell syntax
+        run: bash -n setup.sh scripts/test-routing-fixtures.sh scripts/test-install-fixtures.sh
+      - name: Routing fixtures
+        run: make test-routing-fixtures
+      - name: Regenerate instructions and Skill registry
+        run: make instructions
+      - name: Verify generated artifacts match committed sources
+        run: git diff --exit-code -- AGENTS.md CLAUDE.md claude/CLAUDE.md MINE.md skills/skill-index.json
+
+  install:
+    name: Isolated installer regressions
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout PR code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Isolated install fixtures
+        run: make test-install-fixtures
