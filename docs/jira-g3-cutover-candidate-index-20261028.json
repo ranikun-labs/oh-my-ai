@@ -1,0 +1,643 @@
+{
+  "record_type": "G3_G2_SNAPSHOT_CUTOVER_CANDIDATE_INDEX",
+  "status": "READ_ONLY_CANDIDATES_NOT_APPROVED",
+  "compiled_date": "2026-10-28",
+  "purpose": "Recover a verified key/type index from the G2 evidence snapshot for G3 migration read-authority preflight. Not an Owner cutover manifest or authority grant.",
+  "source": {
+    "repository": "ranikun-labs/platform-services",
+    "branch": "audit/jira-g2-full-118-20261023",
+    "commit": "530dd0f88e5819158362b620ca1591779a50cba5",
+    "path": "governance/jira-g2-full-118/final118-verification-20261023.json",
+    "blob_sha": "aea968a4dca76194b0de96db6fe20c1c20648470",
+    "record_type": "G2_FINAL_118_VERIFICATION",
+    "verified_at": "2026-10-23T03:47:22.084Z",
+    "verdict": "G2_DATA_MIGRATION_PASS_ADMIN_METADATA_REVIEW_PENDING"
+  },
+  "selection_rule": "RPL G2 verified 118 snapshot; support only Epic(10007), Task(10010), Feature(10009), Bug(10012), Research(10013); exclude Story/Subtask and quarantine RPL-112/113/114 regardless of supported type.",
+  "counts": {
+    "g2_snapshot": 118,
+    "candidates": 103,
+    "unsupported": 12,
+    "unknown_origin_quarantined": 3,
+    "by_candidate_issue_type": {
+      "Epic": 8,
+      "Feature": 31,
+      "Task": 50,
+      "Bug": 5,
+      "Research": 9
+    }
+  },
+  "candidates": [
+    {
+      "issue_key": "RPL-1",
+      "issue_type_id": "10007",
+      "issue_type": "Epic"
+    },
+    {
+      "issue_key": "RPL-2",
+      "issue_type_id": "10013",
+      "issue_type": "Research"
+    },
+    {
+      "issue_key": "RPL-3",
+      "issue_type_id": "10010",
+      "issue_type": "Task"
+    },
+    {
+      "issue_key": "RPL-4",
+      "issue_type_id": "10010",
+      "issue_type": "Task"
+    },
+    {
+      "issue_key": "RPL-5",
+      "issue_type_id": "10010",
+      "issue_type": "Task"
+    },
+    {
+      "issue_key": "RPL-6",
+      "issue_type_id": "10010",
+      "issue_type": "Task"
+    },
+    {
+      "issue_key": "RPL-7",
+      "issue_type_id": "10010",
+      "issue_type": "Task"
+    },
+    {
+      "issue_key": "RPL-8",
+      "issue_type_id": "10007",
+      "issue_type": "Epic"
+    },
+    {
+      "issue_key": "RPL-9",
+      "issue_type_id": "10009",
+      "issue_type": "Feature"
+    },
+    {
+      "issue_key": "RPL-10",
+      "issue_type_id": "10013",
+      "issue_type": "Research"
+    },
+    {
+      "issue_key": "RPL-11",
+      "issue_type_id": "10013",
+      "issue_type": "Research"
+    },
+    {
+      "issue_key": "RPL-12",
+      "issue_type_id": "10009",
+      "issue_type": "Feature"
+    },
+    {
+      "issue_key": "RPL-13",
+      "issue_type_id": "10010",
+      "issue_type": "Task"
+    },
+    {
+      "issue_key": "RPL-14",
+      "issue_type_id": "10013",
+      "issue_type": "Research"
+    },
+    {
+      "issue_key": "RPL-15",
+      "issue_type_id": "10009",
+      "issue_type": "Feature"
+    },
+    {
+      "issue_key": "RPL-16",
+      "issue_type_id": "10010",
+      "issue_type": "Task"
+    },
+    {
+      "issue_key": "RPL-17",
+      "issue_type_id": "10010",
+      "issue_type": "Task"
+    },
+    {
+      "issue_key": "RPL-18",
+      "issue_type_id": "10009",
+      "issue_type": "Feature"
+    },
+    {
+      "issue_key": "RPL-19",
+      "issue_type_id": "10009",
+      "issue_type": "Feature"
+    },
+    {
+      "issue_key": "RPL-20",
+      "issue_type_id": "10013",
+      "issue_type": "Research"
+    },
+    {
+      "issue_key": "RPL-21",
+      "issue_type_id": "10009",
+      "issue_type": "Feature"
+    },
+    {
+      "issue_key": "RPL-22",
+      "issue_type_id": "10010",
+      "issue_type": "Task"
+    },
+    {
+      "issue_key": "RPL-23",
+      "issue_type_id": "10013",
+      "issue_type": "Research"
+    },
+    {
+      "issue_key": "RPL-24",
+      "issue_type_id": "10013",
+      "issue_type": "Research"
+    },
+    {
+      "issue_key": "RPL-25",
+      "issue_type_id": "10010",
+      "issue_type": "Task"
+    },
+    {
+      "issue_key": "RPL-26",
+      "issue_type_id": "10010",
+      "issue_type": "Task"
+    },
+    {
+      "issue_key": "RPL-27",
+      "issue_type_id": "10010",
+      "issue_type": "Task"
+    },
+    {
+      "issue_key": "RPL-28",
+      "issue_type_id": "10010",
+      "issue_type": "Task"
+    },
+    {
+      "issue_key": "RPL-29",
+      "issue_type_id": "10009",
+      "issue_type": "Feature"
+    },
+    {
+      "issue_key": "RPL-30",
+      "issue_type_id": "10010",
+      "issue_type": "Task"
+    },
+    {
+      "issue_key": "RPL-31",
+      "issue_type_id": "10010",
+      "issue_type": "Task"
+    },
+    {
+      "issue_key": "RPL-32",
+      "issue_type_id": "10009",
+      "issue_type": "Feature"
+    },
+    {
+      "issue_key": "RPL-33",
+      "issue_type_id": "10010",
+      "issue_type": "Task"
+    },
+    {
+      "issue_key": "RPL-34",
+      "issue_type_id": "10007",
+      "issue_type": "Epic"
+    },
+    {
+      "issue_key": "RPL-35",
+      "issue_type_id": "10007",
+      "issue_type": "Epic"
+    },
+    {
+      "issue_key": "RPL-36",
+      "issue_type_id": "10012",
+      "issue_type": "Bug"
+    },
+    {
+      "issue_key": "RPL-37",
+      "issue_type_id": "10010",
+      "issue_type": "Task"
+    },
+    {
+      "issue_key": "RPL-38",
+      "issue_type_id": "10010",
+      "issue_type": "Task"
+    },
+    {
+      "issue_key": "RPL-39",
+      "issue_type_id": "10010",
+      "issue_type": "Task"
+    },
+    {
+      "issue_key": "RPL-40",
+      "issue_type_id": "10010",
+      "issue_type": "Task"
+    },
+    {
+      "issue_key": "RPL-41",
+      "issue_type_id": "10012",
+      "issue_type": "Bug"
+    },
+    {
+      "issue_key": "RPL-42",
+      "issue_type_id": "10010",
+      "issue_type": "Task"
+    },
+    {
+      "issue_key": "RPL-43",
+      "issue_type_id": "10009",
+      "issue_type": "Feature"
+    },
+    {
+      "issue_key": "RPL-44",
+      "issue_type_id": "10009",
+      "issue_type": "Feature"
+    },
+    {
+      "issue_key": "RPL-45",
+      "issue_type_id": "10009",
+      "issue_type": "Feature"
+    },
+    {
+      "issue_key": "RPL-46",
+      "issue_type_id": "10007",
+      "issue_type": "Epic"
+    },
+    {
+      "issue_key": "RPL-47",
+      "issue_type_id": "10010",
+      "issue_type": "Task"
+    },
+    {
+      "issue_key": "RPL-48",
+      "issue_type_id": "10010",
+      "issue_type": "Task"
+    },
+    {
+      "issue_key": "RPL-49",
+      "issue_type_id": "10009",
+      "issue_type": "Feature"
+    },
+    {
+      "issue_key": "RPL-50",
+      "issue_type_id": "10010",
+      "issue_type": "Task"
+    },
+    {
+      "issue_key": "RPL-51",
+      "issue_type_id": "10007",
+      "issue_type": "Epic"
+    },
+    {
+      "issue_key": "RPL-52",
+      "issue_type_id": "10010",
+      "issue_type": "Task"
+    },
+    {
+      "issue_key": "RPL-53",
+      "issue_type_id": "10010",
+      "issue_type": "Task"
+    },
+    {
+      "issue_key": "RPL-54",
+      "issue_type_id": "10010",
+      "issue_type": "Task"
+    },
+    {
+      "issue_key": "RPL-55",
+      "issue_type_id": "10010",
+      "issue_type": "Task"
+    },
+    {
+      "issue_key": "RPL-56",
+      "issue_type_id": "10009",
+      "issue_type": "Feature"
+    },
+    {
+      "issue_key": "RPL-57",
+      "issue_type_id": "10009",
+      "issue_type": "Feature"
+    },
+    {
+      "issue_key": "RPL-58",
+      "issue_type_id": "10009",
+      "issue_type": "Feature"
+    },
+    {
+      "issue_key": "RPL-59",
+      "issue_type_id": "10009",
+      "issue_type": "Feature"
+    },
+    {
+      "issue_key": "RPL-60",
+      "issue_type_id": "10009",
+      "issue_type": "Feature"
+    },
+    {
+      "issue_key": "RPL-61",
+      "issue_type_id": "10009",
+      "issue_type": "Feature"
+    },
+    {
+      "issue_key": "RPL-62",
+      "issue_type_id": "10009",
+      "issue_type": "Feature"
+    },
+    {
+      "issue_key": "RPL-63",
+      "issue_type_id": "10010",
+      "issue_type": "Task"
+    },
+    {
+      "issue_key": "RPL-64",
+      "issue_type_id": "10009",
+      "issue_type": "Feature"
+    },
+    {
+      "issue_key": "RPL-65",
+      "issue_type_id": "10009",
+      "issue_type": "Feature"
+    },
+    {
+      "issue_key": "RPL-66",
+      "issue_type_id": "10009",
+      "issue_type": "Feature"
+    },
+    {
+      "issue_key": "RPL-67",
+      "issue_type_id": "10009",
+      "issue_type": "Feature"
+    },
+    {
+      "issue_key": "RPL-68",
+      "issue_type_id": "10009",
+      "issue_type": "Feature"
+    },
+    {
+      "issue_key": "RPL-69",
+      "issue_type_id": "10012",
+      "issue_type": "Bug"
+    },
+    {
+      "issue_key": "RPL-71",
+      "issue_type_id": "10010",
+      "issue_type": "Task"
+    },
+    {
+      "issue_key": "RPL-72",
+      "issue_type_id": "10010",
+      "issue_type": "Task"
+    },
+    {
+      "issue_key": "RPL-73",
+      "issue_type_id": "10009",
+      "issue_type": "Feature"
+    },
+    {
+      "issue_key": "RPL-74",
+      "issue_type_id": "10009",
+      "issue_type": "Feature"
+    },
+    {
+      "issue_key": "RPL-75",
+      "issue_type_id": "10009",
+      "issue_type": "Feature"
+    },
+    {
+      "issue_key": "RPL-76",
+      "issue_type_id": "10009",
+      "issue_type": "Feature"
+    },
+    {
+      "issue_key": "RPL-78",
+      "issue_type_id": "10013",
+      "issue_type": "Research"
+    },
+    {
+      "issue_key": "RPL-79",
+      "issue_type_id": "10009",
+      "issue_type": "Feature"
+    },
+    {
+      "issue_key": "RPL-81",
+      "issue_type_id": "10010",
+      "issue_type": "Task"
+    },
+    {
+      "issue_key": "RPL-84",
+      "issue_type_id": "10010",
+      "issue_type": "Task"
+    },
+    {
+      "issue_key": "RPL-86",
+      "issue_type_id": "10009",
+      "issue_type": "Feature"
+    },
+    {
+      "issue_key": "RPL-87",
+      "issue_type_id": "10009",
+      "issue_type": "Feature"
+    },
+    {
+      "issue_key": "RPL-88",
+      "issue_type_id": "10010",
+      "issue_type": "Task"
+    },
+    {
+      "issue_key": "RPL-90",
+      "issue_type_id": "10012",
+      "issue_type": "Bug"
+    },
+    {
+      "issue_key": "RPL-91",
+      "issue_type_id": "10010",
+      "issue_type": "Task"
+    },
+    {
+      "issue_key": "RPL-92",
+      "issue_type_id": "10012",
+      "issue_type": "Bug"
+    },
+    {
+      "issue_key": "RPL-93",
+      "issue_type_id": "10010",
+      "issue_type": "Task"
+    },
+    {
+      "issue_key": "RPL-95",
+      "issue_type_id": "10010",
+      "issue_type": "Task"
+    },
+    {
+      "issue_key": "RPL-96",
+      "issue_type_id": "10010",
+      "issue_type": "Task"
+    },
+    {
+      "issue_key": "RPL-97",
+      "issue_type_id": "10010",
+      "issue_type": "Task"
+    },
+    {
+      "issue_key": "RPL-98",
+      "issue_type_id": "10007",
+      "issue_type": "Epic"
+    },
+    {
+      "issue_key": "RPL-99",
+      "issue_type_id": "10010",
+      "issue_type": "Task"
+    },
+    {
+      "issue_key": "RPL-100",
+      "issue_type_id": "10010",
+      "issue_type": "Task"
+    },
+    {
+      "issue_key": "RPL-101",
+      "issue_type_id": "10010",
+      "issue_type": "Task"
+    },
+    {
+      "issue_key": "RPL-102",
+      "issue_type_id": "10010",
+      "issue_type": "Task"
+    },
+    {
+      "issue_key": "RPL-103",
+      "issue_type_id": "10010",
+      "issue_type": "Task"
+    },
+    {
+      "issue_key": "RPL-104",
+      "issue_type_id": "10013",
+      "issue_type": "Research"
+    },
+    {
+      "issue_key": "RPL-105",
+      "issue_type_id": "10010",
+      "issue_type": "Task"
+    },
+    {
+      "issue_key": "RPL-106",
+      "issue_type_id": "10010",
+      "issue_type": "Task"
+    },
+    {
+      "issue_key": "RPL-107",
+      "issue_type_id": "10007",
+      "issue_type": "Epic"
+    },
+    {
+      "issue_key": "RPL-108",
+      "issue_type_id": "10010",
+      "issue_type": "Task"
+    },
+    {
+      "issue_key": "RPL-109",
+      "issue_type_id": "10010",
+      "issue_type": "Task"
+    },
+    {
+      "issue_key": "RPL-110",
+      "issue_type_id": "10010",
+      "issue_type": "Task"
+    },
+    {
+      "issue_key": "RPL-111",
+      "issue_type_id": "10010",
+      "issue_type": "Task"
+    }
+  ],
+  "excluded": [
+    {
+      "issue_key": "RPL-70",
+      "issue_type_id": "10008",
+      "reason": "unsupported_issue_type"
+    },
+    {
+      "issue_key": "RPL-77",
+      "issue_type_id": "10008",
+      "reason": "unsupported_issue_type"
+    },
+    {
+      "issue_key": "RPL-80",
+      "issue_type_id": "10008",
+      "reason": "unsupported_issue_type"
+    },
+    {
+      "issue_key": "RPL-82",
+      "issue_type_id": "10008",
+      "reason": "unsupported_issue_type"
+    },
+    {
+      "issue_key": "RPL-83",
+      "issue_type_id": "10008",
+      "reason": "unsupported_issue_type"
+    },
+    {
+      "issue_key": "RPL-85",
+      "issue_type_id": "10008",
+      "reason": "unsupported_issue_type"
+    },
+    {
+      "issue_key": "RPL-89",
+      "issue_type_id": "10008",
+      "reason": "unsupported_issue_type"
+    },
+    {
+      "issue_key": "RPL-94",
+      "issue_type_id": "10008",
+      "reason": "unsupported_issue_type"
+    },
+    {
+      "issue_key": "RPL-115",
+      "issue_type_id": "10011",
+      "reason": "unsupported_issue_type"
+    },
+    {
+      "issue_key": "RPL-116",
+      "issue_type_id": "10011",
+      "reason": "unsupported_issue_type"
+    },
+    {
+      "issue_key": "RPL-117",
+      "issue_type_id": "10011",
+      "reason": "unsupported_issue_type"
+    },
+    {
+      "issue_key": "RPL-118",
+      "issue_type_id": "10011",
+      "reason": "unsupported_issue_type"
+    }
+  ],
+  "quarantined": [
+    {
+      "issue_key": "RPL-112",
+      "issue_type_id": "10007",
+      "reason": "unverified_origin"
+    },
+    {
+      "issue_key": "RPL-113",
+      "issue_type_id": "10009",
+      "reason": "unverified_origin"
+    },
+    {
+      "issue_key": "RPL-114",
+      "issue_type_id": "10009",
+      "reason": "unverified_origin"
+    }
+  ],
+  "additional_protected_outside_g2_snapshot": [
+    "RPL-122",
+    "RPL-124"
+  ],
+  "cutover_preconditions": [
+    "owner-approved exact issue scope and effective time",
+    "authenticated per-issue Origin and Legacy Snapshot",
+    "verified Target metadata, field IDs, Jira GET, preserved impact",
+    "verified migration parity and signed CutoverApprovalRef",
+    "a durable audited authority record and rollback reference"
+  ],
+  "no_claims": [
+    "No individual issue is approved for Cutover",
+    "No per-issue Origin/CutoverApprovalRef is proven by this index",
+    "G2 stored Target fields are not Target read/write authority",
+    "No Jira ReadAuthority or WriteAuthority mutation, Create, Admin, or G4 delete occurred"
+  ]
+}
