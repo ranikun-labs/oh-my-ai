@@ -2,7 +2,7 @@
   "record_type": "G3_G2_SNAPSHOT_CUTOVER_CANDIDATE_INDEX",
   "status": "READ_ONLY_CANDIDATES_NOT_APPROVED",
   "compiled_date": "2026-10-28",
-  "purpose": "Recover a verified key/type index from the G2 evidence snapshot for G3 migration read-authority preflight. Not an Owner cutover manifest or authority grant.",
+  "purpose": "Provenance-linked G2 snapshot type-support index and conservative status-only screening; neither is an Owner-approved migration/cutover scope.",
   "source": {
     "repository": "ranikun-labs/platform-services",
     "branch": "audit/jira-g2-full-118-20261023",
@@ -638,6 +638,270 @@
     "No individual issue is approved for Cutover",
     "No per-issue Origin/CutoverApprovalRef is proven by this index",
     "G2 stored Target fields are not Target read/write authority",
-    "No Jira ReadAuthority or WriteAuthority mutation, Create, Admin, or G4 delete occurred"
-  ]
+    "No Jira ReadAuthority or WriteAuthority mutation, Create, Admin, or G4 delete occurred",
+    "103 supported types are not 103 authorized Cutovers; 27 preliminary review issues are not approved or currently verified.",
+    "No live Jira GET, Cutover, Create, G4 field cleanup, or current-issue status verification performed."
+  ],
+  "cutover_scope_screen": {
+    "status": "PRELIMINARY_SNAPSHOT_SCREEN_ONLY_NOT_APPROVED",
+    "method": "Source G2 snapshot statusCategory from verified_at; group supported-type 103 into done 75, explicitly retired RPL-40 1, and non-done non-retired 27. This is not a live state check, signed origin proof, migration parity result or per-issue CutoverApprovalRef.",
+    "source_verified_at": "2026-10-23T03:47:22.084Z",
+    "counts": {
+      "supported_type_only": 103,
+      "completed_status_default_excluded": 75,
+      "retired_default_excluded": 1,
+      "remaining_preliminary_review_unapproved": 27,
+      "cutover_approved": 0
+    },
+    "completed_status_default_excluded_keys": [
+      "RPL-8",
+      "RPL-9",
+      "RPL-10",
+      "RPL-12",
+      "RPL-13",
+      "RPL-14",
+      "RPL-15",
+      "RPL-16",
+      "RPL-17",
+      "RPL-18",
+      "RPL-19",
+      "RPL-20",
+      "RPL-21",
+      "RPL-22",
+      "RPL-23",
+      "RPL-24",
+      "RPL-25",
+      "RPL-26",
+      "RPL-28",
+      "RPL-29",
+      "RPL-30",
+      "RPL-31",
+      "RPL-32",
+      "RPL-33",
+      "RPL-35",
+      "RPL-38",
+      "RPL-39",
+      "RPL-42",
+      "RPL-43",
+      "RPL-44",
+      "RPL-45",
+      "RPL-48",
+      "RPL-49",
+      "RPL-50",
+      "RPL-52",
+      "RPL-53",
+      "RPL-54",
+      "RPL-56",
+      "RPL-57",
+      "RPL-58",
+      "RPL-59",
+      "RPL-60",
+      "RPL-61",
+      "RPL-65",
+      "RPL-66",
+      "RPL-67",
+      "RPL-69",
+      "RPL-71",
+      "RPL-72",
+      "RPL-73",
+      "RPL-74",
+      "RPL-75",
+      "RPL-76",
+      "RPL-78",
+      "RPL-79",
+      "RPL-81",
+      "RPL-84",
+      "RPL-86",
+      "RPL-87",
+      "RPL-90",
+      "RPL-91",
+      "RPL-92",
+      "RPL-96",
+      "RPL-97",
+      "RPL-99",
+      "RPL-100",
+      "RPL-101",
+      "RPL-102",
+      "RPL-103",
+      "RPL-104",
+      "RPL-105",
+      "RPL-106",
+      "RPL-108",
+      "RPL-109",
+      "RPL-110"
+    ],
+    "retired_default_excluded_keys": [
+      "RPL-40"
+    ],
+    "remaining_preliminary_review_unapproved": [
+      {
+        "issue_key": "RPL-1",
+        "issue_type_id": "10007",
+        "snapshot_status_category": "new",
+        "snapshot_status": "할 일"
+      },
+      {
+        "issue_key": "RPL-2",
+        "issue_type_id": "10013",
+        "snapshot_status_category": "new",
+        "snapshot_status": "할 일"
+      },
+      {
+        "issue_key": "RPL-3",
+        "issue_type_id": "10010",
+        "snapshot_status_category": "new",
+        "snapshot_status": "할 일"
+      },
+      {
+        "issue_key": "RPL-4",
+        "issue_type_id": "10010",
+        "snapshot_status_category": "new",
+        "snapshot_status": "할 일"
+      },
+      {
+        "issue_key": "RPL-5",
+        "issue_type_id": "10010",
+        "snapshot_status_category": "new",
+        "snapshot_status": "할 일"
+      },
+      {
+        "issue_key": "RPL-6",
+        "issue_type_id": "10010",
+        "snapshot_status_category": "new",
+        "snapshot_status": "할 일"
+      },
+      {
+        "issue_key": "RPL-7",
+        "issue_type_id": "10010",
+        "snapshot_status_category": "new",
+        "snapshot_status": "할 일"
+      },
+      {
+        "issue_key": "RPL-11",
+        "issue_type_id": "10013",
+        "snapshot_status_category": "new",
+        "snapshot_status": "할 일"
+      },
+      {
+        "issue_key": "RPL-27",
+        "issue_type_id": "10010",
+        "snapshot_status_category": "indeterminate",
+        "snapshot_status": "진행 중"
+      },
+      {
+        "issue_key": "RPL-34",
+        "issue_type_id": "10007",
+        "snapshot_status_category": "indeterminate",
+        "snapshot_status": "진행 중"
+      },
+      {
+        "issue_key": "RPL-36",
+        "issue_type_id": "10012",
+        "snapshot_status_category": "new",
+        "snapshot_status": "할 일"
+      },
+      {
+        "issue_key": "RPL-37",
+        "issue_type_id": "10010",
+        "snapshot_status_category": "new",
+        "snapshot_status": "할 일"
+      },
+      {
+        "issue_key": "RPL-41",
+        "issue_type_id": "10012",
+        "snapshot_status_category": "new",
+        "snapshot_status": "할 일"
+      },
+      {
+        "issue_key": "RPL-46",
+        "issue_type_id": "10007",
+        "snapshot_status_category": "new",
+        "snapshot_status": "할 일"
+      },
+      {
+        "issue_key": "RPL-47",
+        "issue_type_id": "10010",
+        "snapshot_status_category": "new",
+        "snapshot_status": "할 일"
+      },
+      {
+        "issue_key": "RPL-51",
+        "issue_type_id": "10007",
+        "snapshot_status_category": "indeterminate",
+        "snapshot_status": "진행 중"
+      },
+      {
+        "issue_key": "RPL-55",
+        "issue_type_id": "10010",
+        "snapshot_status_category": "indeterminate",
+        "snapshot_status": "진행 중"
+      },
+      {
+        "issue_key": "RPL-62",
+        "issue_type_id": "10009",
+        "snapshot_status_category": "new",
+        "snapshot_status": "할 일"
+      },
+      {
+        "issue_key": "RPL-63",
+        "issue_type_id": "10010",
+        "snapshot_status_category": "indeterminate",
+        "snapshot_status": "진행 중"
+      },
+      {
+        "issue_key": "RPL-64",
+        "issue_type_id": "10009",
+        "snapshot_status_category": "new",
+        "snapshot_status": "할 일"
+      },
+      {
+        "issue_key": "RPL-68",
+        "issue_type_id": "10009",
+        "snapshot_status_category": "indeterminate",
+        "snapshot_status": "진행 중"
+      },
+      {
+        "issue_key": "RPL-88",
+        "issue_type_id": "10010",
+        "snapshot_status_category": "new",
+        "snapshot_status": "할 일"
+      },
+      {
+        "issue_key": "RPL-93",
+        "issue_type_id": "10010",
+        "snapshot_status_category": "indeterminate",
+        "snapshot_status": "진행 중"
+      },
+      {
+        "issue_key": "RPL-95",
+        "issue_type_id": "10010",
+        "snapshot_status_category": "indeterminate",
+        "snapshot_status": "진행 중"
+      },
+      {
+        "issue_key": "RPL-98",
+        "issue_type_id": "10007",
+        "snapshot_status_category": "indeterminate",
+        "snapshot_status": "진행 중"
+      },
+      {
+        "issue_key": "RPL-107",
+        "issue_type_id": "10007",
+        "snapshot_status_category": "new",
+        "snapshot_status": "할 일"
+      },
+      {
+        "issue_key": "RPL-111",
+        "issue_type_id": "10010",
+        "snapshot_status_category": "new",
+        "snapshot_status": "할 일"
+      }
+    ],
+    "additional_constraints": [
+      "Foundation §8.0 historical completed/retired/HOLD exclusion and current Jira state still require independent verification.",
+      "Each issue requires approved scope, Origin, Legacy SnapshotRef, signed cutover proof, GET, parity, rollback and immutable Reader authority.",
+      "Original 103 candidates array is type support only, not a Cutover eligibility/approval manifest.",
+      "Do not treat a past status snapshot or this screen as authority to write Jira."
+    ]
+  }
 }
