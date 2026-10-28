@@ -217,6 +217,60 @@ try {
   assert.equal(blocked.calls(), 0);
   console.log("PASS: no trusted external gate -> no Jira Create");
 
+  const rejectExplicitReporter = async input => {
+    const request = input.stage === "search" ? input.context.create_preflight
+      : input.stage === "intent" ? input.context.create_request
+        : input.stage === "create" ? input.context.request : null;
+    if (request && Object.hasOwn(request, "reporter"))
+      throw new Error("G3 Create request cannot specify reporter");
+    return gate(input);
+  };
+  const reporterSearchCalls = { search: 0, create: 0 };
+  const reporterSearchActor = createG3SupervisedAdapter({
+    ledger: createG3FileLedger({ root: join(root, "reporter-search"), ledgerRef }),
+    jira: {
+      async search() { reporterSearchCalls.search++; return { status: "none", tool_call_count: 1 }; },
+      async create() { reporterSearchCalls.create++; throw new Error("unexpected Jira Create"); },
+      async read() { throw new Error("unexpected Jira GET"); },
+    }, verifyGate: rejectExplicitReporter, siteOrigin: "https://jira.example",
+    capabilityEvidence: fixtureCapabilities,
+  });
+  await assert.rejects(() => reporterSearchActor.search({ project: "RPL",
+    create_preflight: { issue_type: "Task", summary: contract.Summary, reporter: null } }),
+  /cannot specify reporter/i);
+  assert.deepEqual(reporterSearchCalls, { search: 0, create: 0 },
+    "Search preflight with reporter:null must stop before Jira Search or Create");
+
+  const reporterIntentId = "g3-fixture-reporter-intent-0001";
+  const reporterIntentLedger = createG3FileLedger({ root: join(root, "reporter-intent"), ledgerRef });
+  const reporterIntentActor = createG3SupervisedAdapter({ ledger: reporterIntentLedger,
+    jira: fakeJira().jira, verifyGate: rejectExplicitReporter,
+    siteOrigin: "https://jira.example", capabilityEvidence: fixtureCapabilities });
+  await assert.rejects(() => reporterIntentActor.persistIntent({
+    ...pendingIntent(reporterIntentId),
+    create_request: { issue_type: "Task", summary: contract.Summary, reporter: null },
+  }), /cannot specify reporter/i);
+  assert.equal((await reporterIntentLedger.inspectRequest(reporterIntentId)).pending, null,
+    "Intent with reporter:null must stop before durable Intent persistence");
+
+  const reporterCreateCalls = { search: 0, create: 0 };
+  const reporterCreateLedger = createG3FileLedger({ root: join(root, "reporter-create"), ledgerRef });
+  const reporterCreateActor = createG3SupervisedAdapter({ ledger: reporterCreateLedger,
+    jira: {
+      async search() { reporterCreateCalls.search++; return { status: "none", tool_call_count: 1 }; },
+      async create() { reporterCreateCalls.create++; throw new Error("unexpected Jira Create"); },
+      async read() { throw new Error("unexpected Jira GET"); },
+    }, verifyGate: rejectExplicitReporter, siteOrigin: "https://jira.example",
+    capabilityEvidence: fixtureCapabilities });
+  const reporterCreateIntentId = "g3-fixture-reporter-create-0001";
+  await reporterCreateActor.persistIntent(pendingIntent(reporterCreateIntentId));
+  await assert.rejects(() => reporterCreateActor.create({
+    issue_type: "Task", summary: contract.Summary, reporter: null,
+  }), /cannot specify reporter/i);
+  assert.deepEqual(reporterCreateCalls, { search: 0, create: 0 },
+    "Create with reporter:null must stop before Jira Create");
+  console.log("PASS: explicit top-level reporter is rejected before Jira Search, Intent persistence, or Jira Create");
+
   const missingApprovalDir = join(root, "missing-approval");
   const missingApprovalLedger = createG3FileLedger({ root: missingApprovalDir, ledgerRef });
   const missingApprovalActor = createG3SupervisedAdapter({ ledger: missingApprovalLedger,

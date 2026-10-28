@@ -142,6 +142,19 @@ async function verifiedIssueTypeBindingRequired() {
   assert.equal(calls, 0, "missing or mismatched signed type binding must block before an MCP call");
 }
 
+async function explicitReporterRejectedBeforeCreateTool() {
+  const calls = [];
+  const jira = await connector(async (name, args) => {
+    calls.push({ name, args });
+    return { structuredContent: jiraIssue({ extraFields: { summary: CREATE_REQUEST.summary } }) };
+  });
+  for (const reporter of [null, undefined, { accountId: "unapproved-reporter" }]) {
+    await assert.rejects(() => jira.create({ ...CREATE_REQUEST, reporter }, LOCALIZED_CREATE_GATE_PROOF),
+      /Jira Create request does not match the G3 approved request shape/i);
+  }
+  assert.deepEqual(calls, [], "any top-level reporter property must fail before the Jira Create tool call");
+}
+
 async function optionalCreateWrappersAndCanonicalCloudId() {
   const request = { ...CREATE_REQUEST };
   delete request.assignee;
@@ -576,6 +589,7 @@ async function supervisedWorkflowIntegration(rovoEnvelope = false) {
 
 await successPath();
 await verifiedIssueTypeBindingRequired();
+await explicitReporterRejectedBeforeCreateTool();
 await optionalCreateWrappersAndCanonicalCloudId();
 await rovoEnvelopeCompatibility();
 await searchFailuresAndPagination();

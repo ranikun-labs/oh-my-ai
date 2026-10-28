@@ -373,6 +373,13 @@ await assert.rejects(() => explicitReporter.verifyGate({ stage: "search",
 /Create account is absent from current Jira metadata for reporter/i);
 assert.equal(explicitReporter.fetchCounts.claim, 0,
   "an explicit reporter must fail before the durable replay claim without current allowed accounts");
+const nullReporterMetadata = structuredClone(implicitReporterDefaultMetadata);
+nullReporterMetadata.fields.reporter.defaultValue = null;
+const nullReporterDefault = fixtureGate({ metadataOverride: nullReporterMetadata });
+await assert.rejects(() => nullReporterDefault.verifyGate({ stage: "search", context: searchContext() }),
+  /default value is missing despite hasDefaultValue for reporter/i);
+assert.equal(nullReporterDefault.fetchCounts.claim, 0,
+  "an explicit null Metadata default must not use the implicit reporter-default exception");
 const missingReporterDefaultMetadata = structuredClone(metadataContent);
 missingReporterDefaultMetadata.fields.reporter.hasDefaultValue = false;
 delete missingReporterDefaultMetadata.fields.reporter.defaultValue;
@@ -380,6 +387,29 @@ const missingReporterDefault = fixtureGate({ metadataOverride: missingReporterDe
 await assert.rejects(() => missingReporterDefault.verifyGate({ stage: "search", context: searchContext() }),
   /required live Jira Create field is missing: reporter/i);
 assert.equal(missingReporterDefault.fetchCounts.claim, 0);
+const explicitTopLevelReporterRequest = { ...createRequest, reporter: null };
+const searchReporterGate = fixtureGate({ createRequestOverride: explicitTopLevelReporterRequest });
+await assert.rejects(() => searchReporterGate.verifyGate({ stage: "search",
+  context: searchContext({ create_preflight: explicitTopLevelReporterRequest }) }),
+/G3 Create request cannot specify reporter/i);
+assert.equal(searchReporterGate.fetchCounts.claim, 0,
+  "Search preflight with an own reporter property, including null, fails before replay claim");
+const intentReporterGate = fixtureGate({ createRequestOverride: explicitTopLevelReporterRequest });
+await assert.rejects(() => intentReporterGate.verifyGate({ stage: "intent",
+  context: intent({ create_request: explicitTopLevelReporterRequest }) }),
+/G3 Create request cannot specify reporter/i);
+assert.equal(intentReporterGate.fetchCounts.claim, 0,
+  "Intent with an own reporter property fails before durable replay claim");
+const createReporterGate = fixtureGate();
+await createReporterGate.verifyGate({ stage: "search", context: searchContext() });
+await createReporterGate.verifyGate({ stage: "intent", context: intent() });
+const claimsBeforeInvalidCreate = createReporterGate.fetchCounts.claim;
+await assert.rejects(() => createReporterGate.verifyGate({ stage: "create", context: {
+  request: explicitTopLevelReporterRequest, create_request_id: requestId,
+  activation_ref: activationRef, ledger_ref: ledgerRef, approved_preview_id: previewId,
+} }), /G3 Create request cannot specify reporter/i);
+assert.equal(createReporterGate.fetchCounts.claim, claimsBeforeInvalidCreate,
+  "Create with an own reporter property is rejected without another replay claim");
 const defaultWithoutAllowedPeople = structuredClone(metadataContent);
 delete defaultWithoutAllowedPeople.fields.customfield_10045.allowedValues;
 const acceptedSignedPeopleDefault = fixtureGate({ metadataOverride: defaultWithoutAllowedPeople });

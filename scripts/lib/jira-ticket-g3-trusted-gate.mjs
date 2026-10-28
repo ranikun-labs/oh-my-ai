@@ -113,7 +113,7 @@ function assertMetadataDefault(id, field) {
   // explicit reporter still needs a current, allowed account below.
   const implicitReporterDefault = id === "reporter" && field?.required === true
     && field?.hasDefaultValue === true && field?.schema?.type === "user"
-    && field.defaultValue == null && !Object.hasOwn(field ?? {}, "allowedValues");
+    && !Object.hasOwn(field ?? {}, "defaultValue") && !Object.hasOwn(field ?? {}, "allowedValues");
   if (implicitReporterDefault) return;
   if (!Object.hasOwn(field ?? {}, "defaultValue") || field.defaultValue == null)
     throw new Error(`live Jira default value is missing despite hasDefaultValue for ${id}`);
@@ -355,6 +355,8 @@ function assertCreateRequestMetadata(request, metadata, policy, issueTypeBinding
   if (!request || typeof request !== "object" || Array.isArray(request)
     || !request.fields || typeof request.fields !== "object" || Array.isArray(request.fields))
     throw new Error("Create request fields are missing");
+  if (Object.hasOwn(request, "reporter"))
+    throw new Error("G3 Create request cannot specify reporter");
   if (!issueTypeBinding || issueTypeBinding.canonical_issue_type !== request.issue_type
     || issueTypeBinding.issue_type_id !== ISSUE_TYPE_IDS[request.issue_type]
     || issueTypeBinding.issue_type_id !== metadata.issue_type_id
@@ -607,6 +609,8 @@ export function createG3TrustedGate({ source, trustedKeys, now = Date.now, maxEv
       throw new Error("G3 Owner approval expired or changed during the request");
 
     if (stage === "create") {
+      if (Object.hasOwn(request ?? {}, "reporter"))
+        throw new Error("G3 Create request cannot specify reporter");
       if (binding.create_attempted || activation.scope.request_id !== createRequestId
         || activation.scope.approved_preview_id !== previewId || request?.project !== project
         || request?.issue_type !== issueType || g3EvidenceSha256(request.fields ?? {}) !== binding.fields_sha256

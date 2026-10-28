@@ -318,6 +318,7 @@ function assertCreateRequest(request) {
   if (!request || typeof request !== "object" || Array.isArray(request)
     || request.project !== "RPL" || !nonEmpty(request.issue_type) || !nonEmpty(request.summary)
     || !nonEmpty(request.description)
+    || Object.hasOwn(request, "reporter")
     || (request.assignee != null && !nonEmpty(request.assignee))
     || (request.priority != null && !nonEmpty(request.priority))
     || (request.labels != null && (!Array.isArray(request.labels) || request.labels.some(label => typeof label !== "string")))
