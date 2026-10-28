@@ -353,6 +353,14 @@ assert.deepEqual(tg.required_action.request.fields, {
   customfield_10108: { id: "10027" }, customfield_10109: { id: "10028" },
   customfield_10110: [{ id: "10038" }], customfield_10015: "2030-01-01", duedate: "2030-01-02",
 });
+for (const wrapper of ["assignee", "priority", "labels"]) {
+  assert.equal(Object.hasOwn(tg.required_action.request, wrapper), false,
+    "G3 must omit wrappers absent from live Jira Task Create metadata: " + wrapper);
+}
+assert.ok(tg.required_action.request.description.includes("Assignee: "),
+  "logical owner remains in the approved G3 description");
+assert.ok(tg.required_action.request.description.includes("Priority: "),
+  "logical priority remains in the approved G3 description");
 assert.equal(tg.required_action.request.fields.customfield_10042, undefined);
 assert.equal(tg.required_action.request.fields.customfield_10043, undefined);
 assert.equal(tg.required_action.request.fields.customfield_10044, undefined);
