@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { createG3AuthorityReader } from "./lib/jira-ticket-g3-authority-reader.mjs";
 import {
   buildG3CutoverPreflightReport,
@@ -33,6 +34,7 @@ function fixture() {
   }
   return {
     record_type: "G2_FINAL_118_VERIFICATION",
+    verified_at: "2026-10-23T03:47:22.084Z",
     verdict: "G2_DATA_MIGRATION_PASS_ADMIN_METADATA_REVIEW_PENDING",
     summary: { total: 118, targetBoth: 118, missingBoth: 0, partial: 0, unchanged106: true },
     original_snapshot_ref: { path: "prewrite-snapshot.json", blob_sha: "b".repeat(40) },
@@ -61,6 +63,16 @@ assert.equal(report.summary.candidate_rows, 103);
 assert.equal(report.summary.unsupported_rows, 12);
 assert.equal(report.summary.candidate_not_ready, 103);
 assert.equal(report.summary.candidate_cutover_ready, 0);
+assert.equal(report.source.verified_at, "2026-10-23T03:47:22.084Z");
+assert.ok(report.candidates.every(candidate => candidate.candidate_status === "PROPOSED_CANDIDATE"
+  && candidate.cutover_status === "NOT_APPROVED_FOR_CUTOVER"
+  && candidate.unverified_per_issue_evidence.includes("LegacySnapshot")
+  && candidate.unverified_per_issue_evidence.includes("TrustedAuthorityReader")));
+assert.ok(report.candidates.every(candidate => candidate.target_product.id === "10027"
+  && candidate.target_product.value === "dev-harness"
+  && candidate.target_component.id === "10028"
+  && candidate.target_component.value === "backend"
+  && Array.isArray(candidate.target_concerns) && candidate.target_concerns.length === 0));
 assert.deepEqual(report.protected_issue_keys, ["RPL-112", "RPL-113", "RPL-114"]);
 assert.deepEqual(report.protected_keys_not_in_snapshot, ["RPL-122", "RPL-124"]);
 assert.ok(report.candidates.every(candidate => candidate.status === "NOT_READY"
@@ -126,3 +138,35 @@ console.log("PASS: candidate preflight status does not grant authority; Reader r
 
 const sourceHash = createHash("sha256").update(text, "utf8").digest("hex");
 assert.equal(report.source.content_sha256, sourceHash);
+
+const withConcerns = fixture();
+const withConcernCandidate = withConcerns.current_118.find(row => row.key !== "RPL-112"
+  && row.key !== "RPL-113" && row.key !== "RPL-114"
+  && ["10007", "10009", "10010", "10012", "10013"].includes(row.fields.issuetype.id));
+withConcernCandidate.fields.customfield_10110 = [{ id: "10033", value: "auth" }];
+const withConcernReport = reportFor(withConcerns).report;
+const concernOutput = withConcernReport.candidates.find(row => row.issue_key === withConcernCandidate.key);
+assert.deepEqual(concernOutput.target_concerns, [{ id: "10033", value: "auth" }]);
+console.log("PASS: optional Concern ID/value survives read-only candidate projection");
+
+const corruptOption = fixture();
+corruptOption.current_118.find(row => row.key !== "RPL-112").fields.customfield_10108.value = "";
+assert.equal(reportFor(corruptOption).report.status, "BLOCKED");
+const corruptConcern = fixture();
+corruptConcern.current_118.find(row => row.key !== "RPL-112").fields.customfield_10110
+  = [{ id: "10033", value: "auth" }, { id: "10033", value: "auth" }];
+assert.equal(reportFor(corruptConcern).report.status, "BLOCKED");
+console.log("PASS: missing option names and duplicated Concern options fail closed");
+
+// Optional private-source verification; never check the 683 KB G2 audit into this public repository.
+if (process.env.JIRA_G2_SNAPSHOT_PATH) {
+  const real = buildG3CutoverPreflightReport(readFileSync(process.env.JIRA_G2_SNAPSHOT_PATH, "utf8"));
+  assert.equal(real.status, "PREFLIGHT_ONLY", JSON.stringify(real));
+  assert.equal(real.summary.candidate_rows, 103);
+  assert.equal(real.summary.candidate_cutover_ready, 0);
+  assert.deepEqual(real.protected_issue_keys, ["RPL-112", "RPL-113", "RPL-114"]);
+  assert.ok(real.candidates.every(row => row.candidate_status === "PROPOSED_CANDIDATE"
+    && row.cutover_status === "NOT_APPROVED_FOR_CUTOVER" && row.target_product.value
+    && row.target_component.value && row.unverified_per_issue_evidence.length === 6));
+  console.log("PASS: pinned private G2 audit yields exactly 103 unapproved classified candidates");
+}
