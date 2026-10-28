@@ -46,11 +46,12 @@ export function gitBlobSha1(content) {
 }
 
 function validOption(value) {
-  return isRecord(value) && nonEmpty(value.id);
+  return isRecord(value) && nonEmpty(value.id) && nonEmpty(value.value);
 }
 
 function validOptionArray(value) {
-  return Array.isArray(value) && value.every(validOption);
+  return Array.isArray(value) && value.length <= 3 && value.every(validOption)
+    && new Set(value.map(option => option.id)).size === value.length;
 }
 
 function validTargetFields(fields) {
@@ -79,6 +80,8 @@ function validateSnapshot(snapshot, source, actualBlobSha) {
     || summary.targetBoth !== EXPECTED_COUNTS.total || summary.missingBoth !== 0
     || summary.partial !== 0 || summary.unchanged106 !== true)
     throw new Error("G2 root verification summary does not match the pinned 118-row snapshot contract");
+  if (!nonEmpty(snapshot.verified_at))
+    throw new Error("G2 verification timestamp is missing");
   if (!Array.isArray(snapshot.current_118) || snapshot.current_118.length !== EXPECTED_COUNTS.total)
     throw new Error("G2 current_118 must contain exactly 118 rows");
 
@@ -154,6 +157,15 @@ export function buildG3CutoverPreflightReport(manifestText, { source = G2_SNAPSH
           issue_key: row.key,
           issue_type_id: row.fields.issuetype.id,
           issue_type: TYPE_LABELS[row.fields.issuetype.id],
+          target_product: { id: row.fields.customfield_10108.id, value: row.fields.customfield_10108.value },
+          target_component: { id: row.fields.customfield_10109.id, value: row.fields.customfield_10109.value },
+          target_concerns: (row.fields.customfield_10110 ?? []).map(({ id, value }) => ({ id, value })),
+          candidate_status: "PROPOSED_CANDIDATE",
+          cutover_status: "NOT_APPROVED_FOR_CUTOVER",
+          unverified_per_issue_evidence: [
+            "LegacySnapshot", "Origin", "Changelog", "OwnerApproval",
+            "CutoverApproval", "TrustedAuthorityReader",
+          ],
           g2_target_fields_present: true,
           g2_legacy_baseline_present: true,
           status: missing.length ? "NOT_READY" : "TRUSTED_READER_VERIFICATION_REQUIRED",
@@ -184,6 +196,7 @@ export function buildG3CutoverPreflightReport(manifestText, { source = G2_SNAPSH
         commit_sha: source.commit_sha,
         path: source.path,
         git_blob_sha: actualBlobSha,
+        verified_at: snapshot.verified_at,
         content_sha256: createHash("sha256").update(manifestText, "utf8").digest("hex"),
         snapshot_ref: sourceSnapshotRef(source),
         g2_original_snapshot_ref: originalSnapshotRef,
