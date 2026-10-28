@@ -47,6 +47,11 @@ test-jira-ticket-g3-integrations:
 	node scripts/test-jira-ticket-g3-ledger-recovery.mjs
 	node scripts/test-jira-ticket-g3-authority-reader.mjs
 	node scripts/test-jira-ticket-g3-integration.mjs
+	node scripts/test-jira-ticket-g3-task-pilot-dry-run.mjs
+
+.PHONY: test-jira-ticket-g3-task-pilot-dry-run
+test-jira-ticket-g3-task-pilot-dry-run:
+	node scripts/test-jira-ticket-g3-task-pilot-dry-run.mjs
 
 test-jira-work-fixtures:
 	./scripts/test-jira-work-fixtures.sh

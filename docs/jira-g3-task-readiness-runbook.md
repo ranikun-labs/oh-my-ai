@@ -46,6 +46,14 @@ Foundation 정책 경계: §8.0에 해당하는 Owner 승인 소량·단일 Writ
 - `persistOrigin`은 Core가 보낸 승인 참조가 pending Intent와 정확히 같은지 확인하고, Ledger도 Origin 등록 및 Reader 경로에서 같은 값을 다시 대조한다. 불일치하면 Origin 등록을 거부하고 Reader는 `UNKNOWN_ORIGIN / none / frozen`을 반환한다.
 - `evidence_ref`와 `cutover_approval_ref`는 감사 가능한 근거를 가리키는 식별자다. 식별자 문자열만으로 승인을 입증했다고 간주하지 않는다.
 
+## 오프라인 Task Pilot 요청 모양 사전검사
+
+`node scripts/jira-ticket-g3-task-pilot-dry-run.mjs <local-json-file>`은 RPL Task(10010)의 입력 모양과 생성될 Jira 요청을 로컬에서 미리 확인한다. 입력에는 현재 Task Create Metadata의 22개 필드와 페이지 정보, 14개 Ticket Contract 항목, Product/Component/Concern 선택값의 정확한 ID·`value`, 실제로 확정된 시작일과 마감일이 있어야 한다. 요청 본문은 실제 Core Create 요청과 같은 빌더로 생성한다.
+
+이 명령은 Jira Connector를 만들거나 Jira를 호출하지 않는다. 입력 Metadata는 **호출자가 제공한 미검증 자료**이며 서명·소유자 승인·Activation·인증 세션을 검증하지 않는다. 출력 `PREVIEW_ONLY`는 실행 승인이 아니고, `execution_authorized`, Owner/Policy/Metadata 서명 검증은 false, Jira/Create 호출 수는 0이다. Task Create 값으로 `reporter`와 `customfield_10045`를 받지 않는다. Metadata의 people 기본값은 형상 검증에만 사용하고 출력하지 않는다. Synthetic fixture 통과는 Live Jira 검증이나 Pilot 승인으로 승격하지 않는다.
+
+검증 명령은 `make test-jira-ticket-g3-task-pilot-dry-run`이며 `make test-jira-ticket-g3-integrations`에도 포함된다. 이 사전검사를 통과해도 실제 Search/Create, Intent CAS, Origin 등록, Reader 확인은 별도 Runtime·서명·Owner Gate를 통과하기 전까지 금지한다.
+
 ## Task(10010)만 실제 G3 시험할 때 필요한 Owner 결정
 
 ### 후속 통합 코드의 검증 범위

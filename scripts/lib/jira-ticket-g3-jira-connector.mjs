@@ -1,3 +1,5 @@
+import { buildG3JiraCreateToolPayload } from "./jira-ticket-g3-create-payload.mjs";
+
 const TOOL = Object.freeze({
   search: "mcp__codex_apps__atlassian_rovo__legacy__atlassian_rovo_legacy_searchjiraissuesusingjql",
   create: "mcp__codex_apps__atlassian_rovo__legacy__atlassian_rovo_legacy_createjiraissue",
@@ -337,20 +339,7 @@ function createArgs(request, cloudId, gateProof) {
     || !nonEmpty(binding.localized_issue_type_name)
     || !/^[a-f0-9]{64}$/.test(binding.metadata_sha256 ?? ""))
     throw createError("Jira Create requires the current verified issue type binding", { toolCallCount: 0 });
-  const additionalFields = {
-    ...(nonEmpty(request.priority) ? { priority: { name: request.priority } } : {}),
-    ...(Array.isArray(request.labels) && request.labels.length > 0 ? { labels: [...request.labels] } : {}),
-    ...(request.fields ?? {}),
-  };
-  return {
-    cloudId,
-    projectKey: request.project,
-    issueTypeName: binding.localized_issue_type_name,
-    summary: request.summary,
-    description: request.description,
-    ...(nonEmpty(request.assignee) ? { assignee_account_id: request.assignee } : {}),
-    additional_fields: additionalFields,
-  };
+  return { cloudId, ...buildG3JiraCreateToolPayload(request, binding.localized_issue_type_name) };
 }
 
 function createError(message, { toolCallCount = 0, possibleApplied = false, cause } = {}) {

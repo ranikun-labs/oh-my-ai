@@ -389,6 +389,67 @@ function assertCreateRequestMetadata(request, metadata, policy, issueTypeBinding
   assertSupplementalMetadata(fields);
 }
 
+const TASK_PILOT_CREATE_FIELDS = [TARGET_FIELDS.product, TARGET_FIELDS.component, TARGET_FIELDS.concern,
+  "customfield_10015", "duedate"];
+
+function isPlainRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    && Object.getPrototypeOf(value) === Object.prototype;
+}
+
+/**
+ * Inspect an unsigned Task(10010) Create request for offline shape preview only.
+ * This deliberately does not return an authorization or signed Gate proof.
+ */
+export function inspectG3TaskPilotDryRunRequest({ metadata, request } = {}) {
+  if (!isPlainRecord(metadata) || !isPlainRecord(request))
+    throw new Error("Task Pilot metadata and Create request must be JSON objects");
+  if (Object.hasOwn(request, "reporter")) throw new Error("Task Pilot request cannot specify reporter");
+  if (metadata.project !== "RPL" || metadata.issue_type !== "Task" || metadata.issue_type_id !== "10010"
+    || request.project !== "RPL" || request.issue_type !== "Task")
+    throw new Error("dry-run requires an RPL Task(10010) Create request and metadata");
+  assertCompleteMetadataPage(metadata);
+  if (!Array.isArray(metadata.fields) || metadata.fields.length !== 22)
+    throw new Error("RPL Task metadata must contain the complete 22-field page");
+  const fields = metadataFieldsForGate(metadata.fields);
+  const normalizedMetadata = { ...metadata, fields };
+  const issueTypeBinding = bindIssueType(normalizedMetadata, fields);
+  assertLegacyFields(fields);
+
+  const productField = fields[TARGET_FIELDS.product];
+  const componentField = fields[TARGET_FIELDS.component];
+  const concernField = fields[TARGET_FIELDS.concern];
+  if (productField?.required !== true || productField.hasDefaultValue !== false
+    || productField.defaultValue != null || !Array.isArray(productField.allowedValues)
+    || productField.schema?.type !== "option"
+    || productField.schema.custom !== "com.atlassian.jira.plugin.system.customfieldtypes:select"
+    || componentField?.required !== true || componentField.hasDefaultValue !== false
+    || componentField.defaultValue != null || !Array.isArray(componentField.allowedValues)
+    || componentField.schema?.type !== "option"
+    || componentField.schema.custom !== "com.atlassian.jira.plugin.system.customfieldtypes:select"
+    || concernField?.required !== false || concernField.hasDefaultValue !== false
+    || concernField.defaultValue != null || !Array.isArray(concernField.allowedValues)
+    || concernField.schema?.type !== "array" || concernField.schema.items !== "option"
+    || concernField.schema.custom !== "com.atlassian.jira.plugin.system.customfieldtypes:multicheckboxes")
+    throw new Error("Task Target Product/Component/Concern metadata does not match the G3 contract");
+
+  for (const id of ["customfield_10015", "duedate"]) {
+    if (fields[id]?.required !== true || fields[id]?.hasDefaultValue !== false
+      || fields[id]?.schema?.type !== "date")
+      throw new Error(`Task ${id} must remain a required date without a default`);
+  }
+  if (fields.customfield_10045?.required !== true || fields.customfield_10045.hasDefaultValue !== true
+    || fields.customfield_10045.schema?.type !== "array" || fields.customfield_10045.schema.items !== "user")
+    throw new Error("Task customfield_10045 must use its required Jira people default");
+  if (fields.reporter?.required !== true || fields.reporter.hasDefaultValue !== true
+    || fields.reporter.schema?.type !== "user")
+    throw new Error("Task reporter must remain an omitted Jira server default");
+
+  const draftPolicy = { allowed_create_fields: TASK_PILOT_CREATE_FIELDS, max_concerns: 3 };
+  assertCreateRequestMetadata(request, normalizedMetadata, draftPolicy, issueTypeBinding);
+  return { issue_type_name: issueTypeBinding.localized_issue_type_name };
+}
+
 function assertIntentFieldMetadata(intentFields, metadata, policy) {
   assertTargetOptions(intentFields, metadata, policy);
   if (LEGACY_FIELD_IDS.some(id => Object.hasOwn(intentFields, id)))

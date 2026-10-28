@@ -36,8 +36,16 @@ function isBlocking(value) {
   return BLOCKING_SENTINELS.has(normalizedText(value).toLowerCase());
 }
 
+export function isValidJiraTicketWorkflowText(value) {
+  return normalizedText(value).length > 0 && !isBlocking(value);
+}
+
+export function isValidJiraTicketContract(contract) {
+  return CONTRACT_FIELDS.every((field) => isValidJiraTicketWorkflowText(contract?.[field]));
+}
+
 function hasValidContract(contract) {
-  return CONTRACT_FIELDS.every((field) => normalizedText(contract?.[field]) && !isBlocking(contract[field]));
+  return isValidJiraTicketContract(contract);
 }
 
 function missingCreateMetadata(contract, metadata) {
@@ -46,7 +54,7 @@ function missingCreateMetadata(contract, metadata) {
     ["Assignee", metadata?.assignee], ["Priority", metadata?.priority], ["Product", metadata?.product],
     ["Primary Repository", metadata?.repository], ["Area", metadata?.area],
   ];
-  return required.filter(([, value]) => !normalizedText(value) || isBlocking(value)).map(([field]) => field);
+  return required.filter(([, value]) => !isValidJiraTicketWorkflowText(value)).map(([field]) => field);
 }
 
 function hasCapability(state, capability) {
@@ -254,7 +262,7 @@ function searchRequest(contract, metadata) {
     contract_fingerprint_candidate: `${contract.Summary}|${metadata.product}|${metadata.repository}|${metadata.area}`,
   };
   if (metadata.target_create) {
-    request.create_preflight = createRequest({
+    request.create_preflight = buildJiraTicketCreateRequest({
       project: metadata.project, issue_type: metadata.issue_type, contract,
       assignee: metadata.assignee, priority: metadata.priority,
       labels: canonicalLabels(metadata.labels), product: metadata.product,
@@ -271,7 +279,8 @@ function terminal(state, patch) {
   return { state, report: state.report, required_action: null };
 }
 
-function createRequest(snapshot) {
+/** Pure Core payload builder shared with offline previews; it grants no authorization. */
+export function buildJiraTicketCreateRequest(snapshot) {
   return {
     project: snapshot.project, issue_type: snapshot.issue_type, summary: snapshot.contract.Summary,
     description: createDescription(snapshot),
@@ -417,10 +426,10 @@ export function applyJiraPreviewApproval(state, approval) {
         activation_ref: target.cutover.activation_ref, status: "pending",
         approved_preview_id: state.preview_id, issue_type: state.approved_snapshot.issue_type,
         fields: targetCreateFields(state.approved_snapshot),
-        create_request: createRequest(state.approved_snapshot) },
+        create_request: buildJiraTicketCreateRequest(state.approved_snapshot) },
     } };
   }
-  return { state, report: state.report, required_action: { type: "jira.create_required", request: createRequest(state.approved_snapshot), preview_id: state.preview_id } };
+  return { state, report: state.report, required_action: { type: "jira.create_required", request: buildJiraTicketCreateRequest(state.approved_snapshot), preview_id: state.preview_id } };
 }
 
 /** Validates a runtime-normalized Create result without constructing a Jira URL or Key. */
@@ -488,7 +497,7 @@ export function applyJiraIntentResult(state, result) {
   state.stage = "await_create";
   return { state, report: state.report, required_action: {
     type: "jira.create_required", preview_id: state.preview_id,
-    request: createRequest(state.approved_snapshot),
+    request: buildJiraTicketCreateRequest(state.approved_snapshot),
   } };
 }
 
