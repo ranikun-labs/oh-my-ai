@@ -201,7 +201,8 @@ function fixtureGate(options = {}) {
     },
     async fetchLiveMetadata(input) {
       fetchCounts.metadata++;
-      assert.deepEqual(input, { project: "RPL", issue_type: "Task" });
+      assert.deepEqual(input, { project: payloads.activation.scope.project,
+        issue_type: payloads.activation.scope.issue_type });
       return signed(payloads.metadata);
     },
     async fetchOwnerApproval(input) {
@@ -362,6 +363,42 @@ const unknownTaskField = fixtureGate({ metadataOverride: unknownTaskMetadata });
 await assert.rejects(() => unknownTaskField.verifyGate({ stage: "search", context: searchContext() }),
   /metadata field set/i);
 console.log("PASS: signed Task Gate rejects an adjusted count with a missing core field or an unknown field");
+for (const [issueType, issueTypeId] of [["Epic", "10007"], ["Feature", "10009"],
+  ["Bug", "10012"], ["Research", "10013"]]) {
+  const nonTaskMetadata = structuredClone(metadataContent);
+  nonTaskMetadata.issue_type = issueType;
+  nonTaskMetadata.issue_type_id = issueTypeId;
+  nonTaskMetadata.fields.issuetype.allowedValues = [{ id: issueTypeId, name: issueType }];
+  const activationScope = { project: "RPL", issue_type: issueType, issue_type_id: issueTypeId,
+    ledger_ref: ledgerRef, request_id: requestId, approved_preview_id: previewId,
+    operations: ["search", "intent", "create", "read", "origin", "authority_read"] };
+  const nonTaskPreflight = { ...createRequest, issue_type: issueType };
+  const compatibleNonTask = fixtureGate({
+    activationPatch: { scope: activationScope },
+    policyPatch: { allowed_issue_types: { [issueType]: issueTypeId } },
+    metadataOverride: nonTaskMetadata,
+  });
+  assert.equal((await compatibleNonTask.verifyGate({ stage: "search", context: {
+    project: "RPL", create_preflight: nonTaskPreflight,
+  } })).allowed, true, `${issueType} keeps the prior full-Legacy-metadata contract`);
+
+  const targetOnlyNonTaskMetadata = structuredClone(nonTaskMetadata);
+  for (const id of ["customfield_10042", "customfield_10043", "customfield_10044"])
+    delete targetOnlyNonTaskMetadata.fields[id];
+  targetOnlyNonTaskMetadata.total = Object.keys(targetOnlyNonTaskMetadata.fields).length;
+  const omittedLegacyNonTask = fixtureGate({
+    activationPatch: { scope: activationScope },
+    policyPatch: { allowed_issue_types: { [issueType]: issueTypeId } },
+    metadataOverride: targetOnlyNonTaskMetadata,
+  });
+  await assert.rejects(() => omittedLegacyNonTask.verifyGate({ stage: "search", context: {
+    project: "RPL", create_preflight: nonTaskPreflight,
+  } }), /Legacy classification field is missing/i,
+  `${issueType} cannot omit Legacy metadata without an approved type-specific contract`);
+  assert.equal(omittedLegacyNonTask.fetchCounts.claim, 0,
+    `${issueType} Legacy omission fails before any replay claim`);
+}
+console.log("PASS: non-Task signed Gates preserve Legacy metadata requirements for Epic, Feature, Bug, and Research");
 const currentAccountsMetadata = structuredClone(metadataContent);
 currentAccountsMetadata.fields.assignee.allowedValues = [{ accountId: "retired-account" }];
 const staleAssignee = fixtureGate({ metadataOverride: currentAccountsMetadata });

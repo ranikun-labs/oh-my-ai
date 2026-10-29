@@ -123,11 +123,15 @@ function targetCreateError(target, metadata) {
     || live.issue_type !== metadata.issue_type
     || live.issue_type_id !== supportedTypeId) return "Jira Issue Type·실제 Create Metadata 불일치";
   const fields = live.fields;
+  const allowMissingLegacy = metadata.project === "RPL" && supportedTypeId === "10010"
+    && live.issue_type === "Task" && live.issue_type_id === "10010";
   if (!fields || typeof fields !== "object" || Array.isArray(fields)
-    || LEGACY_CLASSIFICATION_FIELDS.some(k => Object.hasOwn(fields, k)
-      && (!fields[k] || fields[k].required !== false || fields[k].hasDefaultValue !== false
+    || LEGACY_CLASSIFICATION_FIELDS.some(k => {
+      if (!Object.hasOwn(fields, k)) return !allowMissingLegacy;
+      return !fields[k] || fields[k].required !== false || fields[k].hasDefaultValue !== false
         || (fields[k].defaultValue != null
-          && !(Array.isArray(fields[k].defaultValue) && fields[k].defaultValue.length === 0)))))
+          && !(Array.isArray(fields[k].defaultValue) && fields[k].defaultValue.length === 0));
+    }))
     return "Legacy 필수/기본값 해제 미검증";
   if (fields[TARGET_FIELDS.product]?.required !== true || fields[TARGET_FIELDS.component]?.required !== true
     || fields[TARGET_FIELDS.concern]?.required !== false) return "Target 필수/선택 계약 미검증";

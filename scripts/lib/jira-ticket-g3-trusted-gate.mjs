@@ -132,12 +132,16 @@ function assertMetadataDefault(id, field) {
   assertMetadataValue(id, field.defaultValue, field);
 }
 
-function assertLegacyFields(fields) {
+function assertLegacyFields(fields, { allowMissing = false } = {}) {
   for (const id of LEGACY_FIELD_IDS) {
     // A complete live Create Metadata page can omit a Legacy field after it is
-    // removed from the Create screen. If Jira still exposes it, it must remain
-    // optional and have no default; Legacy values are never sent by G3.
-    if (!Object.hasOwn(fields, id)) continue;
+    // removed from the Create screen for the explicitly approved RPL Task path.
+    // Other Issue Types retain the original presence requirement. If Jira still
+    // exposes a Legacy field, it must remain optional and have no default.
+    if (!Object.hasOwn(fields, id)) {
+      if (allowMissing) continue;
+      throw new Error("live Jira Legacy classification field is missing outside the approved Task path");
+    }
     const field = fields[id];
     const hasUnexpectedDefault = field?.defaultValue != null
       && !(Array.isArray(field.defaultValue) && field.defaultValue.length === 0);
@@ -281,7 +285,8 @@ function matchesPolicyAndMetadata(activation, policy, metadata) {
     || !Array.isArray(product.allowedValues) || !Array.isArray(component.allowedValues)
     || !Array.isArray(concern.allowedValues))
     throw new Error("live Jira Target field schema is not approved");
-  assertLegacyFields(fields);
+  assertLegacyFields(fields, { allowMissing: scope.project === "RPL"
+    && scope.issue_type === "Task" && scope.issue_type_id === "10010" });
   assertSupplementalMetadata(fields);
   const issueTypeBinding = bindIssueType(metadata, fields);
   return {
@@ -437,7 +442,7 @@ export function inspectG3TaskPilotDryRunRequest({ metadata, request } = {}) {
   assertRplTaskMetadataFieldSet(fields);
   const normalizedMetadata = { ...metadata, fields };
   const issueTypeBinding = bindIssueType(normalizedMetadata, fields);
-  assertLegacyFields(fields);
+  assertLegacyFields(fields, { allowMissing: true });
 
   const productField = fields[TARGET_FIELDS.product];
   const componentField = fields[TARGET_FIELDS.component];
