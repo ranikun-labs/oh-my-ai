@@ -320,6 +320,13 @@ assert.equal(blockedTarget.required_action, null, "unknown Product option must s
 blockedTarget = startTarget({ ...targetConfig(), create_metadata: { ...targetConfig().create_metadata,
   fields: { ...targetConfig().create_metadata.fields, customfield_10042: { required: true, hasDefaultValue: false } } } });
 assert.equal(blockedTarget.required_action, null, "Legacy Required must block Target Create");
+const targetOnlyMetadataConfig = targetConfig();
+for (const id of ["customfield_10042", "customfield_10043", "customfield_10044"])
+  delete targetOnlyMetadataConfig.create_metadata.fields[id];
+blockedTarget = startTarget(targetOnlyMetadataConfig);
+assert.equal(blockedTarget.required_action.type, "jira.search_required",
+  "complete signed Target-only metadata may omit removed Legacy fields");
+assert.equal(blockedTarget.report.create_attempted, false);
 blockedTarget = startTarget(targetConfig(), capabilities);
 assert.equal(blockedTarget.required_action, null, "Target persistence capabilities must be verified");
 blockedTarget = startTarget({ ...targetConfig(), selection: { ...targetConfig().selection,
