@@ -85,6 +85,12 @@ Jira `RPL` / Task(10010); Target Product `dev-harness (10027)`, Component `backe
 
 기존 Core/Gate/Adapter가 요청 digest·CreateRequestId·pending CAS·단일 Create·IssueKey link·GET/Target 대조·Origin·Reader와 불명확 결과 격리를 제공한다. 이 경로의 운영용 신뢰 발급원·durable replay/ledger 연결은 아직 검증되지 않았다. 기존 이슈 Cutover, Board/Filter/Automation의 실제 Legacy 소비처 export도 완료되지 않았으므로 G4 변경은 HOLD다.
 
+### G3 Cutover 103건 후보 대장 — READ-ONLY / 실행 미승인
+
+2026-10-23 G2 최종 감사 JSON(`ranikun-labs/platform-services`, 감사 커밋 `530dd0f88e5819158362b620ca1591779a50cba5`, Git blob `aea968a4dca76194b0de96db6fe20c1c20648470`)에서 118건을 재사용하여, **103건의 읽기 전용 후보 목록**을 [`docs/evidence/jira-g3-cutover-candidate-inventory-20261023.json`](evidence/jira-g3-cutover-candidate-inventory-20261023.json)에 고정했다. 지원 유형 106건 중 출처 미입증 `RPL-112/113/114` 3건을 격리한 결과이며 Story 4건과 Subtask 8건은 제외한다. `RPL-122/124`는 G2 Snapshot 바깥의 보호 대상이다. 이 목록은 후보의 IssueKey·유형·Target 옵션과 원본 Git 증거 위치만 담고 있으며, 서명된 Cutover 승인·이슈별 Origin/Changelog/Snapshot/Reader parity를 입증하지 않는다. **승인된 전환 후보 0건, 실제 Cutover 0건, G2 전수 Jira 재감사 0회.**
+
+이 목록은 기존 `scripts/jira-ticket-g3-cutover-candidate-manifest.mjs`의 고정 원본 근거와 연결되는 참조 자료다. 원본 재검증/재생성은 접근권이 있는 단일 Writer가 고정 G2 Snapshot을 사용해 수행하며, 독립적인 Origin/Reader 증거 없이 이 자료만으로 `ReadAuthority=target`을 설정해서는 안 된다.
+
 ## Task(10010)만 실제 G3 시험할 때 필요한 Owner 결정
 
 ### 후속 통합 코드의 검증 범위
