@@ -204,6 +204,40 @@ try {
   assert.equal(retry.calls(), 0, "ambiguous Create must never be retried");
   console.log("PASS: lost Create response freezes authority and prohibits replay");
 
+  const pendingOnlyDir = join(root, "pending-only");
+  const pendingOnlyId = "g3-fixture-pending-restart-0001";
+  const pauseBeforeCreate = async input => input.stage === "create"
+    ? { allowed: false, evidence_ref: "SYNTHETIC-PAUSE-BEFORE-CREATE" } : gate(input);
+  const pendingBeforeRestart = fakeJira();
+  await execution({ root: pendingOnlyDir, target: config(pendingOnlyId),
+    simulation: pendingBeforeRestart, customGate: pauseBeforeCreate });
+  assert.equal(pendingBeforeRestart.calls(), 0,
+    "the first adapter must leave only a durable pending Intent before Jira Create");
+  const restartedBeforeCreate = fakeJira();
+  await execution({ root: pendingOnlyDir, target: config(pendingOnlyId), simulation: restartedBeforeCreate });
+  assert.equal(restartedBeforeCreate.calls(), 0,
+    "a new adapter instance must not create from a pre-existing pending Intent");
+  console.log("PASS: pending-only Intent after restart blocks Jira Create");
+
+  const originFailureDir = join(root, "origin-failure");
+  const originLedger = createG3FileLedger({ root: originFailureDir, ledgerRef });
+  const failingOriginLedger = { ...originLedger,
+    async persistOrigin() { throw new Error("synthetic stop after Jira GET before Origin receipt"); } };
+  const originFailureJira = fakeJira();
+  await execution({ root: originFailureDir, simulation: originFailureJira,
+    ledgerOverride: failingOriginLedger });
+  assert.equal(originFailureJira.calls(), 1,
+    "Jira Create may have happened before the failed Origin receipt");
+  assert.equal((await originLedger.inspectRequest("g3-fixture-request-0001")).link.issue_key, "RPL-201");
+  const quarantined = await originLedger.readClassificationAuthority("RPL-201");
+  assert.equal(quarantined.read_authority, "none");
+  assert.equal(quarantined.write_authority, "frozen");
+  const originRestartJira = fakeJira();
+  await execution({ root: originFailureDir, simulation: originRestartJira });
+  assert.equal(originRestartJira.calls(), 0,
+    "a linked IssueKey without a durable Origin requires manual recovery, never replayed Create");
+  console.log("PASS: failed post-Create Origin persistence quarantines the issue and blocks replay after restart");
+
   const wrongDir = join(root, "wrong"), wrong = fakeJira({ wrongRead: true });
   const mismatch = await execution({ root: wrongDir, simulation: wrong });
   assert.equal(mismatch.report.origin_status, "UNKNOWN_ORIGIN");
