@@ -2,7 +2,10 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { buildG3CutoverPreflightReport } from "./lib/jira-ticket-g3-cutover-preflight.mjs";
+import {
+  buildG3CutoverPreflightReport,
+  buildG3CutoverUntrustedFixtureReport,
+} from "./lib/jira-ticket-g3-cutover-preflight.mjs";
 
 const REQUIRED_G3_VERIFICATION = Object.freeze([
   "per_issue_legacy_snapshot", "origin", "changelog", "owner_approval",
@@ -19,9 +22,8 @@ const UNVERIFIED = Object.freeze({
 const CANDIDATE_TYPES = Object.freeze(["Epic", "Feature", "Task", "Bug", "Research"]);
 
 /** Snapshot-only projection. No Jira dependency, authority transition or approval evaluation. */
-export function buildG3CutoverCandidateManifest(snapshotText, options) {
-  const report = buildG3CutoverPreflightReport(snapshotText, options);
-  if (report.status !== "PREFLIGHT_ONLY") {
+function candidateManifestFromReport(report) {
+  if (report.status !== "PREFLIGHT_ONLY" && report.status !== "UNTRUSTED_FIXTURE_ONLY") {
     return {
       schema_version: 1, record_type: "G3_CUTOVER_CANDIDATE_MANIFEST",
       status: "BLOCKED", execution_authorized: false, cutover_approved: false,
@@ -46,13 +48,14 @@ export function buildG3CutoverCandidateManifest(snapshotText, options) {
   return {
     schema_version: 1,
     record_type: "G3_CUTOVER_CANDIDATE_MANIFEST",
-    status: "READ_ONLY_PROPOSED_CANDIDATES",
+    status: report.status === "PREFLIGHT_ONLY"
+      ? "READ_ONLY_PROPOSED_CANDIDATES" : "UNTRUSTED_FIXTURE_ONLY",
     execution_authorized: false,
     cutover_approved: false,
     read_authority_changed: false,
     jira_read_count: 0,
     jira_write_count: 0,
-    source: {
+    source: report.status === "PREFLIGHT_ONLY" ? {
       repository: report.source.repository,
       branch: report.source.branch,
       commit_sha: report.source.commit_sha,
@@ -60,6 +63,9 @@ export function buildG3CutoverCandidateManifest(snapshotText, options) {
       git_blob_sha: report.source.git_blob_sha,
       verified_at: report.source.verified_at,
       g2_original_snapshot_ref: report.source.g2_original_snapshot_ref,
+    } : {
+      provenance: "UNTRUSTED_FIXTURE_ONLY",
+      fixture_git_blob_sha: report.source.fixture_git_blob_sha,
     },
     summary: {
       g2_rows: report.summary.snapshot_rows,
@@ -76,6 +82,16 @@ export function buildG3CutoverCandidateManifest(snapshotText, options) {
     required_g3_verification: [...REQUIRED_G3_VERIFICATION],
     candidates,
   };
+}
+
+/** Production only: a caller cannot override the pinned G2 source. */
+export function buildG3CutoverCandidateManifest(snapshotText, options) {
+  return candidateManifestFromReport(buildG3CutoverPreflightReport(snapshotText, options));
+}
+
+/** Unit tests only: untrusted fixture results cannot be mistaken for pinned evidence. */
+export function buildG3CutoverUntrustedFixtureManifest(snapshotText, source) {
+  return candidateManifestFromReport(buildG3CutoverUntrustedFixtureReport(snapshotText, source));
 }
 
 export async function runG3CutoverCandidateManifestCli(argv = process.argv.slice(2), {
