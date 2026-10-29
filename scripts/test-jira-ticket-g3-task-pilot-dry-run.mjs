@@ -7,6 +7,7 @@ import {
   createG3TaskPilotDryRunReport,
   runG3TaskPilotDryRunCli,
 } from "./jira-ticket-g3-task-pilot-dry-run.mjs";
+import { g3EvidenceSha256 } from "./lib/jira-ticket-g3-trusted-gate.mjs";
 
 const row = (fieldId, required, hasDefaultValue, schema, extra = {}) =>
   ({ fieldId, required, hasDefaultValue, ...(schema ? { schema } : {}), ...extra });
@@ -138,6 +139,23 @@ assert.deepEqual(report.jira_create_tool_payload_without_runtime_identity, {
 });
 assert.doesNotMatch(JSON.stringify(report), /fixture-default-account/,
   "the Jira people default must never be copied to preview output");
+
+const boundBaseSha = "fa0d86270ff53c33102d6d7634e60ebeeaafa5d4";
+const baseBoundInput = validInput();
+baseBoundInput.task.workflow_metadata.current_head = "d5c38bad3831832d801c58598248f18050c8f215";
+baseBoundInput.task.contract.Dependencies += `; PR #84 Base SHA: ${boundBaseSha}`;
+const baseBoundReport = createG3TaskPilotDryRunReport(baseBoundInput);
+assert.equal(baseBoundReport.status, "PREVIEW_ONLY");
+assert.ok(baseBoundReport.create_request.description.includes(`PR #84 Base SHA: ${boundBaseSha}`));
+const baseBoundRequestDigest = g3EvidenceSha256(baseBoundReport.create_request);
+const changedOnlyBaseSha = structuredClone(baseBoundInput);
+changedOnlyBaseSha.task.contract.Dependencies = changedOnlyBaseSha.task.contract.Dependencies
+  .replace(boundBaseSha, "0".repeat(40));
+const changedBaseReport = createG3TaskPilotDryRunReport(changedOnlyBaseSha);
+assert.equal(changedBaseReport.status, "PREVIEW_ONLY");
+assert.notEqual(g3EvidenceSha256(changedBaseReport.create_request), baseBoundRequestDigest,
+  "changing only Base SHA in the Dependencies contract must change the approved request digest");
+console.log("PASS: Base SHA in the existing Dependencies contract is bound by the Core request digest");
 
 const missingSummary = validInput();
 missingSummary.task.contract.Summary = "";
