@@ -117,7 +117,13 @@ const positiveRoutingInputs = [
   "테스트 결과 보고하자",
   "개발 결과 보고해줄래",
   "이번 작업 결과를 한국어로 요약해줘",
-  "/핵심정리 이번 업무 결과 알려줘"
+  "/핵심정리 이번 업무 결과 알려줘",
+  "어제는 개발 결과 보고했지만, 오늘 변경한 PR 결과 보고해줘",
+  "이전 결과는 보고했어. 이번 테스트 결과는 다시 정리해줘",
+  "F1 기반으로 f4 적응형 골모드로 진행하고 결과도 제3자 직관적으로 정리해줘",
+  "이번 작업 결과와 남은 문제를 정리해줘",
+  "PR 결과를 요약해 주세요",
+  "이번 개발 결과를 보고서로 정리해줘"
 ];
 const negativeRoutingInputs = [
   "개발 결과 보고하지 마",
@@ -135,7 +141,12 @@ const negativeRoutingInputs = [
   "F1 결과 보고했어",
   "이게 PR 결과 보고라는 표현이야?",
   "테스트 결과 보고해줘라고 말했지",
-  "이번 F1 결과 정리하는 방법 알려줘"
+  "이번 F1 결과 정리하는 방법 알려줘",
+  "PR 결과 보고의 정의를 정리해줘",
+  "개발 결과 보고 형식 정리해줘",
+  "테스트 결과 보고 사례를 설명해줘",
+  "보고하지 마. 이전 대화를 정리해줘",
+  "F1 보고 Skill 패턴 동작을 설명해줘"
 ];
 for (const input of positiveRoutingInputs) {
   assert.equal(reportPattern.test(input.toLowerCase().slice(0, 2000)), true, "F1 positive route missed: " + input);
