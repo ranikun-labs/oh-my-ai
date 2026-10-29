@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createG3FileLedger } from "./lib/jira-ticket-g3-file-ledger.mjs";
@@ -68,6 +68,43 @@ await withRoot(async root => {
   })}\n`, "utf8");
   await assert.rejects(() => createG3FileLedger({ root, ledgerRef }).persistIntent(request), /does not match/i);
   console.log("PASS: syntactically valid but partial pending Intent is rejected");
+});
+
+await withRoot(async root => {
+  const request = pending("g3-file-ledger-invalid-time-0001");
+  const ledger = createG3FileLedger({ root, ledgerRef });
+  await ledger.persistIntent(request);
+  const path = intentPath(root, request.create_request_id);
+  const existing = JSON.parse(await readFile(path, "utf8"));
+  existing.stored_at = "not-an-ISO-timestamp";
+  await writeFile(path, `${JSON.stringify(existing)}\n`, "utf8");
+  await assert.rejects(() => ledger.persistIntent(request), /does not match/i);
+  console.log("PASS: malformed pending Intent timestamp cannot produce a durable duplicate");
+});
+
+await withRoot(async root => {
+  const request = pending("g3-file-ledger-extra-key-0001");
+  const ledger = createG3FileLedger({ root, ledgerRef });
+  await ledger.persistIntent(request);
+  const path = intentPath(root, request.create_request_id);
+  const existing = JSON.parse(await readFile(path, "utf8"));
+  existing.unexpected = "tampered";
+  await writeFile(path, `${JSON.stringify(existing)}\n`, "utf8");
+  await assert.rejects(() => ledger.persistIntent(request), /does not match/i);
+  console.log("PASS: extra pending Intent fields fail closed");
+});
+
+await withRoot(async root => {
+  const request = pending("g3-file-ledger-duplicate-key-0001");
+  const ledger = createG3FileLedger({ root, ledgerRef });
+  await ledger.persistIntent(request);
+  const path = intentPath(root, request.create_request_id);
+  const original = await readFile(path, "utf8");
+  const duplicateKey = original.replace('"status":"pending"', '"status":"pending","status":"pending"');
+  assert.notEqual(duplicateKey, original);
+  await writeFile(path, duplicateKey, "utf8");
+  await assert.rejects(() => ledger.persistIntent(request), /encoding is not intact/i);
+  console.log("PASS: duplicate JSON keys fail closed instead of being collapsed by JSON.parse");
 });
 
 await withRoot(async root => {
