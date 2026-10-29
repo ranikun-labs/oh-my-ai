@@ -74,7 +74,7 @@ Workstream: Developer AI Platform
 Primary Jira: RPL-120
 Repo: ranikun-labs/oh-my-ai
 Objective: reduce repeated Codex F4 prompts with a reusable playbook.
-Scope: this Skill and its generated index only; draft PR, no merge or installation.
+Scope: this Skill, its repo-local Codex explicit-discovery link and descriptor, and generated index only; draft PR, no global installation, merge, or production changes.
 Acceptance: unchanged work-start gate, generated instructions check,
 and clear manual vs actual-runtime evidence.
 ```
