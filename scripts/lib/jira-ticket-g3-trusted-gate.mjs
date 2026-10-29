@@ -216,11 +216,15 @@ function metadataFieldsForGate(fields) {
   return fields;
 }
 
-function assertTaskPilotMetadataFieldSet(fields) {
-  const allowed = new Set([...TASK_PILOT_CORE_METADATA_FIELD_IDS, ...LEGACY_FIELD_IDS]);
+function assertRplTaskMetadataFieldSet(fields, { allowOptionalWrappers = false } = {}) {
+  const allowed = new Set([
+    ...TASK_PILOT_CORE_METADATA_FIELD_IDS,
+    ...LEGACY_FIELD_IDS,
+    ...(allowOptionalWrappers ? OPTIONAL_WRAPPER_FIELD_IDS : []),
+  ]);
   if (TASK_PILOT_CORE_METADATA_FIELD_IDS.some(id => !Object.hasOwn(fields, id))
     || Object.keys(fields).some(id => !allowed.has(id)))
-    throw new Error("RPL Task metadata field set must be complete except for removed Legacy fields");
+    throw new Error("RPL Task metadata field set must include every approved non-Legacy field");
 }
 
 function bindIssueType(metadata, fields) {
@@ -259,6 +263,8 @@ function matchesPolicyAndMetadata(activation, policy, metadata) {
     throw new Error("live Jira metadata does not match Activation snapshot");
   assertCompleteMetadataPage(metadata);
   const fields = metadataFieldsForGate(metadata.fields);
+  if (scope.project === "RPL" && scope.issue_type === "Task")
+    assertRplTaskMetadataFieldSet(fields, { allowOptionalWrappers: true });
   const observedAt = timestamp(metadata.observed_at, "metadata observed_at");
   const issuedAt = timestamp(metadata.issued_at, "metadata issued_at");
   if (observedAt > issuedAt) throw new Error("live Jira metadata observation is future-dated");
@@ -428,7 +434,7 @@ export function inspectG3TaskPilotDryRunRequest({ metadata, request } = {}) {
   if (!Array.isArray(metadata.fields))
     throw new Error("RPL Task metadata must contain the complete paginated field list");
   const fields = metadataFieldsForGate(metadata.fields);
-  assertTaskPilotMetadataFieldSet(fields);
+  assertRplTaskMetadataFieldSet(fields);
   const normalizedMetadata = { ...metadata, fields };
   const issueTypeBinding = bindIssueType(normalizedMetadata, fields);
   assertLegacyFields(fields);
