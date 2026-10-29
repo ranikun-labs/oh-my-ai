@@ -1,0 +1,2892 @@
+{
+  "schema_version": 1,
+  "record_type": "G3_CUTOVER_CANDIDATE_MANIFEST",
+  "status": "READ_ONLY_PROPOSED_CANDIDATES",
+  "note": "This is a candidate inventory derived from the pinned G2 record. It is NOT an Owner-approved migration manifest, signed G3 evidence, a durable authority ledger, or Jira Cutover authorization.",
+  "execution_authorized": false,
+  "cutover_approved": false,
+  "read_authority_changed": false,
+  "jira_read_count": 0,
+  "jira_write_count": 0,
+  "source": {
+    "repository": "ranikun-labs/platform-services",
+    "branch": "audit/jira-g2-full-118-20261023",
+    "commit_sha": "530dd0f88e5819158362b620ca1591779a50cba5",
+    "path": "governance/jira-g2-full-118/final118-verification-20261023.json",
+    "git_blob_sha": "aea968a4dca76194b0de96db6fe20c1c20648470",
+    "verified_at": "2026-10-23T03:47:22.084Z",
+    "g2_original_snapshot_ref": {
+      "path": "prewrite-snapshot-20261023.json",
+      "blob_sha": "b49751a69b892f798d24a5aaa11d4888f90b0aac"
+    }
+  },
+  "summary": {
+    "g2_rows": 118,
+    "supported_type_rows": 106,
+    "protected_origin_unknown_rows": 3,
+    "candidates": 103,
+    "unsupported_story_rows": 4,
+    "unsupported_subtask_rows": 8,
+    "candidate_type_counts": {
+      "Epic": 8,
+      "Feature": 31,
+      "Task": 50,
+      "Bug": 5,
+      "Research": 9
+    },
+    "candidate_cutover_ready": 0
+  },
+  "protected_issue_keys": [
+    "RPL-112",
+    "RPL-113",
+    "RPL-114"
+  ],
+  "protected_not_in_snapshot": [
+    "RPL-122",
+    "RPL-124"
+  ],
+  "required_g3_verification": [
+    "per_issue_legacy_snapshot",
+    "origin",
+    "changelog",
+    "owner_approval",
+    "cutover_approval",
+    "trusted_authority_reader"
+  ],
+  "candidates": [
+    {
+      "issue_key": "RPL-1",
+      "issue_type": {
+        "id": "10007",
+        "name": "Epic"
+      },
+      "target_product": {
+        "id": "10020",
+        "value": "carelog"
+      },
+      "target_component": {
+        "id": "10028",
+        "value": "backend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-2",
+      "issue_type": {
+        "id": "10013",
+        "name": "Research"
+      },
+      "target_product": {
+        "id": "10023",
+        "value": "identity"
+      },
+      "target_component": {
+        "id": "10031",
+        "value": "documentation"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-3",
+      "issue_type": {
+        "id": "10010",
+        "name": "Task"
+      },
+      "target_product": {
+        "id": "10020",
+        "value": "carelog"
+      },
+      "target_component": {
+        "id": "10028",
+        "value": "backend"
+      },
+      "target_concerns": [
+        {
+          "id": "10033",
+          "value": "auth"
+        }
+      ],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-4",
+      "issue_type": {
+        "id": "10010",
+        "name": "Task"
+      },
+      "target_product": {
+        "id": "10022",
+        "value": "gateway"
+      },
+      "target_component": {
+        "id": "10028",
+        "value": "backend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-5",
+      "issue_type": {
+        "id": "10010",
+        "name": "Task"
+      },
+      "target_product": {
+        "id": "10023",
+        "value": "identity"
+      },
+      "target_component": {
+        "id": "10028",
+        "value": "backend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-6",
+      "issue_type": {
+        "id": "10010",
+        "name": "Task"
+      },
+      "target_product": {
+        "id": "10023",
+        "value": "identity"
+      },
+      "target_component": {
+        "id": "10028",
+        "value": "backend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-7",
+      "issue_type": {
+        "id": "10010",
+        "name": "Task"
+      },
+      "target_product": {
+        "id": "10020",
+        "value": "carelog"
+      },
+      "target_component": {
+        "id": "10028",
+        "value": "backend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-8",
+      "issue_type": {
+        "id": "10007",
+        "name": "Epic"
+      },
+      "target_product": {
+        "id": "10021",
+        "value": "finance"
+      },
+      "target_component": {
+        "id": "10029",
+        "value": "frontend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-9",
+      "issue_type": {
+        "id": "10009",
+        "name": "Feature"
+      },
+      "target_product": {
+        "id": "10021",
+        "value": "finance"
+      },
+      "target_component": {
+        "id": "10029",
+        "value": "frontend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-10",
+      "issue_type": {
+        "id": "10013",
+        "name": "Research"
+      },
+      "target_product": {
+        "id": "10021",
+        "value": "finance"
+      },
+      "target_component": {
+        "id": "10031",
+        "value": "documentation"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-11",
+      "issue_type": {
+        "id": "10013",
+        "name": "Research"
+      },
+      "target_product": {
+        "id": "10021",
+        "value": "finance"
+      },
+      "target_component": {
+        "id": "10031",
+        "value": "documentation"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-12",
+      "issue_type": {
+        "id": "10009",
+        "name": "Feature"
+      },
+      "target_product": {
+        "id": "10021",
+        "value": "finance"
+      },
+      "target_component": {
+        "id": "10029",
+        "value": "frontend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-13",
+      "issue_type": {
+        "id": "10010",
+        "name": "Task"
+      },
+      "target_product": {
+        "id": "10027",
+        "value": "dev-harness"
+      },
+      "target_component": {
+        "id": "10030",
+        "value": "infra"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-14",
+      "issue_type": {
+        "id": "10013",
+        "name": "Research"
+      },
+      "target_product": {
+        "id": "10026",
+        "value": "platform-foundation"
+      },
+      "target_component": {
+        "id": "10031",
+        "value": "documentation"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-15",
+      "issue_type": {
+        "id": "10009",
+        "name": "Feature"
+      },
+      "target_product": {
+        "id": "10021",
+        "value": "finance"
+      },
+      "target_component": {
+        "id": "10029",
+        "value": "frontend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-16",
+      "issue_type": {
+        "id": "10010",
+        "name": "Task"
+      },
+      "target_product": {
+        "id": "10023",
+        "value": "identity"
+      },
+      "target_component": {
+        "id": "10028",
+        "value": "backend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-17",
+      "issue_type": {
+        "id": "10010",
+        "name": "Task"
+      },
+      "target_product": {
+        "id": "10027",
+        "value": "dev-harness"
+      },
+      "target_component": {
+        "id": "10030",
+        "value": "infra"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-18",
+      "issue_type": {
+        "id": "10009",
+        "name": "Feature"
+      },
+      "target_product": {
+        "id": "10021",
+        "value": "finance"
+      },
+      "target_component": {
+        "id": "10029",
+        "value": "frontend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-19",
+      "issue_type": {
+        "id": "10009",
+        "name": "Feature"
+      },
+      "target_product": {
+        "id": "10021",
+        "value": "finance"
+      },
+      "target_component": {
+        "id": "10029",
+        "value": "frontend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-20",
+      "issue_type": {
+        "id": "10013",
+        "name": "Research"
+      },
+      "target_product": {
+        "id": "10026",
+        "value": "platform-foundation"
+      },
+      "target_component": {
+        "id": "10031",
+        "value": "documentation"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-21",
+      "issue_type": {
+        "id": "10009",
+        "name": "Feature"
+      },
+      "target_product": {
+        "id": "10027",
+        "value": "dev-harness"
+      },
+      "target_component": {
+        "id": "10030",
+        "value": "infra"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-22",
+      "issue_type": {
+        "id": "10010",
+        "name": "Task"
+      },
+      "target_product": {
+        "id": "10027",
+        "value": "dev-harness"
+      },
+      "target_component": {
+        "id": "10031",
+        "value": "documentation"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-23",
+      "issue_type": {
+        "id": "10013",
+        "name": "Research"
+      },
+      "target_product": {
+        "id": "10026",
+        "value": "platform-foundation"
+      },
+      "target_component": {
+        "id": "10031",
+        "value": "documentation"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-24",
+      "issue_type": {
+        "id": "10013",
+        "name": "Research"
+      },
+      "target_product": {
+        "id": "10023",
+        "value": "identity"
+      },
+      "target_component": {
+        "id": "10031",
+        "value": "documentation"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-25",
+      "issue_type": {
+        "id": "10010",
+        "name": "Task"
+      },
+      "target_product": {
+        "id": "10023",
+        "value": "identity"
+      },
+      "target_component": {
+        "id": "10028",
+        "value": "backend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-26",
+      "issue_type": {
+        "id": "10010",
+        "name": "Task"
+      },
+      "target_product": {
+        "id": "10027",
+        "value": "dev-harness"
+      },
+      "target_component": {
+        "id": "10030",
+        "value": "infra"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-27",
+      "issue_type": {
+        "id": "10010",
+        "name": "Task"
+      },
+      "target_product": {
+        "id": "10023",
+        "value": "identity"
+      },
+      "target_component": {
+        "id": "10028",
+        "value": "backend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-28",
+      "issue_type": {
+        "id": "10010",
+        "name": "Task"
+      },
+      "target_product": {
+        "id": "10023",
+        "value": "identity"
+      },
+      "target_component": {
+        "id": "10031",
+        "value": "documentation"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-29",
+      "issue_type": {
+        "id": "10009",
+        "name": "Feature"
+      },
+      "target_product": {
+        "id": "10021",
+        "value": "finance"
+      },
+      "target_component": {
+        "id": "10029",
+        "value": "frontend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-30",
+      "issue_type": {
+        "id": "10010",
+        "name": "Task"
+      },
+      "target_product": {
+        "id": "10026",
+        "value": "platform-foundation"
+      },
+      "target_component": {
+        "id": "10031",
+        "value": "documentation"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-31",
+      "issue_type": {
+        "id": "10010",
+        "name": "Task"
+      },
+      "target_product": {
+        "id": "10026",
+        "value": "platform-foundation"
+      },
+      "target_component": {
+        "id": "10031",
+        "value": "documentation"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-32",
+      "issue_type": {
+        "id": "10009",
+        "name": "Feature"
+      },
+      "target_product": {
+        "id": "10026",
+        "value": "platform-foundation"
+      },
+      "target_component": {
+        "id": "10029",
+        "value": "frontend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-33",
+      "issue_type": {
+        "id": "10010",
+        "name": "Task"
+      },
+      "target_product": {
+        "id": "10026",
+        "value": "platform-foundation"
+      },
+      "target_component": {
+        "id": "10031",
+        "value": "documentation"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-34",
+      "issue_type": {
+        "id": "10007",
+        "name": "Epic"
+      },
+      "target_product": {
+        "id": "10021",
+        "value": "finance"
+      },
+      "target_component": {
+        "id": "10028",
+        "value": "backend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-35",
+      "issue_type": {
+        "id": "10007",
+        "name": "Epic"
+      },
+      "target_product": {
+        "id": "10021",
+        "value": "finance"
+      },
+      "target_component": {
+        "id": "10029",
+        "value": "frontend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-36",
+      "issue_type": {
+        "id": "10012",
+        "name": "Bug"
+      },
+      "target_product": {
+        "id": "10027",
+        "value": "dev-harness"
+      },
+      "target_component": {
+        "id": "10030",
+        "value": "infra"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-37",
+      "issue_type": {
+        "id": "10010",
+        "name": "Task"
+      },
+      "target_product": {
+        "id": "10027",
+        "value": "dev-harness"
+      },
+      "target_component": {
+        "id": "10030",
+        "value": "infra"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-38",
+      "issue_type": {
+        "id": "10010",
+        "name": "Task"
+      },
+      "target_product": {
+        "id": "10027",
+        "value": "dev-harness"
+      },
+      "target_component": {
+        "id": "10030",
+        "value": "infra"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-39",
+      "issue_type": {
+        "id": "10010",
+        "name": "Task"
+      },
+      "target_product": {
+        "id": "10027",
+        "value": "dev-harness"
+      },
+      "target_component": {
+        "id": "10030",
+        "value": "infra"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-40",
+      "issue_type": {
+        "id": "10010",
+        "name": "Task"
+      },
+      "target_product": {
+        "id": "10027",
+        "value": "dev-harness"
+      },
+      "target_component": {
+        "id": "10030",
+        "value": "infra"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-41",
+      "issue_type": {
+        "id": "10012",
+        "name": "Bug"
+      },
+      "target_product": {
+        "id": "10027",
+        "value": "dev-harness"
+      },
+      "target_component": {
+        "id": "10030",
+        "value": "infra"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-42",
+      "issue_type": {
+        "id": "10010",
+        "name": "Task"
+      },
+      "target_product": {
+        "id": "10026",
+        "value": "platform-foundation"
+      },
+      "target_component": {
+        "id": "10031",
+        "value": "documentation"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-43",
+      "issue_type": {
+        "id": "10009",
+        "name": "Feature"
+      },
+      "target_product": {
+        "id": "10021",
+        "value": "finance"
+      },
+      "target_component": {
+        "id": "10029",
+        "value": "frontend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-44",
+      "issue_type": {
+        "id": "10009",
+        "name": "Feature"
+      },
+      "target_product": {
+        "id": "10021",
+        "value": "finance"
+      },
+      "target_component": {
+        "id": "10029",
+        "value": "frontend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-45",
+      "issue_type": {
+        "id": "10009",
+        "name": "Feature"
+      },
+      "target_product": {
+        "id": "10021",
+        "value": "finance"
+      },
+      "target_component": {
+        "id": "10029",
+        "value": "frontend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-46",
+      "issue_type": {
+        "id": "10007",
+        "name": "Epic"
+      },
+      "target_product": {
+        "id": "10020",
+        "value": "carelog"
+      },
+      "target_component": {
+        "id": "10029",
+        "value": "frontend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-47",
+      "issue_type": {
+        "id": "10010",
+        "name": "Task"
+      },
+      "target_product": {
+        "id": "10020",
+        "value": "carelog"
+      },
+      "target_component": {
+        "id": "10029",
+        "value": "frontend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-48",
+      "issue_type": {
+        "id": "10010",
+        "name": "Task"
+      },
+      "target_product": {
+        "id": "10021",
+        "value": "finance"
+      },
+      "target_component": {
+        "id": "10029",
+        "value": "frontend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-49",
+      "issue_type": {
+        "id": "10009",
+        "name": "Feature"
+      },
+      "target_product": {
+        "id": "10020",
+        "value": "carelog"
+      },
+      "target_component": {
+        "id": "10029",
+        "value": "frontend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-50",
+      "issue_type": {
+        "id": "10010",
+        "name": "Task"
+      },
+      "target_product": {
+        "id": "10021",
+        "value": "finance"
+      },
+      "target_component": {
+        "id": "10028",
+        "value": "backend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-51",
+      "issue_type": {
+        "id": "10007",
+        "name": "Epic"
+      },
+      "target_product": {
+        "id": "10026",
+        "value": "platform-foundation"
+      },
+      "target_component": {
+        "id": "10028",
+        "value": "backend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-52",
+      "issue_type": {
+        "id": "10010",
+        "name": "Task"
+      },
+      "target_product": {
+        "id": "10026",
+        "value": "platform-foundation"
+      },
+      "target_component": {
+        "id": "10031",
+        "value": "documentation"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-53",
+      "issue_type": {
+        "id": "10010",
+        "name": "Task"
+      },
+      "target_product": {
+        "id": "10022",
+        "value": "gateway"
+      },
+      "target_component": {
+        "id": "10028",
+        "value": "backend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-54",
+      "issue_type": {
+        "id": "10010",
+        "name": "Task"
+      },
+      "target_product": {
+        "id": "10023",
+        "value": "identity"
+      },
+      "target_component": {
+        "id": "10028",
+        "value": "backend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-55",
+      "issue_type": {
+        "id": "10010",
+        "name": "Task"
+      },
+      "target_product": {
+        "id": "10020",
+        "value": "carelog"
+      },
+      "target_component": {
+        "id": "10028",
+        "value": "backend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-56",
+      "issue_type": {
+        "id": "10009",
+        "name": "Feature"
+      },
+      "target_product": {
+        "id": "10020",
+        "value": "carelog"
+      },
+      "target_component": {
+        "id": "10029",
+        "value": "frontend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-57",
+      "issue_type": {
+        "id": "10009",
+        "name": "Feature"
+      },
+      "target_product": {
+        "id": "10020",
+        "value": "carelog"
+      },
+      "target_component": {
+        "id": "10029",
+        "value": "frontend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-58",
+      "issue_type": {
+        "id": "10009",
+        "name": "Feature"
+      },
+      "target_product": {
+        "id": "10020",
+        "value": "carelog"
+      },
+      "target_component": {
+        "id": "10029",
+        "value": "frontend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-59",
+      "issue_type": {
+        "id": "10009",
+        "name": "Feature"
+      },
+      "target_product": {
+        "id": "10020",
+        "value": "carelog"
+      },
+      "target_component": {
+        "id": "10029",
+        "value": "frontend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-60",
+      "issue_type": {
+        "id": "10009",
+        "name": "Feature"
+      },
+      "target_product": {
+        "id": "10020",
+        "value": "carelog"
+      },
+      "target_component": {
+        "id": "10029",
+        "value": "frontend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-61",
+      "issue_type": {
+        "id": "10009",
+        "name": "Feature"
+      },
+      "target_product": {
+        "id": "10020",
+        "value": "carelog"
+      },
+      "target_component": {
+        "id": "10029",
+        "value": "frontend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-62",
+      "issue_type": {
+        "id": "10009",
+        "name": "Feature"
+      },
+      "target_product": {
+        "id": "10020",
+        "value": "carelog"
+      },
+      "target_component": {
+        "id": "10029",
+        "value": "frontend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-63",
+      "issue_type": {
+        "id": "10010",
+        "name": "Task"
+      },
+      "target_product": {
+        "id": "10020",
+        "value": "carelog"
+      },
+      "target_component": {
+        "id": "10029",
+        "value": "frontend"
+      },
+      "target_concerns": [
+        {
+          "id": "10046",
+          "value": "regression"
+        }
+      ],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-64",
+      "issue_type": {
+        "id": "10009",
+        "name": "Feature"
+      },
+      "target_product": {
+        "id": "10020",
+        "value": "carelog"
+      },
+      "target_component": {
+        "id": "10029",
+        "value": "frontend"
+      },
+      "target_concerns": [
+        {
+          "id": "10038",
+          "value": "integration"
+        }
+      ],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-65",
+      "issue_type": {
+        "id": "10009",
+        "name": "Feature"
+      },
+      "target_product": {
+        "id": "10020",
+        "value": "carelog"
+      },
+      "target_component": {
+        "id": "10028",
+        "value": "backend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-66",
+      "issue_type": {
+        "id": "10009",
+        "name": "Feature"
+      },
+      "target_product": {
+        "id": "10020",
+        "value": "carelog"
+      },
+      "target_component": {
+        "id": "10029",
+        "value": "frontend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-67",
+      "issue_type": {
+        "id": "10009",
+        "name": "Feature"
+      },
+      "target_product": {
+        "id": "10027",
+        "value": "dev-harness"
+      },
+      "target_component": {
+        "id": "10030",
+        "value": "infra"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-68",
+      "issue_type": {
+        "id": "10009",
+        "name": "Feature"
+      },
+      "target_product": {
+        "id": "10021",
+        "value": "finance"
+      },
+      "target_component": {
+        "id": "10029",
+        "value": "frontend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-69",
+      "issue_type": {
+        "id": "10012",
+        "name": "Bug"
+      },
+      "target_product": {
+        "id": "10027",
+        "value": "dev-harness"
+      },
+      "target_component": {
+        "id": "10030",
+        "value": "infra"
+      },
+      "target_concerns": [
+        {
+          "id": "10046",
+          "value": "regression"
+        }
+      ],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-71",
+      "issue_type": {
+        "id": "10010",
+        "name": "Task"
+      },
+      "target_product": {
+        "id": "10026",
+        "value": "platform-foundation"
+      },
+      "target_component": {
+        "id": "10030",
+        "value": "infra"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-72",
+      "issue_type": {
+        "id": "10010",
+        "name": "Task"
+      },
+      "target_product": {
+        "id": "10026",
+        "value": "platform-foundation"
+      },
+      "target_component": {
+        "id": "10031",
+        "value": "documentation"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-73",
+      "issue_type": {
+        "id": "10009",
+        "name": "Feature"
+      },
+      "target_product": {
+        "id": "10020",
+        "value": "carelog"
+      },
+      "target_component": {
+        "id": "10029",
+        "value": "frontend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-74",
+      "issue_type": {
+        "id": "10009",
+        "name": "Feature"
+      },
+      "target_product": {
+        "id": "10020",
+        "value": "carelog"
+      },
+      "target_component": {
+        "id": "10029",
+        "value": "frontend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-75",
+      "issue_type": {
+        "id": "10009",
+        "name": "Feature"
+      },
+      "target_product": {
+        "id": "10020",
+        "value": "carelog"
+      },
+      "target_component": {
+        "id": "10028",
+        "value": "backend"
+      },
+      "target_concerns": [
+        {
+          "id": "10034",
+          "value": "security"
+        }
+      ],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-76",
+      "issue_type": {
+        "id": "10009",
+        "name": "Feature"
+      },
+      "target_product": {
+        "id": "10020",
+        "value": "carelog"
+      },
+      "target_component": {
+        "id": "10029",
+        "value": "frontend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-78",
+      "issue_type": {
+        "id": "10013",
+        "name": "Research"
+      },
+      "target_product": {
+        "id": "10020",
+        "value": "carelog"
+      },
+      "target_component": {
+        "id": "10029",
+        "value": "frontend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-79",
+      "issue_type": {
+        "id": "10009",
+        "name": "Feature"
+      },
+      "target_product": {
+        "id": "10020",
+        "value": "carelog"
+      },
+      "target_component": {
+        "id": "10029",
+        "value": "frontend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-81",
+      "issue_type": {
+        "id": "10010",
+        "name": "Task"
+      },
+      "target_product": {
+        "id": "10021",
+        "value": "finance"
+      },
+      "target_component": {
+        "id": "10031",
+        "value": "documentation"
+      },
+      "target_concerns": [
+        {
+          "id": "10044",
+          "value": "architecture"
+        },
+        {
+          "id": "10045",
+          "value": "contract"
+        }
+      ],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-84",
+      "issue_type": {
+        "id": "10010",
+        "name": "Task"
+      },
+      "target_product": {
+        "id": "10021",
+        "value": "finance"
+      },
+      "target_component": {
+        "id": "10028",
+        "value": "backend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-86",
+      "issue_type": {
+        "id": "10009",
+        "name": "Feature"
+      },
+      "target_product": {
+        "id": "10020",
+        "value": "carelog"
+      },
+      "target_component": {
+        "id": "10029",
+        "value": "frontend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-87",
+      "issue_type": {
+        "id": "10009",
+        "name": "Feature"
+      },
+      "target_product": {
+        "id": "10020",
+        "value": "carelog"
+      },
+      "target_component": {
+        "id": "10029",
+        "value": "frontend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-88",
+      "issue_type": {
+        "id": "10010",
+        "name": "Task"
+      },
+      "target_product": {
+        "id": "10020",
+        "value": "carelog"
+      },
+      "target_component": {
+        "id": "10031",
+        "value": "documentation"
+      },
+      "target_concerns": [
+        {
+          "id": "10044",
+          "value": "architecture"
+        },
+        {
+          "id": "10045",
+          "value": "contract"
+        }
+      ],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-90",
+      "issue_type": {
+        "id": "10012",
+        "name": "Bug"
+      },
+      "target_product": {
+        "id": "10020",
+        "value": "carelog"
+      },
+      "target_component": {
+        "id": "10029",
+        "value": "frontend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-91",
+      "issue_type": {
+        "id": "10010",
+        "name": "Task"
+      },
+      "target_product": {
+        "id": "10021",
+        "value": "finance"
+      },
+      "target_component": {
+        "id": "10029",
+        "value": "frontend"
+      },
+      "target_concerns": [
+        {
+          "id": "10038",
+          "value": "integration"
+        }
+      ],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-92",
+      "issue_type": {
+        "id": "10012",
+        "name": "Bug"
+      },
+      "target_product": {
+        "id": "10020",
+        "value": "carelog"
+      },
+      "target_component": {
+        "id": "10029",
+        "value": "frontend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-93",
+      "issue_type": {
+        "id": "10010",
+        "name": "Task"
+      },
+      "target_product": {
+        "id": "10027",
+        "value": "dev-harness"
+      },
+      "target_component": {
+        "id": "10028",
+        "value": "backend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-95",
+      "issue_type": {
+        "id": "10010",
+        "name": "Task"
+      },
+      "target_product": {
+        "id": "10027",
+        "value": "dev-harness"
+      },
+      "target_component": {
+        "id": "10028",
+        "value": "backend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-96",
+      "issue_type": {
+        "id": "10010",
+        "name": "Task"
+      },
+      "target_product": {
+        "id": "10021",
+        "value": "finance"
+      },
+      "target_component": {
+        "id": "10028",
+        "value": "backend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-97",
+      "issue_type": {
+        "id": "10010",
+        "name": "Task"
+      },
+      "target_product": {
+        "id": "10024",
+        "value": "ai"
+      },
+      "target_component": {
+        "id": "10031",
+        "value": "documentation"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-98",
+      "issue_type": {
+        "id": "10007",
+        "name": "Epic"
+      },
+      "target_product": {
+        "id": "10024",
+        "value": "ai"
+      },
+      "target_component": {
+        "id": "10031",
+        "value": "documentation"
+      },
+      "target_concerns": [
+        {
+          "id": "10044",
+          "value": "architecture"
+        }
+      ],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-99",
+      "issue_type": {
+        "id": "10010",
+        "name": "Task"
+      },
+      "target_product": {
+        "id": "10024",
+        "value": "ai"
+      },
+      "target_component": {
+        "id": "10031",
+        "value": "documentation"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-100",
+      "issue_type": {
+        "id": "10010",
+        "name": "Task"
+      },
+      "target_product": {
+        "id": "10024",
+        "value": "ai"
+      },
+      "target_component": {
+        "id": "10031",
+        "value": "documentation"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-101",
+      "issue_type": {
+        "id": "10010",
+        "name": "Task"
+      },
+      "target_product": {
+        "id": "10024",
+        "value": "ai"
+      },
+      "target_component": {
+        "id": "10031",
+        "value": "documentation"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-102",
+      "issue_type": {
+        "id": "10010",
+        "name": "Task"
+      },
+      "target_product": {
+        "id": "10024",
+        "value": "ai"
+      },
+      "target_component": {
+        "id": "10031",
+        "value": "documentation"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-103",
+      "issue_type": {
+        "id": "10010",
+        "name": "Task"
+      },
+      "target_product": {
+        "id": "10024",
+        "value": "ai"
+      },
+      "target_component": {
+        "id": "10031",
+        "value": "documentation"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-104",
+      "issue_type": {
+        "id": "10013",
+        "name": "Research"
+      },
+      "target_product": {
+        "id": "10024",
+        "value": "ai"
+      },
+      "target_component": {
+        "id": "10028",
+        "value": "backend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-105",
+      "issue_type": {
+        "id": "10010",
+        "name": "Task"
+      },
+      "target_product": {
+        "id": "10026",
+        "value": "platform-foundation"
+      },
+      "target_component": {
+        "id": "10028",
+        "value": "backend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-106",
+      "issue_type": {
+        "id": "10010",
+        "name": "Task"
+      },
+      "target_product": {
+        "id": "10024",
+        "value": "ai"
+      },
+      "target_component": {
+        "id": "10028",
+        "value": "backend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-107",
+      "issue_type": {
+        "id": "10007",
+        "name": "Epic"
+      },
+      "target_product": {
+        "id": "10025",
+        "value": "audit"
+      },
+      "target_component": {
+        "id": "10028",
+        "value": "backend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-108",
+      "issue_type": {
+        "id": "10010",
+        "name": "Task"
+      },
+      "target_product": {
+        "id": "10026",
+        "value": "platform-foundation"
+      },
+      "target_component": {
+        "id": "10031",
+        "value": "documentation"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-109",
+      "issue_type": {
+        "id": "10010",
+        "name": "Task"
+      },
+      "target_product": {
+        "id": "10025",
+        "value": "audit"
+      },
+      "target_component": {
+        "id": "10031",
+        "value": "documentation"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-110",
+      "issue_type": {
+        "id": "10010",
+        "name": "Task"
+      },
+      "target_product": {
+        "id": "10025",
+        "value": "audit"
+      },
+      "target_component": {
+        "id": "10028",
+        "value": "backend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    },
+    {
+      "issue_key": "RPL-111",
+      "issue_type": {
+        "id": "10010",
+        "name": "Task"
+      },
+      "target_product": {
+        "id": "10025",
+        "value": "audit"
+      },
+      "target_component": {
+        "id": "10028",
+        "value": "backend"
+      },
+      "target_concerns": [],
+      "candidate_status": "PROPOSED_CANDIDATE",
+      "cutover_status": "NOT_APPROVED_FOR_CUTOVER",
+      "g2_target_storage_status": "VERIFIED_IN_PINNED_G2_RECORD",
+      "g3_evidence_status": {
+        "origin": "NOT_VERIFIED",
+        "legacy_snapshot": "NOT_VERIFIED_PER_ISSUE",
+        "changelog": "NOT_VERIFIED",
+        "owner_approval": "NOT_PROVIDED",
+        "cutover_approval": "NOT_PROVIDED",
+        "authority_reader": "NOT_VERIFIED"
+      }
+    }
+  ]
+}
