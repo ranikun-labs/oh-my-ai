@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createG3FileLedger } from "./lib/jira-ticket-g3-file-ledger.mjs";
@@ -129,4 +129,28 @@ await withRoot(async root => {
   assert.equal(retry.status, "duplicate");
   assert.equal(retry.durable, true);
   console.log("PASS: concurrent CAS permits one durable writer; re-entry is verified or fails closed");
+});
+
+await withRoot(async root => {
+  const request = pending("g3-file-ledger-backup-restore-0001");
+  const ledger = createG3FileLedger({ root, ledgerRef });
+  await ledger.persistIntent(request);
+  const storedPath = intentPath(root, request.create_request_id);
+  assert.equal((await stat(join(root, "intents"))).mode & 0o777, 0o700);
+  assert.equal((await stat(storedPath)).mode & 0o777, 0o600);
+
+  const staging = await mkdtemp(join(tmpdir(), "jira-g3-file-ledger-backup-"));
+  try {
+    const backup = join(staging, "backup");
+    const restored = join(staging, "restored");
+    await cp(root, backup, { recursive: true });
+    await cp(backup, restored, { recursive: true });
+    const restoredLedger = createG3FileLedger({ root: restored, ledgerRef });
+    const restoredRecord = await restoredLedger.inspectRequest(request.create_request_id);
+    assert.equal(restoredRecord.pending.create_request_id, request.create_request_id);
+    const duplicate = await restoredLedger.persistIntent(request);
+    assert.equal(duplicate.status, "duplicate");
+    assert.equal(duplicate.created_new, false);
+  } finally { await rm(staging, { recursive: true, force: true }); }
+  console.log("PASS: file modes and copied/restored pending Intent prevent a new ledger claim");
 });
