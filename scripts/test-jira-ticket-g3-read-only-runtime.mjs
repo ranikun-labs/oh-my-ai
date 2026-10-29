@@ -15,10 +15,10 @@ const issue = {
 };
 
 function fixture({ stale = false, wrongSite = false, wrongCloud = false, badIssueKey = false,
-  badReadSummary = false } = {}) {
+  badReadSummary = false, duplicateSummaryFirst = false, uppercaseCloud = false } = {}) {
   const calls = [];
   const runtime = {
-    session: SESSION, siteOrigin: SITE, cloudId: CLOUD,
+    session: SESSION, siteOrigin: SITE, cloudId: uppercaseCloud ? CLOUD.toUpperCase() : CLOUD,
     verifySession: async ({ capability, session, siteOrigin, cloudId }) => {
       const now = Date.now();
       return { allowed: true, capability, session_id: session.id,
@@ -32,8 +32,12 @@ function fixture({ stale = false, wrongSite = false, wrongCloud = false, badIssu
       calls.push({ name, args });
       if (name === G3_JIRA_TOOL_NAMES.search) {
         const node = badIssueKey ? { ...issue, key: "RPL-999", webUrl: `${SITE}/browse/RPL-999` } : issue;
-        const raw = { issues: { nodes: [{ id: node.id, key: node.key, self: node.self, webUrl: node.webUrl,
-          fields: { summary: node.fields.summary, project: node.fields.project, issuetype: node.fields.issuetype } }],
+        const duplicate = { ...issue, id: "10240", key: "RPL-999",
+          self: `https://api.atlassian.com/ex/jira/${CLOUD}/rest/api/3/issue/10240`,
+          webUrl: `${SITE}/browse/RPL-999` };
+        const nodes = duplicateSummaryFirst ? [duplicate, issue] : [node];
+        const raw = { issues: { nodes: nodes.map(node => ({ id: node.id, key: node.key, self: node.self, webUrl: node.webUrl,
+          fields: { summary: node.fields.summary, project: node.fields.project, issuetype: node.fields.issuetype } })),
         pageInfo: { hasNextPage: false, endCursor: null }, webUrl: `${SITE}/issues` } };
         return { content: [{ type: "text", text: JSON.stringify(raw) }],
           structuredContent: { ...raw, context: { private_session_id: "must-not-be-logged" } } };
@@ -56,8 +60,25 @@ function fixture({ stale = false, wrongSite = false, wrongCloud = false, badIssu
   assert.deepEqual(calls.map(call => call.name), [G3_JIRA_TOOL_NAMES.search, G3_JIRA_TOOL_NAMES.read]);
   assert.equal(JSON.stringify(report).includes("must-not-be-logged"), false);
   assert.equal(JSON.stringify(report).includes(SUMMARY), false);
+  assert.ok(calls.every(call => call.args.cloudId === CLOUD));
   const connector = await createG3ReadOnlyJiraConnector({ ...runtime });
   assert.equal(Object.hasOwn(connector, "create"), false);
+}
+
+{
+  const { runtime, calls } = fixture({ duplicateSummaryFirst: true });
+  await assert.rejects(runG3ReadOnlyRuntimeSmoke({ runtime, issueKey: ISSUE_KEY, searchSummary: SUMMARY }),
+    error => error.code === "JIRA_SEARCH_RESULT_MISMATCH");
+  assert.deepEqual(calls.map(call => call.name), [G3_JIRA_TOOL_NAMES.search],
+    "a duplicate-title response for another issue must stop before GET");
+}
+
+{
+  const { runtime, calls } = fixture({ uppercaseCloud: true });
+  const report = await runG3ReadOnlyRuntimeSmoke({ runtime, issueKey: ISSUE_KEY, searchSummary: SUMMARY });
+  assert.equal(report.status, "READ_ONLY_CONNECTOR_SMOKE_PASSED");
+  assert.deepEqual(calls.map(call => call.name), [G3_JIRA_TOOL_NAMES.search, G3_JIRA_TOOL_NAMES.read]);
+  assert.ok(calls.every(call => call.args.cloudId === CLOUD));
 }
 
 for (const options of [{ stale: true }, { wrongSite: true }, { wrongCloud: true }]) {
@@ -70,7 +91,7 @@ for (const options of [{ stale: true }, { wrongSite: true }, { wrongCloud: true 
   const { runtime, calls } = fixture({ badIssueKey: true });
   await assert.rejects(runG3ReadOnlyRuntimeSmoke({ runtime, issueKey: ISSUE_KEY, searchSummary: SUMMARY }),
     error => error.code === "JIRA_SEARCH_RESULT_MISMATCH");
-  assert.equal(calls.length, 1, "mismatched Search result must stop before GET");
+  assert.deepEqual(calls.map(call => call.name), [G3_JIRA_TOOL_NAMES.search]);
 }
 
 {
