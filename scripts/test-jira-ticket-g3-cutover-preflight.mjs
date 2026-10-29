@@ -4,10 +4,13 @@ import { readFileSync } from "node:fs";
 import { createG3AuthorityReader } from "./lib/jira-ticket-g3-authority-reader.mjs";
 import {
   buildG3CutoverCandidateManifest,
+  buildG3CutoverUntrustedFixtureManifest,
   runG3CutoverCandidateManifestCli,
 } from "./jira-ticket-g3-cutover-candidate-manifest.mjs";
 import {
   buildG3CutoverPreflightReport,
+  buildG3CutoverUntrustedFixtureReport,
+  G2_SNAPSHOT_SOURCE,
   gitBlobSha1,
 } from "./lib/jira-ticket-g3-cutover-preflight.mjs";
 
@@ -51,11 +54,13 @@ function sourceFor(text) {
 }
 function reportFor(snapshot) {
   const text = JSON.stringify(snapshot);
-  return { text, report: buildG3CutoverPreflightReport(text, { source: sourceFor(text) }) };
+  return { text, report: buildG3CutoverUntrustedFixtureReport(text, sourceFor(text)) };
 }
 
 const { text, report } = reportFor(fixture());
-assert.equal(report.status, "PREFLIGHT_ONLY");
+assert.equal(report.status, "UNTRUSTED_FIXTURE_ONLY");
+assert.equal(report.source.provenance, "UNTRUSTED_FIXTURE_ONLY");
+assert.equal(Object.hasOwn(report.source, "snapshot_ref"), false);
 assert.equal(report.execution_authorized, false);
 assert.equal(report.read_authority_changed, false);
 assert.equal(report.jira_read_count, 0);
@@ -87,13 +92,17 @@ assert.ok(report.candidates.every(candidate => candidate.status === "NOT_READY"
 assert.ok(report.candidates.every(candidate => candidate.g2_target_fields_present
   && candidate.g2_legacy_baseline_present));
 assert.equal(report.candidates.some(candidate => ["RPL-112", "RPL-113", "RPL-114", "RPL-122", "RPL-124"].includes(candidate.issue_key)), false);
-assert.ok(report.source.snapshot_ref.includes("#blob=" + sourceFor(text).blob_sha));
+assert.equal(report.source.fixture_git_blob_sha, sourceFor(text).blob_sha);
 assert.equal(JSON.stringify(report).includes("synthetic test-only issue"), false,
   "candidate output must not copy issue summaries or full snapshot rows");
 console.log("PASS: pinned G2 contract yields 106 supported, 3 protected, 103 candidates, and 12 unsupported without copying issue contents");
 
 const wrongBlobSource = { ...sourceFor(text), blob_sha: "0".repeat(40) };
-assert.equal(buildG3CutoverPreflightReport(text, { source: wrongBlobSource }).status, "BLOCKED");
+assert.equal(buildG3CutoverUntrustedFixtureReport(text, wrongBlobSource).status, "BLOCKED");
+assert.equal(buildG3CutoverPreflightReport(text, { source: sourceFor(text) }).status, "BLOCKED");
+assert.equal(buildG3CutoverPreflightReport(text, { source: G2_SNAPSHOT_SOURCE }).status, "BLOCKED");
+assert.equal(buildG3CutoverCandidateManifest(text, { source: sourceFor(text) }).status, "BLOCKED");
+console.log("PASS: production APIs reject caller-controlled source even when its blob SHA matches");
 console.log("PASS: a mismatched Git Blob SHA blocks the preflight");
 
 const partialEvidence = fixture();
@@ -102,7 +111,7 @@ const evidenceCandidate = partialEvidence.current_118.find(item => !["RPL-112", 
 evidenceCandidate.g3_cutover_evidence = { origin_ref: "origin:verified", changelog_ref: "changelog:verified",
   owner_approval_ref: "owner:approval", cutover_approval_ref: "cutover:approval" };
 const partialText = JSON.stringify(partialEvidence);
-const partialReport = buildG3CutoverPreflightReport(partialText, { source: sourceFor(partialText) });
+const partialReport = buildG3CutoverUntrustedFixtureReport(partialText, sourceFor(partialText));
 const statusWithRefs = partialReport.candidates.find(candidate => candidate.issue_key === evidenceCandidate.key);
 assert.equal(statusWithRefs.status, "TRUSTED_READER_VERIFICATION_REQUIRED");
 assert.deepEqual(statusWithRefs.missing_evidence, []);
@@ -114,13 +123,13 @@ console.log("PASS: evidence reference presence remains pending until trusted Rea
 const duplicate = fixture();
 duplicate.current_118[1].key = duplicate.current_118[0].key;
 const duplicateText = JSON.stringify(duplicate);
-assert.equal(buildG3CutoverPreflightReport(duplicateText, { source: sourceFor(duplicateText) }).status, "BLOCKED");
+assert.equal(buildG3CutoverUntrustedFixtureReport(duplicateText, sourceFor(duplicateText)).status, "BLOCKED");
 console.log("PASS: duplicate IssueKeys block the preflight");
 
 const missingTarget = fixture();
 missingTarget.current_118.find(item => item.key !== "RPL-112" && item.key !== "RPL-113" && item.key !== "RPL-114").fields.customfield_10108 = null;
 const missingTargetText = JSON.stringify(missingTarget);
-const missingTargetReport = buildG3CutoverPreflightReport(missingTargetText, { source: sourceFor(missingTargetText) });
+const missingTargetReport = buildG3CutoverUntrustedFixtureReport(missingTargetText, sourceFor(missingTargetText));
 assert.equal(missingTargetReport.status, "BLOCKED");
 console.log("PASS: incomplete Target storage blocks the preflight");
 
@@ -175,8 +184,9 @@ if (process.env.JIRA_G2_SNAPSHOT_PATH) {
   console.log("PASS: pinned private G2 audit yields exactly 103 unapproved classified candidates");
 }
 
-const candidateManifest = buildG3CutoverCandidateManifest(text, { source: sourceFor(text) });
-assert.equal(candidateManifest.status, "READ_ONLY_PROPOSED_CANDIDATES");
+const candidateManifest = buildG3CutoverUntrustedFixtureManifest(text, sourceFor(text));
+assert.equal(candidateManifest.status, "UNTRUSTED_FIXTURE_ONLY");
+assert.equal(candidateManifest.source.provenance, "UNTRUSTED_FIXTURE_ONLY");
 assert.equal(candidateManifest.execution_authorized, false);
 assert.equal(candidateManifest.cutover_approved, false);
 assert.equal(candidateManifest.summary.candidates, 103);
@@ -191,7 +201,7 @@ assert.equal(candidateManifest.candidates.some(row => ["RPL-112", "RPL-113", "RP
   .includes(row.issue_key)), false);
 assert.ok(candidateManifest.candidates.every(row => row.g3_evidence_status.authority_reader
   === "NOT_VERIFIED"));
-assert.equal(buildG3CutoverCandidateManifest("{}", { source: sourceFor("{}") }).status, "BLOCKED");
+assert.equal(buildG3CutoverUntrustedFixtureManifest("{}", sourceFor("{}")).status, "BLOCKED");
 console.log("PASS: deterministic 103-row candidate Manifest preserves fields while denying cutover");
 
 const output = [];
