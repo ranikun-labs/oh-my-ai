@@ -23,12 +23,24 @@ const STATUS_LABELS = ["Native Test", "CI", "Independent Review", "Runtime E2E",
 function splitSections(markdown) {
   const sections = new Map();
   let current = null;
+  let openFence = null;
   const body = [];
   const flush = () => {
     if (current !== null) sections.set(current, body.join("\n").trim());
   };
 
   for (const line of String(markdown).split(/\r?\n/)) {
+    if (openFence) {
+      const closingFence = new RegExp(`^ {0,3}${openFence.char}{${openFence.length},}[ \\t]*$`);
+      if (closingFence.test(line)) openFence = null;
+      continue;
+    }
+    const fenceStart = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    if (fenceStart) {
+      openFence = { char: fenceStart[1][0], length: fenceStart[1].length };
+      continue;
+    }
+
     const heading = /^##\s+(.+?)\s*$/.exec(line);
     if (heading) {
       flush();
@@ -45,7 +57,10 @@ function splitSections(markdown) {
 function hasUsableContent(body) {
   if (!body) return false;
   const lines = body.split("\n").map((line) => line.trim()).filter(Boolean);
-  return lines.some((line) => !/^[-*]?\s*(none|없음|미정|n\/a)\.?$/i.test(line));
+  return lines.some((line) => {
+    if (/^[-*][ \t]*(?:\[\s*\][ \t]*)?$/.test(line)) return false;
+    return !/^[-*]?\s*(none|없음|미정|n\/a)\.?$/i.test(line);
+  });
 }
 
 function parseStatusLines(markdown) {
