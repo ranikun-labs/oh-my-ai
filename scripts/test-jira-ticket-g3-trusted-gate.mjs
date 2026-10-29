@@ -326,6 +326,18 @@ const contradictoryLegacyDefaultMetadata = structuredClone(metadataContent);
 contradictoryLegacyDefaultMetadata.fields.customfield_10043.defaultValue = "legacy-default";
 const contradictoryLegacyDefault = fixtureGate({ metadataOverride: contradictoryLegacyDefaultMetadata });
 await assert.rejects(() => contradictoryLegacyDefault.verifyGate({ stage: "search", context: searchContext() }), /Legacy/i);
+const targetOnlyMetadata = structuredClone(metadataContent);
+for (const id of ["customfield_10042", "customfield_10043", "customfield_10044"])
+  delete targetOnlyMetadata.fields[id];
+targetOnlyMetadata.total = Object.keys(targetOnlyMetadata.fields).length;
+const targetOnlyGate = fixtureGate({ metadataOverride: targetOnlyMetadata });
+assert.equal((await targetOnlyGate.verifyGate({ stage: "search", context: searchContext() })).allowed, true,
+  "a complete signed page may omit Legacy fields removed from the Create screen");
+await targetOnlyGate.verifyGate({ stage: "intent", context: intent() });
+await targetOnlyGate.verifyGate({ stage: "create", context: {
+  request: createRequest, create_request_id: requestId, activation_ref: activationRef,
+} });
+console.log("PASS: signed Target-only metadata keeps Search/Intent/Create Gate checks while omitting removed Legacy fields");
 const currentAccountsMetadata = structuredClone(metadataContent);
 currentAccountsMetadata.fields.assignee.allowedValues = [{ accountId: "retired-account" }];
 const staleAssignee = fixtureGate({ metadataOverride: currentAccountsMetadata });
