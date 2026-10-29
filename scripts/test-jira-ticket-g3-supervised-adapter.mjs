@@ -5,7 +5,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CONTRACT_FIELDS, runJiraTicketCreateWorkflow } from "./lib/jira-ticket-create-workflow.mjs";
-import { createG3FileLedger } from "./lib/jira-ticket-g3-file-ledger.mjs";
+import { createG3FileLedger, g3FileOriginRef } from "./lib/jira-ticket-g3-file-ledger.mjs";
 import { createG3SupervisedAdapter } from "./lib/jira-ticket-g3-supervised-adapter.mjs";
 
 // All actors, approvals, metadata and Jira IssueKeys below are SYNTHETIC.
@@ -58,7 +58,7 @@ function config(requestId = "g3-fixture-request-0001") {
     supplemental_fields: { customfield_10015: today, duedate: tomorrow },
   };
 }
-function fakeJira({ throwCreate = false, throwOrigin = false, wrongRead = false } = {}) {
+function fakeJira({ throwCreate = false, throwOrigin = false, wrongRead = false, wrongTypeRead = false } = {}) {
   let createCalls = 0;
   const jira = {
     async search() { return { status: "none", tool_call_count: 1 }; },
@@ -70,15 +70,23 @@ function fakeJira({ throwCreate = false, throwOrigin = false, wrongRead = false 
         summary: request.summary };
     },
     async read(request) {
-      return { tool_call_count: 1, key: request.key, issue_type_id: "10010",
+      return { tool_call_count: 1, key: request.key, issue_type_id: wrongTypeRead ? "10007" : "10010",
         fields: { customfield_10108: { id: wrongRead ? "10020" : "10027" },
           customfield_10109: { id: "10028" }, customfield_10110: [] } };
     },
   };
   return { jira, calls: () => createCalls };
 }
-const gate = async ({ stage }) => ({ allowed: true, evidence_ref: "SYNTHETIC-TEST-ONLY",
-  ...(stage === "intent" ? { cutover_approval_ref: "fixture-owner-approval" } : {}) });
+const gate = async ({ stage, context }) => ({ allowed: true, evidence_ref: "SYNTHETIC-TEST-ONLY",
+  ...(stage === "intent" ? { cutover_approval_ref: "fixture-owner-approval",
+    issue_type_binding: { canonical_issue_type: "Task", issue_type_id: "10010",
+      localized_issue_type_name: "작업", metadata_sha256: "c".repeat(64) } } : {}),
+  ...(stage === "authority_read" ? { project: "RPL", issue_key: context.issue_key,
+    issue_type: "Task", issue_type_id: "10010", origin: "target_create",
+    origin_ref: g3FileOriginRef({ ledger_ref: ledgerRef, create_request_id: "g3-fixture-request-0001",
+      issue_key: context.issue_key, issue_type_id: "10010" }), read_authority: "target" } : {}),
+  ...(stage === "create" ? { issue_type_binding: { canonical_issue_type: "Task", issue_type_id: "10010",
+    localized_issue_type_name: "작업", metadata_sha256: "c".repeat(64) } } : {}) });
 const pendingIntent = (requestId, fields = {
   customfield_10108: { id: "10027" }, customfield_10109: { id: "10028" }, customfield_10110: [],
 }) => ({ create_request_id: requestId, ledger_ref: ledgerRef, status: "pending",
@@ -142,6 +150,7 @@ try {
   assert.equal(link.link.issue_key, "RPL-201");
   assert.equal(link.pending.cutover_approval_ref, "fixture-owner-approval",
     "trusted Intent gate reference must be frozen in pending Intent");
+  assert.equal(link.pending.issue_type_id, "10010", "signed Issue Type ID must be frozen in the pending Intent");
   console.log("PASS: durable Intent > at-most-one Create attempt > IssueKey link > GET > Origin/Reader");
 
   const readerTamper = createG3SupervisedAdapter({ ledger: pass.ledger,
@@ -149,6 +158,23 @@ try {
   assert.equal((await readerTamper.readVerifiedClassification("RPL-201")).read_authority, "none");
   assert.equal((await readerTamper.readClassificationAuthority("RPL-201")).read_authority, "none",
     "public Reader alias must not expose raw Ledger authority");
+  const wrongSignedOrigin = createG3SupervisedAdapter({ ledger: pass.ledger, jira: fakeJira().jira,
+    verifyGate: async input => ({ ...await gate(input), ...(input.stage === "authority_read"
+      ? { origin_ref: "signed-proof-for-another-ledger-origin" } : {}) }),
+    siteOrigin: "https://jira.example", capabilityEvidence: fixtureCapabilities });
+  assert.equal((await wrongSignedOrigin.readVerifiedClassification("RPL-201")).read_authority, "none",
+    "the signed Origin reference must equal the durable Ledger Origin reference");
+  const wrongSignedType = createG3SupervisedAdapter({ ledger: pass.ledger, jira: fakeJira().jira,
+    verifyGate: async input => ({ ...await gate(input), ...(input.stage === "authority_read"
+      ? { issue_type: "Epic", issue_type_id: "10007" } : {}) }),
+    siteOrigin: "https://jira.example", capabilityEvidence: fixtureCapabilities });
+  assert.equal((await wrongSignedType.readVerifiedClassification("RPL-201")).read_authority, "none",
+    "the signed Issue Type must equal the durable Ledger Issue Type");
+  const wrongJiraType = createG3SupervisedAdapter({ ledger: pass.ledger,
+    jira: fakeJira({ wrongTypeRead: true }).jira, verifyGate: gate,
+    siteOrigin: "https://jira.example", capabilityEvidence: fixtureCapabilities });
+  assert.equal((await wrongJiraType.readVerifiedClassification("RPL-201")).read_authority, "none",
+    "Jira GET Issue Type ID must equal the signed proof and Ledger");
   await assert.rejects(() => pass.actor.persistOrigin({
     create_request_id: "g3-fixture-request-0001", issue_key: "RPL-999",
     verified_fields: { customfield_10108: { id: "10027" },
@@ -178,6 +204,40 @@ try {
   assert.equal(retry.calls(), 0, "ambiguous Create must never be retried");
   console.log("PASS: lost Create response freezes authority and prohibits replay");
 
+  const pendingOnlyDir = join(root, "pending-only");
+  const pendingOnlyId = "g3-fixture-pending-restart-0001";
+  const pauseBeforeCreate = async input => input.stage === "create"
+    ? { allowed: false, evidence_ref: "SYNTHETIC-PAUSE-BEFORE-CREATE" } : gate(input);
+  const pendingBeforeRestart = fakeJira();
+  await execution({ root: pendingOnlyDir, target: config(pendingOnlyId),
+    simulation: pendingBeforeRestart, customGate: pauseBeforeCreate });
+  assert.equal(pendingBeforeRestart.calls(), 0,
+    "the first adapter must leave only a durable pending Intent before Jira Create");
+  const restartedBeforeCreate = fakeJira();
+  await execution({ root: pendingOnlyDir, target: config(pendingOnlyId), simulation: restartedBeforeCreate });
+  assert.equal(restartedBeforeCreate.calls(), 0,
+    "a new adapter instance must not create from a pre-existing pending Intent");
+  console.log("PASS: pending-only Intent after restart blocks Jira Create");
+
+  const originFailureDir = join(root, "origin-failure");
+  const originLedger = createG3FileLedger({ root: originFailureDir, ledgerRef });
+  const failingOriginLedger = { ...originLedger,
+    async persistOrigin() { throw new Error("synthetic stop after Jira GET before Origin receipt"); } };
+  const originFailureJira = fakeJira();
+  await execution({ root: originFailureDir, simulation: originFailureJira,
+    ledgerOverride: failingOriginLedger });
+  assert.equal(originFailureJira.calls(), 1,
+    "Jira Create may have happened before the failed Origin receipt");
+  assert.equal((await originLedger.inspectRequest("g3-fixture-request-0001")).link.issue_key, "RPL-201");
+  const quarantined = await originLedger.readClassificationAuthority("RPL-201");
+  assert.equal(quarantined.read_authority, "none");
+  assert.equal(quarantined.write_authority, "frozen");
+  const originRestartJira = fakeJira();
+  await execution({ root: originFailureDir, simulation: originRestartJira });
+  assert.equal(originRestartJira.calls(), 0,
+    "a linked IssueKey without a durable Origin requires manual recovery, never replayed Create");
+  console.log("PASS: failed post-Create Origin persistence quarantines the issue and blocks replay after restart");
+
   const wrongDir = join(root, "wrong"), wrong = fakeJira({ wrongRead: true });
   const mismatch = await execution({ root: wrongDir, simulation: wrong });
   assert.equal(mismatch.report.origin_status, "UNKNOWN_ORIGIN");
@@ -190,6 +250,60 @@ try {
   assert.equal(noGate.report.create_attempted, false);
   assert.equal(blocked.calls(), 0);
   console.log("PASS: no trusted external gate -> no Jira Create");
+
+  const rejectExplicitReporter = async input => {
+    const request = input.stage === "search" ? input.context.create_preflight
+      : input.stage === "intent" ? input.context.create_request
+        : input.stage === "create" ? input.context.request : null;
+    if (request && Object.hasOwn(request, "reporter"))
+      throw new Error("G3 Create request cannot specify reporter");
+    return gate(input);
+  };
+  const reporterSearchCalls = { search: 0, create: 0 };
+  const reporterSearchActor = createG3SupervisedAdapter({
+    ledger: createG3FileLedger({ root: join(root, "reporter-search"), ledgerRef }),
+    jira: {
+      async search() { reporterSearchCalls.search++; return { status: "none", tool_call_count: 1 }; },
+      async create() { reporterSearchCalls.create++; throw new Error("unexpected Jira Create"); },
+      async read() { throw new Error("unexpected Jira GET"); },
+    }, verifyGate: rejectExplicitReporter, siteOrigin: "https://jira.example",
+    capabilityEvidence: fixtureCapabilities,
+  });
+  await assert.rejects(() => reporterSearchActor.search({ project: "RPL",
+    create_preflight: { issue_type: "Task", summary: contract.Summary, reporter: null } }),
+  /cannot specify reporter/i);
+  assert.deepEqual(reporterSearchCalls, { search: 0, create: 0 },
+    "Search preflight with reporter:null must stop before Jira Search or Create");
+
+  const reporterIntentId = "g3-fixture-reporter-intent-0001";
+  const reporterIntentLedger = createG3FileLedger({ root: join(root, "reporter-intent"), ledgerRef });
+  const reporterIntentActor = createG3SupervisedAdapter({ ledger: reporterIntentLedger,
+    jira: fakeJira().jira, verifyGate: rejectExplicitReporter,
+    siteOrigin: "https://jira.example", capabilityEvidence: fixtureCapabilities });
+  await assert.rejects(() => reporterIntentActor.persistIntent({
+    ...pendingIntent(reporterIntentId),
+    create_request: { issue_type: "Task", summary: contract.Summary, reporter: null },
+  }), /cannot specify reporter/i);
+  assert.equal((await reporterIntentLedger.inspectRequest(reporterIntentId)).pending, null,
+    "Intent with reporter:null must stop before durable Intent persistence");
+
+  const reporterCreateCalls = { search: 0, create: 0 };
+  const reporterCreateLedger = createG3FileLedger({ root: join(root, "reporter-create"), ledgerRef });
+  const reporterCreateActor = createG3SupervisedAdapter({ ledger: reporterCreateLedger,
+    jira: {
+      async search() { reporterCreateCalls.search++; return { status: "none", tool_call_count: 1 }; },
+      async create() { reporterCreateCalls.create++; throw new Error("unexpected Jira Create"); },
+      async read() { throw new Error("unexpected Jira GET"); },
+    }, verifyGate: rejectExplicitReporter, siteOrigin: "https://jira.example",
+    capabilityEvidence: fixtureCapabilities });
+  const reporterCreateIntentId = "g3-fixture-reporter-create-0001";
+  await reporterCreateActor.persistIntent(pendingIntent(reporterCreateIntentId));
+  await assert.rejects(() => reporterCreateActor.create({
+    issue_type: "Task", summary: contract.Summary, reporter: null,
+  }), /cannot specify reporter/i);
+  assert.deepEqual(reporterCreateCalls, { search: 0, create: 0 },
+    "Create with reporter:null must stop before Jira Create");
+  console.log("PASS: explicit top-level reporter is rejected before Jira Search, Intent persistence, or Jira Create");
 
   const missingApprovalDir = join(root, "missing-approval");
   const missingApprovalLedger = createG3FileLedger({ root: missingApprovalDir, ledgerRef });
@@ -228,7 +342,7 @@ try {
       return gate(input);
     }, siteOrigin: "https://jira.example", capabilityEvidence: fixtureCapabilities });
   await createRaceActor.persistIntent(pendingIntent("g3-fixture-create-race-0001"));
-  const createRequest = { summary: contract.Summary };
+  const createRequest = { issue_type: "Task", summary: contract.Summary };
   const concurrentCreates = [createRaceActor.create(createRequest), createRaceActor.create(createRequest)];
   releaseCreateGate();
   const createResults = await Promise.allSettled(concurrentCreates);
@@ -244,7 +358,7 @@ try {
   const mutablePending = pendingIntent("g3-fixture-mutable-intent-0001");
   await mutableIntentActor.persistIntent(mutablePending);
   mutablePending.fields.customfield_10108.id = "10020";
-  await mutableIntentActor.create({ summary: contract.Summary });
+  await mutableIntentActor.create({ issue_type: "Task", summary: contract.Summary });
   await assert.rejects(() => mutableIntentActor.read({ key: "RPL-201", fields: [] }),
     /inconsistent with the durable approved Intent/);
   console.log("PASS: caller mutation cannot change the adapter's approved Intent field snapshot");
@@ -255,7 +369,7 @@ try {
   const intent = { create_request_id: "g3-fixture-race-0001", ledger_ref: ledgerRef,
     status: "pending", approved_preview_id: "sha-fixture", activation_ref: "fixture-task-activation",
     cutover_approval_ref: "fixture-owner-approval",
-    issue_type: "Task", fields: { customfield_10108: { id: "10027" } } };
+    issue_type: "Task", issue_type_id: "10010", fields: { customfield_10108: { id: "10027" } } };
   const outcomes = await Promise.all([a.persistIntent(intent), b.persistIntent(intent)]);
   assert.equal(outcomes.filter(x => x.created_new).length, 1);
   console.log("PASS: concurrent file CAS allows one pending Intent");
@@ -302,6 +416,11 @@ try {
     cutover_approval_ref: "different-owner-approval" }) + "\n", "utf8");
   assert.equal((await pass.ledger.readClassificationAuthority("RPL-201")).read_authority, "none");
   console.log("PASS: Reader quarantines an Origin approval reference that differs from pending Intent");
+  await writeFile(originFile, JSON.stringify({ ...persistedOrigin, issue_type_id: "10007" }) + "\n", "utf8");
+  assert.equal((await pass.ledger.readClassificationAuthority("RPL-201")).read_authority, "none");
+  await writeFile(originFile, JSON.stringify({ ...persistedOrigin, origin_ref: "tampered-origin-ref" }) + "\n", "utf8");
+  assert.equal((await pass.ledger.readClassificationAuthority("RPL-201")).read_authority, "none");
+  console.log("PASS: Reader quarantines Ledger Origin Type ID and OriginRef tampering");
 
 
   console.log("G3 offline supervised Adapter/Origin Ledger fixtures passed");

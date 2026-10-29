@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "record_type": "G3_CUTOVER_CANDIDATE_AGGREGATE_ONLY",
+  "status": "READ_ONLY_AGGREGATE_ONLY",
+  "note": "Public aggregate only; per-issue IssueKey/Target classifications are intentionally withheld. This does NOT approve any G3 Cutover, does NOT establish Origin or ReadAuthority, and does NOT remediate historical public Git object exposure.",
+  "execution_authorized": false,
+  "cutover_approved": false,
+  "read_authority_changed": false,
+  "jira_read_count": 0,
+  "jira_write_count": 0,
+  "source": {
+    "access": "PRIVATE_OWNER_CONTROLLED",
+    "repository": "ranikun-labs/platform-services",
+    "record_type": "G2_FINAL_118_VERIFICATION",
+    "source_git_blob_sha": "aea968a4dca76194b0de96db6fe20c1c20648470"
+  },
+  "summary": {
+    "g2_rows": 118,
+    "supported_type_rows": 106,
+    "protected_origin_unknown_rows": 3,
+    "candidates": 103,
+    "unsupported_story_rows": 4,
+    "unsupported_subtask_rows": 8,
+    "candidate_type_counts": {
+      "Epic": 8,
+      "Feature": 31,
+      "Task": 50,
+      "Bug": 5,
+      "Research": 9
+    },
+    "candidate_cutover_ready": 0,
+    "g2_candidate_storage_evidence_counts": {
+      "preexisting_target_27": 24,
+      "backfill_31": 31,
+      "backfill_48": 48,
+      "final_story_subtask_12": 0
+    }
+  },
+  "protected_issue_count": 3,
+  "protected_not_in_snapshot_count": 2,
+  "required_g3_verification": [
+    "per_issue_legacy_snapshot",
+    "origin",
+    "changelog",
+    "owner_approval",
+    "cutover_approval",
+    "trusted_authority_reader"
+  ],
+  "per_issue_candidate_records": "WITHHELD_PRIVATE_ONLY",
+  "git_history_exposure_review": "OWNER_DECISION_REQUIRED"
+}

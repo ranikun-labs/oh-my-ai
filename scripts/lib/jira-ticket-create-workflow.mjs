@@ -36,8 +36,16 @@ function isBlocking(value) {
   return BLOCKING_SENTINELS.has(normalizedText(value).toLowerCase());
 }
 
+export function isValidJiraTicketWorkflowText(value) {
+  return normalizedText(value).length > 0 && !isBlocking(value);
+}
+
+export function isValidJiraTicketContract(contract) {
+  return CONTRACT_FIELDS.every((field) => isValidJiraTicketWorkflowText(contract?.[field]));
+}
+
 function hasValidContract(contract) {
-  return CONTRACT_FIELDS.every((field) => normalizedText(contract?.[field]) && !isBlocking(contract[field]));
+  return isValidJiraTicketContract(contract);
 }
 
 function missingCreateMetadata(contract, metadata) {
@@ -46,7 +54,7 @@ function missingCreateMetadata(contract, metadata) {
     ["Assignee", metadata?.assignee], ["Priority", metadata?.priority], ["Product", metadata?.product],
     ["Primary Repository", metadata?.repository], ["Area", metadata?.area],
   ];
-  return required.filter(([, value]) => !normalizedText(value) || isBlocking(value)).map(([field]) => field);
+  return required.filter(([, value]) => !isValidJiraTicketWorkflowText(value)).map(([field]) => field);
 }
 
 function hasCapability(state, capability) {
@@ -115,10 +123,15 @@ function targetCreateError(target, metadata) {
     || live.issue_type !== metadata.issue_type
     || live.issue_type_id !== supportedTypeId) return "Jira Issue Type·실제 Create Metadata 불일치";
   const fields = live.fields;
-  if (!fields || LEGACY_CLASSIFICATION_FIELDS.some(k =>
-    !fields[k] || fields[k].required !== false || fields[k].hasDefaultValue !== false
-      || (fields[k].defaultValue != null
-        && !(Array.isArray(fields[k].defaultValue) && fields[k].defaultValue.length === 0))))
+  const allowMissingLegacy = metadata.project === "RPL" && supportedTypeId === "10010"
+    && live.issue_type === "Task" && live.issue_type_id === "10010";
+  if (!fields || typeof fields !== "object" || Array.isArray(fields)
+    || LEGACY_CLASSIFICATION_FIELDS.some(k => {
+      if (!Object.hasOwn(fields, k)) return !allowMissingLegacy;
+      return !fields[k] || fields[k].required !== false || fields[k].hasDefaultValue !== false
+        || (fields[k].defaultValue != null
+          && !(Array.isArray(fields[k].defaultValue) && fields[k].defaultValue.length === 0));
+    }))
     return "Legacy 필수/기본값 해제 미검증";
   if (fields[TARGET_FIELDS.product]?.required !== true || fields[TARGET_FIELDS.component]?.required !== true
     || fields[TARGET_FIELDS.concern]?.required !== false) return "Target 필수/선택 계약 미검증";
@@ -246,13 +259,24 @@ function createDescription(snapshot) {
 }
 
 function searchRequest(contract, metadata) {
-  return {
+  const request = {
     project: "RPL", summary_keywords: contract.Summary, product: metadata.product,
     repository: metadata.repository, area: metadata.area, related_pr: metadata.pr ?? null,
     branch: metadata.branch ?? null, decision: metadata.decision ?? null,
     existing_issue_key: metadata.existing_issue_key ?? null, created_after: metadata.created_after ?? null,
     contract_fingerprint_candidate: `${contract.Summary}|${metadata.product}|${metadata.repository}|${metadata.area}`,
   };
+  if (metadata.target_create) {
+    request.create_preflight = buildJiraTicketCreateRequest({
+      project: metadata.project, issue_type: metadata.issue_type, contract,
+      assignee: metadata.assignee, priority: metadata.priority,
+      labels: canonicalLabels(metadata.labels), product: metadata.product,
+      primary_repository: metadata.repository, area: metadata.area,
+      branch: metadata.branch ?? null, pr: metadata.pr ?? null,
+      current_head: metadata.current_head ?? null, target_create: metadata.target_create,
+    });
+  }
+  return request;
 }
 
 function terminal(state, patch) {
@@ -260,12 +284,16 @@ function terminal(state, patch) {
   return { state, report: state.report, required_action: null };
 }
 
-function createRequest(snapshot) {
+/** Pure Core payload builder shared with offline previews; it grants no authorization. */
+export function buildJiraTicketCreateRequest(snapshot) {
   return {
     project: snapshot.project, issue_type: snapshot.issue_type, summary: snapshot.contract.Summary,
-    description: createDescription(snapshot), assignee: snapshot.assignee,
-    priority: snapshot.priority, labels: snapshot.labels,
-    ...(snapshot.target_create ? { fields: targetCreateFields(snapshot) } : {}),
+    description: createDescription(snapshot),
+    // Logical Ticket Contract metadata is not automatically a Jira Create field.
+    // The live G3 Task schema omits these wrappers. Legacy Create is unchanged.
+    ...(snapshot.target_create
+      ? { fields: targetCreateFields(snapshot) }
+      : { assignee: snapshot.assignee, priority: snapshot.priority, labels: snapshot.labels }),
   };
 }
 
@@ -402,10 +430,11 @@ export function applyJiraPreviewApproval(state, approval) {
       request: { create_request_id: target.request_id, ledger_ref: target.ledger_ref,
         activation_ref: target.cutover.activation_ref, status: "pending",
         approved_preview_id: state.preview_id, issue_type: state.approved_snapshot.issue_type,
-        fields: targetCreateFields(state.approved_snapshot) },
+        fields: targetCreateFields(state.approved_snapshot),
+        create_request: buildJiraTicketCreateRequest(state.approved_snapshot) },
     } };
   }
-  return { state, report: state.report, required_action: { type: "jira.create_required", request: createRequest(state.approved_snapshot), preview_id: state.preview_id } };
+  return { state, report: state.report, required_action: { type: "jira.create_required", request: buildJiraTicketCreateRequest(state.approved_snapshot), preview_id: state.preview_id } };
 }
 
 /** Validates a runtime-normalized Create result without constructing a Jira URL or Key. */
@@ -473,7 +502,7 @@ export function applyJiraIntentResult(state, result) {
   state.stage = "await_create";
   return { state, report: state.report, required_action: {
     type: "jira.create_required", preview_id: state.preview_id,
-    request: createRequest(state.approved_snapshot),
+    request: buildJiraTicketCreateRequest(state.approved_snapshot),
   } };
 }
 

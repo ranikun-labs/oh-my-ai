@@ -4,12 +4,14 @@
 > Policy SSOT: `ranikun-labs/harness-foundation-docs/docs/governance/jira-field-taxonomy.md` §8.0/§8.1 및
 > `portfolio-work-management-governance.md`. 정책과 충돌하면 Foundation `main` 및 별도 Owner 결정을 따른다.
 
+> **2026-10-27 최신 READ-ONLY 상태:** G2 118/118 저장 완료, Task Legacy/Target Admin 설정 PASS. 현재 Task Create는 Live Metadata Gate에서 차단된다. 실제 응답은 `{startAt,maxResults,total,fields:[{fieldId,...}]}`의 22개 필드이며 pagination bounds는 signed digest에 포함되고 불완전한 단일 페이지는 거부된다. wrapper `assignee`/`priority`/`labels`가 없고 `reporter`는 required/default 플래그만 있고 값이 없다. `customfield_10045`는 required/default account지만 현재 `allowedValues`가 없으며 `customfield_10015`/`duedate`도 required/default 없음. Issue Type ID `10010`의 현재 localized name은 `작업`. Exact Create preflight는 Search 전과 Intent/replay CAS 전에 검증된다. 누락 필드·계정 목록·기본값을 합성해 Gate를 통과시키지 않는다. 이 관측으로 Task Admin 설정을 재변경하지 않으며 실제 Create/Owner 승인 상태도 바뀌지 않는다.
+
 ## 제3자가 30초에 이해해야 할 결론
 
-- G1: Target 필드는 생성됨. G2: 승인된 기존 이슈 27건에 Target 분류값 저장, **Legacy가 계속 분류 권위**.
+- G1: Target 필드는 생성됨. G2: 승인된 기존 이슈 **118/118**에 Target 분류값 저장, **Legacy가 계속 분류 권위**.
 - PR #81: 새로운 Target 분류로 Jira 이슈를 만들기 위한 **Core 프로토콜** 병합 완료.
-- 이 PR: **단일 Writer·단일 Host의 Reference Adapter + filesystem CAS Intent/Origin Ledger + Reader + Mock 테스트**. 실 서비스 배포·Jira 쓰기 없음.
-- 아직 실제 Atlassian Connector, 인증된 G3 Activation/Metadata verifier, 운영 영속 볼륨, Board/Filter/Automation의 Authority Reader 연결이 없다.
+- 이 PR: Connector, 서명 Gate, filesystem CAS Intent/Origin Ledger, Reader를 통합하고 합성 Native fixture로 검증한다. 실 서비스 배포·Jira 쓰기 없음.
+- Runtime의 실제 invokeTool 세션, signed evidence source, durable replay CAS, 운영 영속 볼륨, Board/Filter/Automation Reader 연결은 검증되지 않았다.
 - 따라서 **이 PR을 병합해도 G3 Task 실제 Create나 권위 전환은 금지**한다.
 
 ## 데이터 흐름
@@ -44,9 +46,73 @@ Foundation 정책 경계: §8.0에 해당하는 Owner 승인 소량·단일 Writ
 - `persistOrigin`은 Core가 보낸 승인 참조가 pending Intent와 정확히 같은지 확인하고, Ledger도 Origin 등록 및 Reader 경로에서 같은 값을 다시 대조한다. 불일치하면 Origin 등록을 거부하고 Reader는 `UNKNOWN_ORIGIN / none / frozen`을 반환한다.
 - `evidence_ref`와 `cutover_approval_ref`는 감사 가능한 근거를 가리키는 식별자다. 식별자 문자열만으로 승인을 입증했다고 간주하지 않는다.
 
+## 오프라인 Task Pilot 요청 모양 사전검사
+
+`node scripts/jira-ticket-g3-task-pilot-dry-run.mjs <local-json-file>`은 RPL Task(10010)의 입력 모양과 생성될 Jira 요청을 로컬에서 미리 확인한다. 입력에는 현재 Task Create Metadata의 22개 필드와 페이지 정보, 14개 Ticket Contract 항목, Product/Component/Concern 선택값의 정확한 ID·`value`, 실제로 확정된 시작일과 마감일이 있어야 한다. 요청 본문은 실제 Core Create 요청과 같은 빌더로 생성한다.
+
+이 명령은 Jira Connector를 만들거나 Jira를 호출하지 않는다. 입력 Metadata는 **호출자가 제공한 미검증 자료**이며 서명·소유자 승인·Activation·인증 세션을 검증하지 않는다. 출력 `PREVIEW_ONLY`는 실행 승인이 아니고, `execution_authorized`, Owner/Policy/Metadata 서명 검증은 false, Jira/Create 호출 수는 0이다. Task Create 값으로 `reporter`와 `customfield_10045`를 받지 않는다. Metadata의 people 기본값은 형상 검증에만 사용하고 출력하지 않는다. Synthetic fixture 통과는 Live Jira 검증이나 Pilot 승인으로 승격하지 않는다.
+
+검증 명령은 `make test-jira-ticket-g3-task-pilot-dry-run`이며 `make test-jira-ticket-g3-integrations`에도 포함된다. 이 사전검사를 통과해도 실제 Search/Create, Intent CAS, Origin 등록, Reader 확인은 별도 Runtime·서명·Owner Gate를 통과하기 전까지 금지한다.
+
+## 2026-10-28 Task Pilot 후보 — READ-ONLY / 미승인
+
+현재 Jira RPL Task(10010) Create Metadata를 READ-ONLY로 다시 관측했다. 응답은 단일 페이지 `startAt=0`, `maxResults=100`, `total=22`였다. Target Product(10108)와 Component(10109)는 필수·기본값 없음이며 현재 옵션에 `dev-harness (10027)` 및 `backend (10028)`가 각각 존재한다. Concern(10110)은 선택 필드이고 14개 허용 옵션이 있다. 시작일(10015)과 기한(`duedate`)은 필수 날짜이며 기본값이 없다. Reporter는 required/default 플래그가 있지만 `defaultValue`/`allowedValues` 키가 없다. `customfield_10045`는 required/default 플래그와 기본값이 응답됐지만 `allowedValues`는 없다. 계정 기본값은 이 문서나 출력에 복사하지 않는다. 이 Rovo 응답은 읽기 전용 관측이며 서명된 Trusted Gate Metadata 증거가 아니다.
+
+### Owner 검토 초안 — PROPOSED / NOT APPROVED
+
+Jira `RPL` / Task(10010); Target Product `dev-harness (10027)`, Component `backend (10028)`, Concern `[]`; 시작일 `2026-10-29`, 기한 `2026-10-30`.
+
+1. **Summary:** `[G3 PILOT] Target 분류 단일 Task 검증`
+2. **Context:** G2의 기존 118건 Target 값 저장은 검증됐으나 신규 Task 생성 및 Target 권위 활성화는 미검증 상태다.
+3. **Goal:** 신규 Task 한 건의 Target 분류 저장, 재조회, Origin 등록 및 Reader 권위를 검증한다.
+4. **Source of Truth:** `harness-foundation-docs/docs/governance/jira-field-taxonomy.md` §8.0 및 `oh-my-ai/docs/jira-g3-task-readiness-runbook.md`.
+5. **In Scope:** 승인된 단일 Task Pilot, 필수 필드 검사, Create 1회, 재조회, 영속 증거 기록, 실패 격리.
+6. **Out of Scope:** 기존 118건 일괄 Cutover, Story/Subtask 이전, G4 레거시 삭제, 운영 자동 대량 생성.
+7. **Acceptance Criteria:** 정확한 승인·필드·서명 증거와 pending 기록이 선행돼야 한다. Create 후 IssueKey, Target 값, Origin과 Reader 권위가 일치해야 한다.
+8. **Repository:** `ranikun-labs/oh-my-ai`
+9. **Base Branch:** `fix/jira-g3-capability-evidence-fail-closed-20261022`
+10. **Expected Branch Name:** `feat/jira-g3-integration-offline-20261022`
+11. **Dependencies:** PR #84 코드, Jira Task Metadata, 승인된 Owner·Activation 증거, 단일 Writer, 영속 Ledger와 복구 경로.
+12. **Verification:** Core Dry-run → 승인 검증 → 생성 전 pending → Create 최대 1회 → GET → Origin/Reader 대조 → 실패 시 격리 및 수동 복구.
+13. **Do Not Touch:** 기존 이슈 Legacy 값, G2 Snapshot, 미지원 유형, Board/Filter/Automation 운영 설정, G4 필드 삭제.
+14. **Definition of Done:** 승인된 단일 Pilot이 생성되고 필드·Origin·권위 검증 및 감사 증거가 완료되었거나, 실패 상태가 중복 생성 없이 안전하게 격리되어야 한다.
+
+이 초안은 **Owner 승인·서명·Create 권한이 아니다**. Core Description은 위 14개 항목 외에 Workflow Metadata 헤더 `Product`, `Primary Repository`, `Area`, `Assignee`, `Priority`, `Branch`, `PR`, `Current HEAD`를 포함해 생성된다. Project/Issue Type, Repository, Branch, PR, Current HEAD는 현재 업무에서 확인되며 Product는 Target 값 `dev-harness`를 제안값으로 쓸 수 있다. **논리적 Description 후보값은 별도 Owner 검토 문서에 제안되어 있다:** Assignee `박성환`(RPL-122 현 담당자 참조), Priority `Medium`, Area `Jira Migration`. 최종 확정·승인은 아직 없다. [수정된 14필드 Core Description 후보](jira-g3-task-pilot-owner-preview-20261028.md)를 재사용하고 Base Branch는 실제 PR #84 기준 `fix/jira-g3-capability-evidence-fail-closed-20261022`로 고정한다. 이 값들은 Jira Create의 assignee/priority wrapper로 전송되지 않지만 Core가 Description을 만들기 위해 필요하다.
+
+**현재 차단 이유는 '후보 Assignee·Priority·Area 부재'가 아니다.** 수정된 전체 Description의 검토용 텍스트가 존재하지만, 앞선 `PREVIEW_ONLY` 실행에는 Base Branch 오기가 있었으므로 최신 수정 후보에 대한 **실행 가능한 Core 기반 Offline Preflight는 NOT_RUN**이다. 다음 F4는 이미 존재하는 미승인 후보를 그대로 사용해 **정확한 Base Branch의 전체 Core Request 및 PREVIEW_ONLY를 실제로 다시 실행**하고, 결과 Preview/Request digest를 고정해야 한다. Jira Live Metadata의 unsigned Rovo 응답은 신뢰된 서명 Gate와 다르며, Owner는 최종 Description·날짜·분류 및 별도 단일 Create 범위를 검토·승인해야 한다. **이번 초안은 아직 Create하지 않아 `NOT_CREATED`다.** Create 전 차단은 `NOT_CREATED / BLOCKED`로, Create 시도 후 결과가 불명확하면 실제 이슈가 생성됐을 수 있으므로 `POSSIBLY_APPLIED / QUARANTINED`로 보고하며 자동 재시도하지 않는다. 어느 격리 상태도 Pilot 성공이 아니다. Live Metadata의 Rovo 응답도 unsigned이므로 서명된 Gate 증거를 대신하지 않는다. 이 초안으로 Jira Create는 실행하지 않았다.
+
+기존 `createG3FileLedger`는 같은 파일시스템에서 immutable JSON pending/link/origin 레코드, create-if-absent와 fsync를 구현하지만, Codex Cloud의 승인된 지속 볼륨·백업·복원 또는 Git 버전 이력을 보증하지 않는다. §8.0 경량 Fast Track은 별도 Registry 서버를 요구하지 않아도 되지만, 실제 실행 전에는 Owner가 durable 저장 경로와 증거 대장을 지정하고 pending 기록을 Create보다 먼저 남겨야 한다. 승인 없는 후보 행을 실제 실행 기록으로 만들지 않는다.
+
+기존 Core/Gate/Adapter가 요청 digest·CreateRequestId·pending CAS·단일 Create·IssueKey link·GET/Target 대조·Origin·Reader와 불명확 결과 격리를 제공한다. 이 경로의 운영용 신뢰 발급원·durable replay/ledger 연결은 아직 검증되지 않았다. 기존 이슈 Cutover, Board/Filter/Automation의 실제 Legacy 소비처 export도 완료되지 않았으므로 G4 변경은 HOLD다.
+
+### G3 Cutover 103건 후보 집계 — 공개용 · 상세 비공개 / 실행 미승인
+
+2026-10-23 비공개 G2 최종 감사 JSON(`ranikun-labs/platform-services`, 감사 커밋 `530dd0f88e5819158362b620ca1591779a50cba5`, Git blob `aea968a4dca76194b0de96db6fe20c1c20648470`)에서 118건의 저장 검증 결과를 재사용했다. 지원 유형 106건 중 출처가 검증되지 않은 3건을 격리하고 Story 4건·Subtask 8건을 제외한 **103건이 읽기 전용 Cutover 후보**다. 공개된 [`docs/evidence/jira-g3-cutover-candidate-inventory-20261023.json`](evidence/jira-g3-cutover-candidate-inventory-20261023.json)은 **집계 및 미승인 상태만 포함**한다. 이슈별 IssueKey·Target 값·후보 Manifest는 비공개 원본/보관소에서만 관리한다. **승인된 전환 후보 0건, 실제 Cutover 0건, G2 전수 Jira 재감사 0회.**
+
+추가로 G2 원본/복구 Manifest 4종을 대조해 **103건 전원의 G2 저장 근거 배치**를 연결했다: 기존 Target 저장 27건 중 후보 **24건**, G2 재저장 **31건**, G2 재저장 **48건**. 최종 Story/Subtask **12건**은 지원 유형 후보가 아니다. 원본 118건은 27+31+48+12로 중복·누락 없이 일치한다. 해당 G2 배치 증거는 G3 이슈별 Origin·Changelog·Cutover 승인이나 실제 운영 복구 능력을 증명하지 않는다.
+
+공개 JSON은 집계 참조 자료일 뿐이다. `scripts/jira-ticket-g3-cutover-candidate-manifest.mjs`가 생성하는 이슈별 상세 Manifest는 접근권 있는 단일 Writer가 비공개 위치에서만 보관하고, 공개 CI 로그·PR·Issue 댓글에 게시하지 않는다. 앞선 공개 Commit에 포함된 이슈별 정보는 현재 Tree의 집계 전환만으로 Git 이력에서 사라지지 않는다. 이력의 잔존 노출에 대한 접근 범위·복구/정리 절차는 **Owner 별도 결정**을 요구한다. Origin/Reader 및 승인 증거 없이 `ReadAuthority=target`으로 변경하지 않는다.
+
 ## Task(10010)만 실제 G3 시험할 때 필요한 Owner 결정
 
-| 항목 | 현행(READ-ONLY 확인) | 변경/검증 예정 | 권한 |
+### 후속 통합 코드의 검증 범위
+
+- `jira-ticket-g3-jira-connector.mjs`: 현재 Plugin 도구의 Search/Create/GET 인자에 매핑하고, 별도로 주입된 세션 검증자의 Site/Cloud/Capability·유효기간 증거를 매 호출 전에 검사한다. 합성 응답만 검증했으며 실제 운영 인증·도구 응답 호환성·연결 상태는 **NOT_VERIFIED**다. Create 응답이 `{id,key,self}`뿐이거나 반환 Project/Summary/IssueType 근거가 부족하면 `possibly_applied`로 격리하며 자동 재시도하지 않는다.
+- `jira-ticket-g3-trusted-gate.mjs`: 독립적으로 고정한 공개키로 Owner 승인·Activation·정책·실시간 Metadata의 서명과 기간·정확한 Preview/Create 범위를 검증한다. Legacy required/default와 필수 일정·담당자도 신뢰 Metadata로 확인한다. 기존 Target 읽기는 별도의 이슈별 서명 권한을 검증하므로 미래 Create의 만료·Rollback과 분리된다. 실제 발급자, 키 배포·폐기, 신뢰 원천 조회 및 영속 Replay CAS 연결은 운영 환경에서 별도 검증해야 한다. 테스트의 임시 서명자는 운영 Owner가 아니다.
+- `jira-ticket-g3-ledger-recovery.mjs`: 기존 파일 원장과 별도 서명된 수동 복구 승인으로 알려진 IssueKey를 GET·대조하고 연결/Origin을 복구한다. Create/Search/Admin 호출은 없으며 손상·불일치·조회 소실 시 격리한다. 운영 원장 버전 보존·백업·복구를 대신하지 않는다.
+- `jira-ticket-g3-authority-reader.mjs`: 인증된 Legacy 출처 resolver와 Target Origin+GET Reader를 결합한다. Legacy 다중 선택값은 전부 보존하고, 기존 이전 이슈는 별도 `cutover` 근거를 요구한다. 현 파일 Ledger는 `target_create`만 저장하므로 기존 이전 이슈에는 별도 검증된 Migration Reader가 필요하다. RPL-112/113/114/122/124는 항상 격리하고, UNKNOWN은 집계의 분류 건수에서 제외한다. Board/Filter/Automation 설정을 변경하는 코드는 없다.
+
+`node scripts/jira-ticket-g3-cutover-preflight.mjs <pinned-g2-snapshot.json>`은 `platform-services`의 G2 final118 snapshot Blob SHA와 118행·유형별 수를 검증하고, 지원 106건에서 RPL-112/113/114를 제외한 103개 IssueKey만 출력한다. 각 행은 G2 저장값 요약만 참조하며 issue 내용 전체를 복제하지 않는다. OriginRef, ChangelogRef, OwnerApprovalRef, CutoverApprovalRef가 이 per-issue snapshot에 없으므로 현재 103건은 모두 `NOT_READY`다. 별도 검증된 Reader/Origin/GET 근거와 Owner Cutover 승인 전에는 어떤 ReadAuthority도 바꾸지 않는다. 이 preflight는 Jira를 호출하지 않는다.
+
+```bash
+make test-jira-ticket-g3-integrations
+```
+
+이 명령은 합성 Jira·임시 서명키·임시 원장만 사용한다. §8.0의 소량·단일 Writer·직렬 경량 대장 허용은 유지하며, 병렬 개발·테스트는 운영 동시 Writer 승인을 뜻하지 않는다. 이 통합 코드를 병합하더라도 실제 Connector 연결, Task Admin 변경, 시험 Create 최대 1건 및 G3 Cutover는 각각 Owner Gate를 통과해야 한다.
+
+> 아래 Admin 표는 Task 설정 변경 전 계획 Snapshot이다. 2026-10-27 기준 Task Admin 변경은 완료되었으며, 상단 Live Metadata Gate 차단 상태가 현재 기준이다.
+
+| 항목 | 당시 현행(READ-ONLY 확인) | 당시 변경/검증 계획 | 권한 |
 |---|---|---|---|
 | Legacy Product `customfield_10042` | Required, 기본값 있음 | Optional, default 해제, 기존 값 보존 | Jira Admin 별도 승인 |
 | Legacy Component `customfield_10043` | Required, 기본값 있음 | Optional, default 해제, 기존 값 보존 | Jira Admin 별도 승인 |
@@ -93,3 +159,12 @@ git diff --check
 - **보장하지 않음:** Jira 서버 자체의 `CreateRequestId` 멱등 API, 전역/다중 호스트 exactly-once 생성, 다른 RequestId로 같은 이슈를 중복 요청하는 경우, 응답 소실 뒤 자동 결과 복구.
 - **복구:** Create가 성공했지만 응답·IssueKey 연결을 잃으면 `possibly_applied / UNKNOWN_ORIGIN`으로 격리하고 Maintainer가 Jira와 대장을 수동 대조한다. Create 재실행은 금지.
 - **권위 Reader:** 노출하는 두 Adapter Reader API 모두 Live Jira GET와 Ledger Origin 대조를 거쳐야 Target 값을 반환한다. Ledger 단독 조회는 특권 감사·복구 용도로만 사용한다.
+
+
+## G2 118건 기반 G3 103건 후보 Manifest 생성 — READ-ONLY
+
+- **원본:** 비공개 `ranikun-labs/platform-services@530dd0f88e5819158362b620ca1591779a50cba5`의 `governance/jira-g2-full-118/final118-verification-20261023.json`, Git Blob `aea968a4dca76194b0de96db6fe20c1c20648470`, 검증 시각 `2026-10-23T03:47:22.084Z`.
+- **대상 유형:** Epic 8 / Feature 31 / Task 50 / Bug 5 / Research 9, 합계 **103건**. Story 4, Subtask 8 제외. 출처 불명 `RPL-112/113/114` 3건 격리. `RPL-122/124`는 감사 Snapshot 외부 격리.
+- **생성:** `node scripts/jira-ticket-g3-cutover-candidate-manifest.mjs <private-g2-final118.json>`으로 Git Blob SHA와 원본 구조/118건·유형 분포를 검증해 이슈별 Key, Type, Target Product/Component/Concern의 `id/value` 및 `PROPOSED_CANDIDATE / NOT_APPROVED_FOR_CUTOVER`를 가진 별도 JSON Manifest를 출력한다. 기존 `jira-ticket-g3-cutover-preflight.mjs`는 검수 상세 Report로 유지한다. JSON 파일로 저장할 때는 개인/비공개 보관소에서만 `umask 077`로 권한을 제한하고 공개 CI 로그·PR·Issue 코멘트에 원본 및 후보 목록을 붙여넣지 않는다.
+- **회귀 검증:** `node scripts/test-jira-ticket-g3-cutover-preflight.mjs`는 합성 118건 Fixture로 동작하며, 비공개 G2 파일을 가진 실행자만 `JIRA_G2_SNAPSHOT_PATH=<private-g2-final118.json> node scripts/test-jira-ticket-g3-cutover-preflight.mjs`로 추가 원본 검증을 실행한다. 승인 상태를 바꾸거나 Jira에 접근하지 않는다.
+- **권한 경계:** `PROPOSED_CANDIDATE / NOT_APPROVED_FOR_CUTOVER`는 **분류 후보일 뿐**이다. G2 저장 검증은 이슈별 Legacy Snapshot·Changelog·Origin·OwnerApprovalRef·CutoverApprovalRef·Trusted Reader 근거를 충족하지 않는다. `ReadAuthority=target` 변경, 분류 WriteAuthority 해제, G4 Legacy 정리는 각각 별도의 Gate가 있다.

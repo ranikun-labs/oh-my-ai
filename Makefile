@@ -40,6 +40,26 @@ test-truthfulness-fixtures:
 test-jira-ticket-fixtures:
 	./scripts/test-jira-ticket-fixtures.sh
 
+.PHONY: test-jira-ticket-g3-integrations
+test-jira-ticket-g3-integrations:
+	node scripts/test-jira-ticket-g3-jira-connector.mjs
+	node scripts/test-jira-ticket-g3-read-only-runtime.mjs
+	node scripts/test-jira-ticket-g3-file-ledger.mjs
+	node scripts/test-jira-ticket-g3-trusted-gate.mjs
+	node scripts/test-jira-ticket-g3-ledger-recovery.mjs
+	node scripts/test-jira-ticket-g3-authority-reader.mjs
+	node scripts/test-jira-ticket-g3-integration.mjs
+	node scripts/test-jira-ticket-g3-task-pilot-dry-run.mjs
+	node scripts/test-jira-ticket-g3-cutover-preflight.mjs
+
+.PHONY: test-jira-ticket-g3-read-only-runtime
+test-jira-ticket-g3-read-only-runtime:
+	node scripts/test-jira-ticket-g3-read-only-runtime.mjs
+
+.PHONY: test-jira-ticket-g3-task-pilot-dry-run
+test-jira-ticket-g3-task-pilot-dry-run:
+	node scripts/test-jira-ticket-g3-task-pilot-dry-run.mjs
+
 test-jira-work-fixtures:
 	./scripts/test-jira-work-fixtures.sh
 
