@@ -95,6 +95,28 @@ try {
   assert.equal(gets, 1, "same recovery instance must not retry after the one GET");
   console.log("PASS: one signed GET links and durably promotes an exact issue without any Jira write");
 
+  // Model the durable state after Jira Create returned an IssueKey and the
+  // process stopped before writing Origin. Recovery may reconcile only the
+  // linked IssueKey; it never issues another Create.
+  const interruptedId = "g3-offline-recovery-request-0009";
+  const interruptedIntent = pending(interruptedId);
+  await ledger.persistIntent(interruptedIntent);
+  await ledger.linkIssue(interruptedId, { key: "RPL-915", url: `${siteOrigin}/browse/RPL-915` });
+  assert.equal((await makeRecovery({ root, ledger, jiraRead }).plan(interruptedId)).code,
+    "LINK_PRESENT_ORIGIN_MISSING");
+  let interruptedGets = 0;
+  const interruptedRecovery = makeRecovery({ root, ledger: createG3FileLedger({ root, ledgerRef }),
+    jiraRead: async ({ key }) => { interruptedGets++; return jiraResult(key); } });
+  const interruptedResult = await interruptedRecovery.reconcile({ request_id: interruptedId,
+    authorization: authorization(interruptedIntent, "RPL-915") });
+  assert.equal(interruptedResult.code, "LINK_AND_ORIGIN_DURABLE");
+  assert.equal(interruptedResult.jira_get_calls, 1);
+  assert.equal(interruptedResult.jira_create_calls, 0);
+  assert.equal(interruptedGets, 1);
+  assert.equal((await createG3FileLedger({ root, ledgerRef }).readClassificationAuthority("RPL-915")).read_authority,
+    "target");
+  console.log("PASS: post-Create/pre-Origin interruption reconciles the linked IssueKey with one GET and zero Create calls");
+
   const linkFile = join(root, "issue-links", createHash("sha256").update(id, "utf8").digest("hex") + ".json");
   await unlink(linkFile);
   const restoreLinkRecovery = makeRecovery({ root, ledger: createG3FileLedger({ root, ledgerRef }),
