@@ -187,6 +187,8 @@ if (process.env.JIRA_G2_SNAPSHOT_PATH) {
 const candidateManifest = buildG3CutoverUntrustedFixtureManifest(text, sourceFor(text));
 assert.equal(candidateManifest.status, "UNTRUSTED_FIXTURE_ONLY");
 assert.equal(candidateManifest.source.provenance, "UNTRUSTED_FIXTURE_ONLY");
+assert.ok(candidateManifest.candidates.every(row => row.g2_target_storage_status === "UNTRUSTED_FIXTURE_ONLY"));
+assert.equal(candidateManifest.candidates.some(row => row.g2_target_storage_status === "VERIFIED_IN_PINNED_G2_RECORD"), false);
 assert.equal(candidateManifest.execution_authorized, false);
 assert.equal(candidateManifest.cutover_approved, false);
 assert.equal(candidateManifest.summary.candidates, 103);
