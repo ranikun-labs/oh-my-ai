@@ -140,6 +140,25 @@ assert.deepEqual(report.jira_create_tool_payload_without_runtime_identity, {
 assert.doesNotMatch(JSON.stringify(report), /fixture-default-account/,
   "the Jira people default must never be copied to preview output");
 
+const targetOnlyInput = validInput();
+targetOnlyInput.metadata.fields = targetOnlyInput.metadata.fields.filter(field =>
+  !["customfield_10042", "customfield_10043", "customfield_10044"].includes(field.fieldId));
+targetOnlyInput.metadata.total = targetOnlyInput.metadata.fields.length;
+const targetOnlyReport = createG3TaskPilotDryRunReport(targetOnlyInput);
+assert.equal(targetOnlyReport.status, "PREVIEW_ONLY", JSON.stringify(targetOnlyReport));
+assert.deepEqual(targetOnlyReport.create_request.fields, report.create_request.fields,
+  "Target-only metadata must produce the same non-Legacy Create body");
+assert.equal(targetOnlyReport.jira_call_count, 0);
+assert.equal(targetOnlyReport.create_call_count, 0);
+
+const incompleteTargetOnlyMetadata = structuredClone(targetOnlyInput);
+incompleteTargetOnlyMetadata.metadata.fields = incompleteTargetOnlyMetadata.metadata.fields
+  .filter(field => field.fieldId !== "customfield_10019");
+incompleteTargetOnlyMetadata.metadata.fields.push(row("customfield_99999", false, false, { type: "any" }));
+incompleteTargetOnlyMetadata.metadata.total = incompleteTargetOnlyMetadata.metadata.fields.length;
+expectBlocked(incompleteTargetOnlyMetadata, /metadata field set/i);
+console.log("PASS: Task Pilot accepts a complete Target-only page but rejects unrelated missing/replaced fields");
+
 const boundBaseSha = "fa0d86270ff53c33102d6d7634e60ebeeaafa5d4";
 const baseBoundInput = validInput();
 baseBoundInput.task.workflow_metadata.current_head = "d5c38bad3831832d801c58598248f18050c8f215";
@@ -208,7 +227,7 @@ for (const forbidden of ["assignee", "priority", "labels", "description"]) {
 const incompletePage = validInput();
 incompletePage.metadata.fields.pop();
 incompletePage.metadata.total = 21;
-expectBlocked(incompletePage, /22-field page/i);
+expectBlocked(incompletePage, /metadata field set/i);
 const inconsistentPage = validInput();
 inconsistentPage.metadata.total = 21;
 expectBlocked(inconsistentPage, /incomplete or has inconsistent pagination/i);
