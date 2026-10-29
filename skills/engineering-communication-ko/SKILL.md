@@ -10,12 +10,10 @@ metadata:
     task_types:
       - reporting
     triggers:
-      - kind: keyword
+      # Narrow, non-executing report-request routing (requires PR #80 pattern Router).
+      - kind: pattern
         values:
-          - 개발 결과 보고
-          - 구현 결과 정리
-          - 테스트 결과 보고
-          - PR 결과 보고
+          - ^(?![\s\S]*(?:보고|정리|요약)\s*(?:하지\s*(?:마|말|않)|안\s*(?:해|하|했)|했(?:어|다|습니다)|했었|할\s*필요\s*없|금지))(?![\s\S]*(?:라고\s*(?:했|말|쓰)|라는\s*(?:말|표현|문장)|문장을?\s*(?:설명|분석)|(?:무슨|어떤)\s*뜻|의미가?\s*뭐|과거형))(?![\s\S]*(?:방법|하는\s*법)[\s\S]*(?:알려|설명)\s*(?:해)?\s*줘)(?!\s*(?:왜|무엇|뭐|어떻게|방법|설명해줘|예시))(?=[\s\S]*(?:개발|구현|테스트|pr|작업|f1|핵심정리))(?=[\s\S]*(?:결과|보고|정리|성과))[\s\S]*(?:(?:보고|정리|요약)\s*(?:해\s*줘|해\s*주세요|해\s*줄래|해\s*봐|해\s*보자|부탁(?:해|드립니다|합니다)?|하자|해줘요|해주실래)|(?:보여\s*줘|설명\s*해\s*줘|알려\s*줘))\s*[.!?]*$
       - kind: intent
         values:
           - summarize_development_outcome_in_korean
