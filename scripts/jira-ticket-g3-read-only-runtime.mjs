@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { createG3ReadOnlyJiraConnector, G3_JIRA_TOOL_NAMES } from "./lib/jira-ticket-g3-jira-connector.mjs";
 
 const ISSUE_KEY = /^RPL-[1-9][0-9]*$/;
+const CLOUD_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const CAPABILITIES = ["jira.read", "jira.search"];
 const READ_FIELDS = ["issuetype", "status", "summary"];
 
@@ -14,14 +15,20 @@ function blocked(code) {
   return error;
 }
 
-function expectedJql(summary) {
+function expectedJql(issueKey, summary) {
   if (/[\u0000-\u001f\u007f]/.test(summary)) throw blocked("INVALID_SEARCH_SUMMARY");
   const escaped = summary.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
-  return `project = RPL AND summary ~ "\\"${escaped}\\""`;
+  return `project = RPL AND key = ${issueKey} AND summary ~ "\\"${escaped}\\""`;
 }
 
 function normalizeSummary(summary) {
   return summary.normalize("NFKC").trim().replace(/\s+/g, " ").toLocaleLowerCase();
+}
+
+function normalizeCloudId(cloudId) {
+  if (typeof cloudId !== "string" || !CLOUD_UUID.test(cloudId))
+    throw blocked("RUNTIME_BRIDGE_INVALID");
+  return cloudId.toLowerCase();
 }
 
 function validateRuntime(runtime) {
@@ -39,20 +46,21 @@ function validateRuntime(runtime) {
  */
 export async function runG3ReadOnlyRuntimeSmoke({ runtime, issueKey, searchSummary } = {}) {
   validateRuntime(runtime);
+  const cloudId = normalizeCloudId(runtime.cloudId);
   if (!ISSUE_KEY.test(issueKey ?? "") || typeof searchSummary !== "string" || !searchSummary.trim())
     throw blocked("INVALID_SMOKE_TARGET");
-  const jql = expectedJql(searchSummary.trim());
+  const jql = expectedJql(issueKey, searchSummary.trim());
   let searchCalls = 0, readCalls = 0;
 
   const invokeTool = async (name, args) => {
     if (name === G3_JIRA_TOOL_NAMES.search) {
-      if (args?.cloudId !== runtime.cloudId || args.jql !== jql
+      if (args?.cloudId !== cloudId || args.jql !== jql
         || JSON.stringify(args.fields) !== JSON.stringify(["summary", "project", "issuetype"])
         || args.maxResults !== 100 || args.searchResultMode !== "issues")
         throw blocked("SEARCH_SCOPE_MISMATCH");
       searchCalls += 1;
     } else if (name === G3_JIRA_TOOL_NAMES.read) {
-      if (args?.cloudId !== runtime.cloudId || args.issueIdOrKey !== issueKey
+      if (args?.cloudId !== cloudId || args.issueIdOrKey !== issueKey
         || args.updateHistory !== false
         || JSON.stringify(args.fields) !== JSON.stringify(["project", ...READ_FIELDS]))
         throw blocked("READ_SCOPE_MISMATCH");
@@ -69,7 +77,7 @@ export async function runG3ReadOnlyRuntimeSmoke({ runtime, issueKey, searchSumma
 
   const verifySession = async proofRequest => {
     if (proofRequest?.session !== runtime.session || proofRequest.siteOrigin !== runtime.siteOrigin
-      || proofRequest.cloudId !== runtime.cloudId || !CAPABILITIES.includes(proofRequest.capability))
+      || proofRequest.cloudId !== cloudId || !CAPABILITIES.includes(proofRequest.capability))
       throw blocked("SESSION_SCOPE_MISMATCH");
     try { return await runtime.verifySession(proofRequest); }
     catch { throw blocked("SESSION_VERIFICATION_FAILED"); }
@@ -79,7 +87,7 @@ export async function runG3ReadOnlyRuntimeSmoke({ runtime, issueKey, searchSumma
   try {
     jira = await createG3ReadOnlyJiraConnector({
       invokeTool, verifySession, session: runtime.session,
-      siteOrigin: runtime.siteOrigin, cloudId: runtime.cloudId,
+      siteOrigin: runtime.siteOrigin, cloudId,
     });
   } catch {
     throw blocked("READ_ONLY_CAPABILITY_UNVERIFIED");
@@ -90,9 +98,10 @@ export async function runG3ReadOnlyRuntimeSmoke({ runtime, issueKey, searchSumma
 
   let search;
   try {
-    search = await jira.search({ project: "RPL", summary_keywords: searchSummary.trim() });
+    search = await jira.search({ project: "RPL", issue_key: issueKey, summary_keywords: searchSummary.trim() });
   } catch { throw blocked("JIRA_SEARCH_FAILED"); }
   if (search.status !== "exact_duplicate" || search.issue?.key !== issueKey
+    || normalizeSummary(search.issue.summary ?? "") !== normalizeSummary(searchSummary)
     || search.tool_call_count !== 1 || searchCalls !== 1)
     throw blocked("JIRA_SEARCH_RESULT_MISMATCH");
 
@@ -108,7 +117,7 @@ export async function runG3ReadOnlyRuntimeSmoke({ runtime, issueKey, searchSumma
   return Object.freeze({
     status: "READ_ONLY_CONNECTOR_SMOKE_PASSED",
     site_origin: runtime.siteOrigin,
-    cloud_id_fingerprint: createHash("sha256").update(runtime.cloudId).digest("hex").slice(0, 12),
+    cloud_id_fingerprint: createHash("sha256").update(cloudId).digest("hex").slice(0, 12),
     issue_key: issueKey,
     accepted_capability_proofs: CAPABILITIES,
     search: "PASS",
