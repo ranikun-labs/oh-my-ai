@@ -50,6 +50,15 @@ const metadataFields = {
   priority: { required: true, hasDefaultValue: false, schema: { type: "option" },
     allowedValues: [{ id: "3", name: "High" }] },
   labels: { required: false, hasDefaultValue: false, schema: { type: "array", items: "string" } },
+  attachment: { required: false, hasDefaultValue: false, schema: { type: "array", items: "attachment" } },
+  customfield_10000: { required: false, hasDefaultValue: false, schema: { type: "any" } },
+  customfield_10019: { required: false, hasDefaultValue: false, schema: { type: "any" } },
+  customfield_10021: { required: false, hasDefaultValue: false,
+    schema: { type: "array", items: "option" } },
+  customfield_10037: { required: false, hasDefaultValue: false, schema: { type: "any" } },
+  fixVersions: { required: false, hasDefaultValue: false, schema: { type: "array", items: "version" } },
+  issuelinks: { required: false, hasDefaultValue: false, schema: { type: "array", items: "issuelinks" } },
+  parent: { required: false, hasDefaultValue: false, schema: { type: "issuelink" } },
   reporter: { required: true, hasDefaultValue: true, defaultValue: { accountId: "fixture-owner" },
     schema: { type: "user" }, allowedValues: [{ accountId: "fixture-owner" }] },
   customfield_10042: { required: false, hasDefaultValue: false, defaultValue: [] },
@@ -338,6 +347,21 @@ await targetOnlyGate.verifyGate({ stage: "create", context: {
   request: createRequest, create_request_id: requestId, activation_ref: activationRef,
 } });
 console.log("PASS: signed Target-only metadata keeps Search/Intent/Create Gate checks while omitting removed Legacy fields");
+const missingUnrelatedTaskMetadata = structuredClone(metadataContent);
+delete missingUnrelatedTaskMetadata.fields.customfield_10019;
+missingUnrelatedTaskMetadata.total = Object.keys(missingUnrelatedTaskMetadata.fields).length;
+const missingUnrelatedTaskField = fixtureGate({ metadataOverride: missingUnrelatedTaskMetadata });
+await assert.rejects(() => missingUnrelatedTaskField.verifyGate({ stage: "search", context: searchContext() }),
+  /metadata field set/i);
+assert.equal(missingUnrelatedTaskField.fetchCounts.claim, 0,
+  "a signed page cannot remove an unrelated Task field and adjust total to appear complete");
+const unknownTaskMetadata = structuredClone(metadataContent);
+unknownTaskMetadata.fields.customfield_19999 = { required: false, hasDefaultValue: false, schema: { type: "any" } };
+unknownTaskMetadata.total = Object.keys(unknownTaskMetadata.fields).length;
+const unknownTaskField = fixtureGate({ metadataOverride: unknownTaskMetadata });
+await assert.rejects(() => unknownTaskField.verifyGate({ stage: "search", context: searchContext() }),
+  /metadata field set/i);
+console.log("PASS: signed Task Gate rejects an adjusted count with a missing core field or an unknown field");
 const currentAccountsMetadata = structuredClone(metadataContent);
 currentAccountsMetadata.fields.assignee.allowedValues = [{ accountId: "retired-account" }];
 const staleAssignee = fixtureGate({ metadataOverride: currentAccountsMetadata });
