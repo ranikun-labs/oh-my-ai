@@ -85,13 +85,13 @@ Jira `RPL` / Task(10010); Target Product `dev-harness (10027)`, Component `backe
 
 기존 Core/Gate/Adapter가 요청 digest·CreateRequestId·pending CAS·단일 Create·IssueKey link·GET/Target 대조·Origin·Reader와 불명확 결과 격리를 제공한다. 이 경로의 운영용 신뢰 발급원·durable replay/ledger 연결은 아직 검증되지 않았다. 기존 이슈 Cutover, Board/Filter/Automation의 실제 Legacy 소비처 export도 완료되지 않았으므로 G4 변경은 HOLD다.
 
-### G3 Cutover 103건 후보 대장 — READ-ONLY / 실행 미승인
+### G3 Cutover 103건 후보 집계 — 공개용 · 상세 비공개 / 실행 미승인
 
-2026-10-23 G2 최종 감사 JSON(`ranikun-labs/platform-services`, 감사 커밋 `530dd0f88e5819158362b620ca1591779a50cba5`, Git blob `aea968a4dca76194b0de96db6fe20c1c20648470`)에서 118건을 재사용하여, **103건의 읽기 전용 후보 목록**을 [`docs/evidence/jira-g3-cutover-candidate-inventory-20261023.json`](evidence/jira-g3-cutover-candidate-inventory-20261023.json)에 고정했다. 지원 유형 106건 중 출처 미입증 `RPL-112/113/114` 3건을 격리한 결과이며 Story 4건과 Subtask 8건은 제외한다. `RPL-122/124`는 G2 Snapshot 바깥의 보호 대상이다. 이 목록은 후보의 IssueKey·유형·Target 옵션과 원본 Git 증거 위치만 담고 있으며, 서명된 Cutover 승인·이슈별 Origin/Changelog/Snapshot/Reader parity를 입증하지 않는다. **승인된 전환 후보 0건, 실제 Cutover 0건, G2 전수 Jira 재감사 0회.**
+2026-10-23 비공개 G2 최종 감사 JSON(`ranikun-labs/platform-services`, 감사 커밋 `530dd0f88e5819158362b620ca1591779a50cba5`, Git blob `aea968a4dca76194b0de96db6fe20c1c20648470`)에서 118건의 저장 검증 결과를 재사용했다. 지원 유형 106건 중 출처가 검증되지 않은 3건을 격리하고 Story 4건·Subtask 8건을 제외한 **103건이 읽기 전용 Cutover 후보**다. 공개된 [`docs/evidence/jira-g3-cutover-candidate-inventory-20261023.json`](evidence/jira-g3-cutover-candidate-inventory-20261023.json)은 **집계 및 미승인 상태만 포함**한다. 이슈별 IssueKey·Target 값·후보 Manifest는 비공개 원본/보관소에서만 관리한다. **승인된 전환 후보 0건, 실제 Cutover 0건, G2 전수 Jira 재감사 0회.**
 
 추가로 G2 원본/복구 Manifest 4종을 대조해 **103건 전원의 G2 저장 근거 배치**를 연결했다: 기존 Target 저장 27건 중 후보 **24건**, G2 재저장 **31건**, G2 재저장 **48건**. 최종 Story/Subtask **12건**은 지원 유형 후보가 아니다. 원본 118건은 27+31+48+12로 중복·누락 없이 일치한다. 해당 G2 배치 증거는 G3 이슈별 Origin·Changelog·Cutover 승인이나 실제 운영 복구 능력을 증명하지 않는다.
 
-이 목록은 기존 `scripts/jira-ticket-g3-cutover-candidate-manifest.mjs`의 고정 원본 근거와 연결되는 참조 자료다. 원본 재검증/재생성은 접근권이 있는 단일 Writer가 고정 G2 Snapshot을 사용해 수행하며, 독립적인 Origin/Reader 증거 없이 이 자료만으로 `ReadAuthority=target`을 설정해서는 안 된다.
+공개 JSON은 집계 참조 자료일 뿐이다. `scripts/jira-ticket-g3-cutover-candidate-manifest.mjs`가 생성하는 이슈별 상세 Manifest는 접근권 있는 단일 Writer가 비공개 위치에서만 보관하고, 공개 CI 로그·PR·Issue 댓글에 게시하지 않는다. 앞선 공개 Commit에 포함된 이슈별 정보는 현재 Tree의 집계 전환만으로 Git 이력에서 사라지지 않는다. 이력의 잔존 노출에 대한 접근 범위·복구/정리 절차는 **Owner 별도 결정**을 요구한다. Origin/Reader 및 승인 증거 없이 `ReadAuthority=target`으로 변경하지 않는다.
 
 ## Task(10010)만 실제 G3 시험할 때 필요한 Owner 결정
 
