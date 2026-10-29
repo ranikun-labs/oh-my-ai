@@ -2,7 +2,7 @@
   "schema_version": 1,
   "record_type": "G3_CUTOVER_CANDIDATE_MANIFEST",
   "status": "READ_ONLY_PROPOSED_CANDIDATES",
-  "note": "This is a candidate inventory derived from the pinned G2 record. It is NOT an Owner-approved migration manifest, signed G3 evidence, a durable authority ledger, or Jira Cutover authorization.",
+  "note": "Read-only candidate inventory, NOT an Owner-approved migration manifest. G2 storage evidence bucket and rollback sources do not prove per-issue Origin, changelog parity, Cutover approval, or authority.",
   "execution_authorized": false,
   "cutover_approved": false,
   "read_authority_changed": false,
@@ -18,6 +18,36 @@
     "g2_original_snapshot_ref": {
       "path": "prewrite-snapshot-20261023.json",
       "blob_sha": "b49751a69b892f798d24a5aaa11d4888f90b0aac"
+    },
+    "g2_evidence_sources": {
+      "preexisting_target_27": {
+        "path": "governance/jira-g2-full-118/prewrite-snapshot-20261023.json",
+        "blob_sha": "b49751a69b892f798d24a5aaa11d4888f90b0aac",
+        "scope": "G2 prewrite snapshot of already populated Target values; not a G3 approval",
+        "repository": "ranikun-labs/platform-services",
+        "commit_sha": "530dd0f88e5819158362b620ca1591779a50cba5"
+      },
+      "backfill_31": {
+        "path": "governance/jira-g2-full-118/rollback-31-target-only-manifest-20261023.json",
+        "blob_sha": "4070306fed1e5a5b3320d79491bc56845a14d12a",
+        "scope": "G2 target-only rollback plan, not G3 cutover approval",
+        "repository": "ranikun-labs/platform-services",
+        "commit_sha": "530dd0f88e5819158362b620ca1591779a50cba5"
+      },
+      "backfill_48": {
+        "path": "governance/jira-g2-full-118/rollback-48-resume-target-only-manifest-20261023.json",
+        "blob_sha": "0222b01874e4f70c68fc7991c10607b1e5e159f3",
+        "scope": "G2 target-only rollback plan, not G3 cutover approval",
+        "repository": "ranikun-labs/platform-services",
+        "commit_sha": "530dd0f88e5819158362b620ca1591779a50cba5"
+      },
+      "final_story_subtask_12": {
+        "path": "governance/jira-g2-full-118/final12-before-after-rollback-20261023.json",
+        "blob_sha": "01ff44fad63903d02d63a432a4633a83eed298f9",
+        "scope": "Excluded Story/Subtask evidence; no G3 supported-type candidates",
+        "repository": "ranikun-labs/platform-services",
+        "commit_sha": "530dd0f88e5819158362b620ca1591779a50cba5"
+      }
     }
   },
   "summary": {
@@ -34,7 +64,13 @@
       "Bug": 5,
       "Research": 9
     },
-    "candidate_cutover_ready": 0
+    "candidate_cutover_ready": 0,
+    "g2_candidate_storage_evidence_counts": {
+      "preexisting_target_27": 24,
+      "backfill_31": 31,
+      "backfill_48": 48,
+      "final_story_subtask_12": 0
+    }
   },
   "protected_issue_keys": [
     "RPL-112",
@@ -79,7 +115,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_48"
     },
     {
       "issue_key": "RPL-2",
@@ -106,7 +143,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "preexisting_target_27"
     },
     {
       "issue_key": "RPL-3",
@@ -138,7 +176,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "preexisting_target_27"
     },
     {
       "issue_key": "RPL-4",
@@ -165,7 +204,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_48"
     },
     {
       "issue_key": "RPL-5",
@@ -192,7 +232,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "preexisting_target_27"
     },
     {
       "issue_key": "RPL-6",
@@ -219,7 +260,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "preexisting_target_27"
     },
     {
       "issue_key": "RPL-7",
@@ -246,7 +288,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_48"
     },
     {
       "issue_key": "RPL-8",
@@ -273,7 +316,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_31"
     },
     {
       "issue_key": "RPL-9",
@@ -300,7 +344,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_31"
     },
     {
       "issue_key": "RPL-10",
@@ -327,7 +372,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_48"
     },
     {
       "issue_key": "RPL-11",
@@ -354,7 +400,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_48"
     },
     {
       "issue_key": "RPL-12",
@@ -381,7 +428,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_31"
     },
     {
       "issue_key": "RPL-13",
@@ -408,7 +456,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_31"
     },
     {
       "issue_key": "RPL-14",
@@ -435,7 +484,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_31"
     },
     {
       "issue_key": "RPL-15",
@@ -462,7 +512,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_31"
     },
     {
       "issue_key": "RPL-16",
@@ -489,7 +540,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_48"
     },
     {
       "issue_key": "RPL-17",
@@ -516,7 +568,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_31"
     },
     {
       "issue_key": "RPL-18",
@@ -543,7 +596,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_31"
     },
     {
       "issue_key": "RPL-19",
@@ -570,7 +624,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_31"
     },
     {
       "issue_key": "RPL-20",
@@ -597,7 +652,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_31"
     },
     {
       "issue_key": "RPL-21",
@@ -624,7 +680,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_31"
     },
     {
       "issue_key": "RPL-22",
@@ -651,7 +708,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_48"
     },
     {
       "issue_key": "RPL-23",
@@ -678,7 +736,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_31"
     },
     {
       "issue_key": "RPL-24",
@@ -705,7 +764,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_48"
     },
     {
       "issue_key": "RPL-25",
@@ -732,7 +792,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_48"
     },
     {
       "issue_key": "RPL-26",
@@ -759,7 +820,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_31"
     },
     {
       "issue_key": "RPL-27",
@@ -786,7 +848,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "preexisting_target_27"
     },
     {
       "issue_key": "RPL-28",
@@ -813,7 +876,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_48"
     },
     {
       "issue_key": "RPL-29",
@@ -840,7 +904,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_31"
     },
     {
       "issue_key": "RPL-30",
@@ -867,7 +932,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_31"
     },
     {
       "issue_key": "RPL-31",
@@ -894,7 +960,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_31"
     },
     {
       "issue_key": "RPL-32",
@@ -921,7 +988,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_31"
     },
     {
       "issue_key": "RPL-33",
@@ -948,7 +1016,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_31"
     },
     {
       "issue_key": "RPL-34",
@@ -975,7 +1044,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "preexisting_target_27"
     },
     {
       "issue_key": "RPL-35",
@@ -1002,7 +1072,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_31"
     },
     {
       "issue_key": "RPL-36",
@@ -1029,7 +1100,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_31"
     },
     {
       "issue_key": "RPL-37",
@@ -1056,7 +1128,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_31"
     },
     {
       "issue_key": "RPL-38",
@@ -1083,7 +1156,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_48"
     },
     {
       "issue_key": "RPL-39",
@@ -1110,7 +1184,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_48"
     },
     {
       "issue_key": "RPL-40",
@@ -1137,7 +1212,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_48"
     },
     {
       "issue_key": "RPL-41",
@@ -1164,7 +1240,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_31"
     },
     {
       "issue_key": "RPL-42",
@@ -1191,7 +1268,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_31"
     },
     {
       "issue_key": "RPL-43",
@@ -1218,7 +1296,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_31"
     },
     {
       "issue_key": "RPL-44",
@@ -1245,7 +1324,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_31"
     },
     {
       "issue_key": "RPL-45",
@@ -1272,7 +1352,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_48"
     },
     {
       "issue_key": "RPL-46",
@@ -1299,7 +1380,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "preexisting_target_27"
     },
     {
       "issue_key": "RPL-47",
@@ -1326,7 +1408,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "preexisting_target_27"
     },
     {
       "issue_key": "RPL-48",
@@ -1353,7 +1436,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_31"
     },
     {
       "issue_key": "RPL-49",
@@ -1380,7 +1464,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_31"
     },
     {
       "issue_key": "RPL-50",
@@ -1407,7 +1492,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_31"
     },
     {
       "issue_key": "RPL-51",
@@ -1434,7 +1520,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "preexisting_target_27"
     },
     {
       "issue_key": "RPL-52",
@@ -1461,7 +1548,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_31"
     },
     {
       "issue_key": "RPL-53",
@@ -1488,7 +1576,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_48"
     },
     {
       "issue_key": "RPL-54",
@@ -1515,7 +1604,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_48"
     },
     {
       "issue_key": "RPL-55",
@@ -1542,7 +1632,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "preexisting_target_27"
     },
     {
       "issue_key": "RPL-56",
@@ -1569,7 +1660,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_31"
     },
     {
       "issue_key": "RPL-57",
@@ -1596,7 +1688,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_31"
     },
     {
       "issue_key": "RPL-58",
@@ -1623,7 +1716,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_48"
     },
     {
       "issue_key": "RPL-59",
@@ -1650,7 +1744,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_48"
     },
     {
       "issue_key": "RPL-60",
@@ -1677,7 +1772,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_48"
     },
     {
       "issue_key": "RPL-61",
@@ -1704,7 +1800,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_48"
     },
     {
       "issue_key": "RPL-62",
@@ -1731,7 +1828,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "preexisting_target_27"
     },
     {
       "issue_key": "RPL-63",
@@ -1763,7 +1861,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "preexisting_target_27"
     },
     {
       "issue_key": "RPL-64",
@@ -1795,7 +1894,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "preexisting_target_27"
     },
     {
       "issue_key": "RPL-65",
@@ -1822,7 +1922,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_48"
     },
     {
       "issue_key": "RPL-66",
@@ -1849,7 +1950,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_48"
     },
     {
       "issue_key": "RPL-67",
@@ -1876,7 +1978,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_48"
     },
     {
       "issue_key": "RPL-68",
@@ -1903,7 +2006,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "preexisting_target_27"
     },
     {
       "issue_key": "RPL-69",
@@ -1935,7 +2039,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "preexisting_target_27"
     },
     {
       "issue_key": "RPL-71",
@@ -1962,7 +2067,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_48"
     },
     {
       "issue_key": "RPL-72",
@@ -1989,7 +2095,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_48"
     },
     {
       "issue_key": "RPL-73",
@@ -2016,7 +2123,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_48"
     },
     {
       "issue_key": "RPL-74",
@@ -2043,7 +2151,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_48"
     },
     {
       "issue_key": "RPL-75",
@@ -2075,7 +2184,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "preexisting_target_27"
     },
     {
       "issue_key": "RPL-76",
@@ -2102,7 +2212,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_48"
     },
     {
       "issue_key": "RPL-78",
@@ -2129,7 +2240,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "preexisting_target_27"
     },
     {
       "issue_key": "RPL-79",
@@ -2156,7 +2268,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_48"
     },
     {
       "issue_key": "RPL-81",
@@ -2192,7 +2305,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "preexisting_target_27"
     },
     {
       "issue_key": "RPL-84",
@@ -2219,7 +2333,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_48"
     },
     {
       "issue_key": "RPL-86",
@@ -2246,7 +2361,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_48"
     },
     {
       "issue_key": "RPL-87",
@@ -2273,7 +2389,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_48"
     },
     {
       "issue_key": "RPL-88",
@@ -2309,7 +2426,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "preexisting_target_27"
     },
     {
       "issue_key": "RPL-90",
@@ -2336,7 +2454,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_48"
     },
     {
       "issue_key": "RPL-91",
@@ -2368,7 +2487,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "preexisting_target_27"
     },
     {
       "issue_key": "RPL-92",
@@ -2395,7 +2515,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_48"
     },
     {
       "issue_key": "RPL-93",
@@ -2422,7 +2543,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "preexisting_target_27"
     },
     {
       "issue_key": "RPL-95",
@@ -2449,7 +2571,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "preexisting_target_27"
     },
     {
       "issue_key": "RPL-96",
@@ -2476,7 +2599,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_48"
     },
     {
       "issue_key": "RPL-97",
@@ -2503,7 +2627,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_48"
     },
     {
       "issue_key": "RPL-98",
@@ -2535,7 +2660,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "preexisting_target_27"
     },
     {
       "issue_key": "RPL-99",
@@ -2562,7 +2688,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_48"
     },
     {
       "issue_key": "RPL-100",
@@ -2589,7 +2716,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_48"
     },
     {
       "issue_key": "RPL-101",
@@ -2616,7 +2744,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_48"
     },
     {
       "issue_key": "RPL-102",
@@ -2643,7 +2772,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_48"
     },
     {
       "issue_key": "RPL-103",
@@ -2670,7 +2800,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_48"
     },
     {
       "issue_key": "RPL-104",
@@ -2697,7 +2828,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_48"
     },
     {
       "issue_key": "RPL-105",
@@ -2724,7 +2856,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_48"
     },
     {
       "issue_key": "RPL-106",
@@ -2751,7 +2884,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_48"
     },
     {
       "issue_key": "RPL-107",
@@ -2778,7 +2912,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "preexisting_target_27"
     },
     {
       "issue_key": "RPL-108",
@@ -2805,7 +2940,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_48"
     },
     {
       "issue_key": "RPL-109",
@@ -2832,7 +2968,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_48"
     },
     {
       "issue_key": "RPL-110",
@@ -2859,7 +2996,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_48"
     },
     {
       "issue_key": "RPL-111",
@@ -2886,7 +3024,8 @@
         "owner_approval": "NOT_PROVIDED",
         "cutover_approval": "NOT_PROVIDED",
         "authority_reader": "NOT_VERIFIED"
-      }
+      },
+      "g2_storage_evidence_bucket": "backfill_48"
     }
   ]
 }
