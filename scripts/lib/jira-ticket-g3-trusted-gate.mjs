@@ -9,6 +9,11 @@ const TARGET_IDS = Object.values(TARGET_FIELDS);
 const ISSUE_TYPE_IDS = { Task: "10010", Epic: "10007", Feature: "10009", Bug: "10012", Research: "10013" };
 const LEGACY_FIELD_IDS = ["customfield_10042", "customfield_10043", "customfield_10044"];
 const SUPPLEMENTAL_FIELD_IDS = ["customfield_10015", "duedate", "customfield_10045"];
+const TASK_PILOT_CORE_METADATA_FIELD_IDS = [
+  "project", "issuetype", "summary", "description", "reporter", "attachment",
+  "customfield_10000", "customfield_10019", "customfield_10021", "customfield_10037",
+  "fixVersions", "issuelinks", "parent", ...SUPPLEMENTAL_FIELD_IDS, ...TARGET_IDS,
+];
 const WRAPPER_FIELD_IDS = ["summary", "description", "assignee", "priority", "labels"];
 const REQUIRED_WRAPPER_FIELD_IDS = ["summary", "description"];
 const OPTIONAL_WRAPPER_FIELD_IDS = ["assignee", "priority", "labels"];
@@ -129,6 +134,10 @@ function assertMetadataDefault(id, field) {
 
 function assertLegacyFields(fields) {
   for (const id of LEGACY_FIELD_IDS) {
+    // A complete live Create Metadata page can omit a Legacy field after it is
+    // removed from the Create screen. If Jira still exposes it, it must remain
+    // optional and have no default; Legacy values are never sent by G3.
+    if (!Object.hasOwn(fields, id)) continue;
     const field = fields[id];
     const hasUnexpectedDefault = field?.defaultValue != null
       && !(Array.isArray(field.defaultValue) && field.defaultValue.length === 0);
@@ -205,6 +214,13 @@ function metadataFieldsForGate(fields) {
     || Object.getPrototypeOf(fields) !== Object.prototype)
     throw new Error("live Jira field metadata has an unsupported shape");
   return fields;
+}
+
+function assertTaskPilotMetadataFieldSet(fields) {
+  const allowed = new Set([...TASK_PILOT_CORE_METADATA_FIELD_IDS, ...LEGACY_FIELD_IDS]);
+  if (TASK_PILOT_CORE_METADATA_FIELD_IDS.some(id => !Object.hasOwn(fields, id))
+    || Object.keys(fields).some(id => !allowed.has(id)))
+    throw new Error("RPL Task metadata field set must be complete except for removed Legacy fields");
 }
 
 function bindIssueType(metadata, fields) {
@@ -409,9 +425,10 @@ export function inspectG3TaskPilotDryRunRequest({ metadata, request } = {}) {
     || request.project !== "RPL" || request.issue_type !== "Task")
     throw new Error("dry-run requires an RPL Task(10010) Create request and metadata");
   assertCompleteMetadataPage(metadata);
-  if (!Array.isArray(metadata.fields) || metadata.fields.length !== 22)
-    throw new Error("RPL Task metadata must contain the complete 22-field page");
+  if (!Array.isArray(metadata.fields))
+    throw new Error("RPL Task metadata must contain the complete paginated field list");
   const fields = metadataFieldsForGate(metadata.fields);
+  assertTaskPilotMetadataFieldSet(fields);
   const normalizedMetadata = { ...metadata, fields };
   const issueTypeBinding = bindIssueType(normalizedMetadata, fields);
   assertLegacyFields(fields);
