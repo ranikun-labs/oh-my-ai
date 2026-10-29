@@ -61,6 +61,50 @@ async function writeOnce(directory, path, record) {
   return true;
 }
 
+function canonicalJson(value, path = "$") {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return JSON.stringify(value);
+  if (typeof value === "number" && Number.isFinite(value)) return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${Array.from(value, (item, index) => canonicalJson(item, `${path}[${index}]`)).join(",")}]`;
+  if (value && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype) {
+    const keys = Object.keys(value).sort();
+    return `{${keys.map(key => {
+      if (value[key] === undefined) throw new Error(`non-JSON pending Intent at ${path}.${key}`);
+      return `${JSON.stringify(key)}:${canonicalJson(value[key], `${path}.${key}`)}`;
+    }).join(",")}}`;
+  }
+  throw new Error(`non-JSON pending Intent at ${path}`);
+}
+
+function samePendingIntent(existing, request) {
+  if (!existing || typeof existing !== "object" || Array.isArray(existing)
+    || existing.phase !== "pending" || typeof existing.stored_at !== "string"
+    || !Number.isFinite(Date.parse(existing.stored_at))
+    || new Date(existing.stored_at).toISOString() !== existing.stored_at)
+    return false;
+  const expectedKeys = [...Object.keys(request), "phase", "stored_at"].sort();
+  if (Object.keys(existing).sort().join("\n") !== expectedKeys.join("\n")) return false;
+  const { phase, stored_at, ...storedRequest } = existing;
+  return canonicalJson(storedRequest) === canonicalJson(request);
+}
+
+async function readExistingAndConfirmDurable(path, directory) {
+  const handle = await open(path, "r+");
+  let existing;
+  try {
+    const raw = await handle.readFile("utf8");
+    try { existing = JSON.parse(raw); }
+    catch (error) { throw new Error("existing pending Intent JSON is corrupt", { cause: error }); }
+    // The ledger writes compact JSON plus one newline. This also rejects duplicate
+    // JSON keys, which JSON.parse would otherwise silently collapse.
+    if (raw !== `${JSON.stringify(existing)}\n`)
+      throw new Error("existing pending Intent encoding is not intact");
+    await handle.sync();
+  } finally { await handle.close(); }
+  const folder = await open(directory, "r");
+  try { await folder.sync(); } finally { await folder.close(); }
+  return existing;
+}
+
 /**
  * Owner-supervised single-host reference store. Local fsync is NOT proof of
  * durable shared storage on Codex Cloud, containers or multiple hosts.
@@ -83,6 +127,7 @@ export function createG3FileLedger({ root, ledgerRef }) {
       const id = snapshot?.create_request_id;
       assertId(id);
       if (snapshot?.ledger_ref !== ledgerRef || snapshot?.status !== "pending"
+        || Object.hasOwn(snapshot, "phase") || Object.hasOwn(snapshot, "stored_at")
         || typeof snapshot?.approved_preview_id !== "string"
         || typeof snapshot?.activation_ref !== "string"
         || typeof snapshot?.issue_type !== "string"
@@ -91,10 +136,19 @@ export function createG3FileLedger({ root, ledgerRef }) {
         || !nonEmptyRef(snapshot?.cutover_approval_ref)
         || !snapshot?.fields || typeof snapshot.fields !== "object")
         throw new Error("incomplete immutable pending Intent");
+      canonicalJson(snapshot);
       const record = { ...snapshot, phase: "pending", stored_at: new Date().toISOString() };
       const created = await writeOnce(intentDir, intentPath(id), record);
-      if (!created) return { status: "duplicate", durable: true, created_new: false,
-        create_request_id: id, ledger_ref: ledgerRef, prior_issue_key: (await load(linkPath(id)))?.issue_key ?? null };
+      if (!created) {
+        const existing = await readExistingAndConfirmDurable(intentPath(id), intentDir);
+        if (!samePendingIntent(existing, snapshot))
+          throw new Error("existing pending Intent does not match the approved request");
+        const priorLink = await load(linkPath(id));
+        if (priorLink && (priorLink.create_request_id !== id || !KEY.test(priorLink.issue_key ?? "")))
+          throw new Error("existing IssueKey link does not match the pending Intent");
+        return { status: "duplicate", durable: true, created_new: false,
+          create_request_id: id, ledger_ref: ledgerRef, prior_issue_key: priorLink?.issue_key ?? null };
+      }
       return { status: "persisted", durable: true, created_new: true, prior_issue_key: null,
         create_request_id: id, ledger_ref: ledgerRef,
         approved_preview_id: snapshot.approved_preview_id, activation_ref: snapshot.activation_ref };

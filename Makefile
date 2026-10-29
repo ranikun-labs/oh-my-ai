@@ -43,6 +43,7 @@ test-jira-ticket-fixtures:
 .PHONY: test-jira-ticket-g3-integrations
 test-jira-ticket-g3-integrations:
 	node scripts/test-jira-ticket-g3-jira-connector.mjs
+	node scripts/test-jira-ticket-g3-file-ledger.mjs
 	node scripts/test-jira-ticket-g3-trusted-gate.mjs
 	node scripts/test-jira-ticket-g3-ledger-recovery.mjs
 	node scripts/test-jira-ticket-g3-authority-reader.mjs
