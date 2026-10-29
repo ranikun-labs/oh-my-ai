@@ -39,7 +39,8 @@ function candidateManifestFromReport(report) {
     target_concerns: row.target_concerns,
     candidate_status: "PROPOSED_CANDIDATE",
     cutover_status: "NOT_APPROVED_FOR_CUTOVER",
-    g2_target_storage_status: "VERIFIED_IN_PINNED_G2_RECORD",
+    g2_target_storage_status: report.status === "PREFLIGHT_ONLY"
+      ? "VERIFIED_IN_PINNED_G2_RECORD" : "UNTRUSTED_FIXTURE_ONLY",
     g3_evidence_status: { ...UNVERIFIED },
   }));
   const byType = Object.fromEntries(CANDIDATE_TYPES.map(name => [
