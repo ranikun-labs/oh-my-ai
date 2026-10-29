@@ -141,7 +141,7 @@ function blockedReport(reason, source) {
 }
 
 /** Build a read-only, pinned G2-to-G3 candidate preflight; it never mutates authority. */
-export function buildG3CutoverPreflightReport(manifestText, { source = G2_SNAPSHOT_SOURCE } = {}) {
+function inspectG3CutoverSnapshot(manifestText, source, untrustedFixture) {
   try {
     if (typeof manifestText !== "string" || !isRecord(source)
       || !nonEmpty(source.repository) || !nonEmpty(source.commit_sha)
@@ -185,20 +185,24 @@ export function buildG3CutoverPreflightReport(manifestText, { source = G2_SNAPSH
       : null;
     return {
       schema_version: 1,
-      status: "PREFLIGHT_ONLY",
+      status: untrustedFixture ? "UNTRUSTED_FIXTURE_ONLY" : "PREFLIGHT_ONLY",
       execution_authorized: false,
       read_authority_changed: false,
       jira_read_count: 0,
       jira_write_count: 0,
       source: {
-        repository: source.repository,
-        branch: source.branch ?? null,
-        commit_sha: source.commit_sha,
-        path: source.path,
-        git_blob_sha: actualBlobSha,
+        ...(untrustedFixture
+          ? { provenance: "UNTRUSTED_FIXTURE_ONLY", fixture_git_blob_sha: actualBlobSha }
+          : {
+              repository: source.repository,
+              branch: source.branch ?? null,
+              commit_sha: source.commit_sha,
+              path: source.path,
+              git_blob_sha: actualBlobSha,
+              snapshot_ref: sourceSnapshotRef(source),
+            }),
         verified_at: snapshot.verified_at,
         content_sha256: createHash("sha256").update(manifestText, "utf8").digest("hex"),
-        snapshot_ref: sourceSnapshotRef(source),
         g2_original_snapshot_ref: originalSnapshotRef,
       },
       summary: {
@@ -229,6 +233,19 @@ export function buildG3CutoverPreflightReport(manifestText, { source = G2_SNAPSH
       candidates,
     };
   } catch (error) {
-    return blockedReport(error instanceof Error ? error.message : "G3 Cutover preflight failed", source);
+    return blockedReport(error instanceof Error ? error.message : "G3 Cutover preflight failed",
+      untrustedFixture ? undefined : G2_SNAPSHOT_SOURCE);
   }
+}
+
+/** Production API: accepts only the immutable code-pinned G2 source and exact Git blob. */
+export function buildG3CutoverPreflightReport(manifestText, options) {
+  if (options !== undefined)
+    return blockedReport("caller-supplied G2 source overrides are forbidden", G2_SNAPSHOT_SOURCE);
+  return inspectG3CutoverSnapshot(manifestText, G2_SNAPSHOT_SOURCE, false);
+}
+
+/** Unit-test synthetic fixture analyzer; never attests Git provenance or authorizes cutover. */
+export function buildG3CutoverUntrustedFixtureReport(manifestText, source) {
+  return inspectG3CutoverSnapshot(manifestText, source, true);
 }
