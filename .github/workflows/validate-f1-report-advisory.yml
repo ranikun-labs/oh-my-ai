@@ -42,6 +42,7 @@ jobs:
           cp skills/engineering-communication-ko/SKILL.md .f1-cross-pr-base/skills/engineering-communication-ko/SKILL.md
           node .f1-cross-pr-base/scripts/render-skill-index.mjs
           node scripts/test-f1-cross-pr-routing.mjs .f1-cross-pr-base
+          make -C .f1-cross-pr-base test-routing-fixtures
       - name: Check F1 advisory syntax
         run: node --check scripts/f1-report-advisory.mjs
       - name: Check patch whitespace
