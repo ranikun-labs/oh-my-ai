@@ -1,0 +1,30 @@
+name: Validate F1 report advisory
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/f1-report-advisory.mjs'
+      - 'scripts/test-f1-report-advisory.mjs'
+      - 'skills/engineering-communication-ko/SKILL.md'
+      - '.github/workflows/validate-f1-report-advisory.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check F1 advisory fixtures
+        run: node scripts/test-f1-report-advisory.mjs
+      - name: Check F1 advisory syntax
+        run: node --check scripts/f1-report-advisory.mjs
+      - name: Check patch whitespace
+        run: git diff --check "${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}"
