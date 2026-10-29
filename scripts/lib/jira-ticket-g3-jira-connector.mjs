@@ -243,12 +243,14 @@ function escapeJqlString(value) {
 }
 
 function searchArgs(request, cloudId) {
-  if (request?.project !== "RPL" || !nonEmpty(request?.summary_keywords))
+  if (request?.project !== "RPL" || !nonEmpty(request?.summary_keywords)
+    || (request.issue_key != null && !ISSUE_KEY.test(request.issue_key)))
     throw new Error("Jira Search requires the approved RPL project and summary");
   const phrase = escapeJqlString(request.summary_keywords.trim());
+  const issueKeyClause = request.issue_key == null ? "" : ` AND key = ${request.issue_key}`;
   return {
     cloudId,
-    jql: `project = RPL AND summary ~ "\\"${phrase}\\""`,
+    jql: `project = RPL${issueKeyClause} AND summary ~ "\\"${phrase}\\""`,
     fields: ["summary", "project", "issuetype"],
     maxResults: 100,
     searchResultMode: "issues",
