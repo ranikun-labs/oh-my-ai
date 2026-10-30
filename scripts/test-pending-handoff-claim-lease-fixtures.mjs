@@ -301,7 +301,7 @@ async function spawnClaimChild(mode, rootDirectory, candidateId, expectedRevisio
   child.stderr.on("data", chunk => { stderr += chunk; });
   const exitCode = await new Promise((resolve, reject) => {
     child.once("error", error => reject(new Error(`claim fixture child spawn failed: ${error.code ?? "unknown"}`)));
-    child.once("exit", resolve);
+    child.once("close", resolve);
   });
   if (exitCode !== 0) throw new Error(`claim child failed: ${stderr}`);
   if (stdout.trim().length === 0) {
@@ -368,7 +368,7 @@ if (process.argv[2]?.startsWith("--claim-child=")) {
         current_session_identity: owner,
         claim_attempt_id: attempt,
       });
-    process.stdout.write(`${JSON.stringify(result)}\n`);
+    await new Promise(resolve => process.stdout.write(`${JSON.stringify(result)}\n`, resolve));
   }
   process.exit(0);
 }
@@ -846,7 +846,11 @@ await group("concurrent Claim exact-one", async () => {
           CLAIM_ATTEMPT_A,
           BASE_NOW,
         );
-        assertFailure(restarted, "claim_conflict");
+        assert.deepEqual(
+          restarted,
+          Object.freeze({ ok: false, reason: "claim_conflict" }),
+          `restarted same-attempt dispatch must fail closed: ${JSON.stringify(restarted)}`,
+        );
       } finally {
         await fileSystem.rm(barrierDirectory, { recursive: true, force: true });
       }
