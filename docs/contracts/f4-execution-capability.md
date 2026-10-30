@@ -357,6 +357,39 @@ unknown Runtime state fail closed. The service is designed to consume a Store
 that provides these semantics; it does not itself prove the injected Store is
 durable, atomic, or cross-process.
 
+### Recovery and Result/Checkpoint contract draft
+
+The approved recovery behavior while no canonical physical Provider or Runtime
+outcome reconciliation API is available is quarantine, not retry:
+
+* A persisted `reserved` Attempt does not prove the Claim CAS was absent; a
+  response may have been lost between Claim publication and Attempt binding.
+* `claim_bound` proves the Claim revision was observed, but the current API has
+  no safe same-Attempt rebind/release operation after restart.
+* `dispatch_unknown` and `accepted` never authorize another Runtime call. Lease
+  expiry, Claim release, Candidate revision change, and caller assertion do not
+  reconcile Runtime outcome.
+* If a Claim is released and the Candidate gets a new revision, the active
+  Attempt record still blocks a new Attempt for the same Candidate/action.
+  Composition does not own or implement the shared Claim release operation.
+
+For a future Result-saved / Checkpoint-CAS-failed recovery, the still-unapproved
+contract is: preserve the same immutable Runtime result and Attempt identity;
+after restart, read and reconcile the persisted Result and Checkpoint revisions;
+retry only the Checkpoint publication when the Result is proven durable; never
+invoke the Runtime again for that Attempt. If the Result write or Checkpoint
+revision is ambiguous, remain blocked until authoritative reconciliation.
+`resume_accepted` is not a completed Result and cannot be used to invent either
+record. The exact Result/Checkpoint record shape, Port signatures, owner and
+lifecycle remain undecided until their canonical source contract is published.
+
+The Composition fixture includes two explicitly model-only failure cases:
+UNKNOWN after simulated legacy Claim release plus a new Candidate revision,
+and an accepted Attempt with a simulated saved Result followed by failed
+Checkpoint CAS and process restart. They verify only that the current Attempt
+gate refuses a second Claim/Runtime call. They do not implement or verify a
+Checkpoint-only retry, real Result storage, or production recovery.
+
 No concrete RPL-95 physical-state provider, RPL-94 Association API, RPL-93 M5
 Task Context/Fresh Observation/Resume entrypoint, or supported Runtime Result
 provider is available on this PR's public base. RPL-120 must consume those

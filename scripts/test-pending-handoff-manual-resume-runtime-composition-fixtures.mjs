@@ -860,6 +860,126 @@ await group("supported Codex delegation and drift safety", async () => {
     assert.equal(restarted.calls.some(([name]) => name === "acquireClaim"), false);
   });
 
+  await test("UNKNOWN Attempt stays quarantined after simulated Claim release and new Candidate revision", async () => {
+    const shared = createAttemptOutcomeFixtureStore();
+    let candidateRevision = 1;
+    let claimActive = false;
+    let claimCalls = 0;
+    let dispatches = 0;
+    const store = {
+      readState: async () => success(state("codex", candidateRevision)),
+    };
+    const claimLease = {
+      acquireClaimForDispatch: async requestValue => {
+        claimCalls += 1;
+        claimActive = true;
+        candidateRevision += 1;
+        return success({
+          state_revision: candidateRevision,
+          claim_attempt_id: requestValue.claim_attempt_id,
+          claim_lease_expires_at: "2026-08-01T01:00:00.000Z",
+        });
+      },
+    };
+    const first = build({
+      store,
+      claimLease,
+      attemptOutcomeStore: shared.store,
+      executor: { resolveAndResume: async () => {
+        dispatches += 1;
+        throw new Error(PRIVATE_MARKER);
+      } },
+    });
+    assert.deepEqual(await first.composition.executeManualResume(request()), {
+      ok: false,
+      reason: "manual_resume_action_outcome_unknown",
+    });
+    assert.equal([...shared.records.values()][0].status, "dispatch_unknown");
+    assert.equal(claimActive, true);
+    assert.equal(dispatches, 1);
+
+    // Simulate the legacy Claim recovery boundary releasing the Claim and
+    // publishing a new Candidate revision. Composition has no release API.
+    claimActive = false;
+    candidateRevision += 1;
+    const restarted = build({
+      store,
+      claimLease,
+      attemptOutcomeStore: shared.store,
+      executor: { resolveAndResume: async () => {
+        dispatches += 1;
+        return success(receipt());
+      } },
+    });
+    assert.deepEqual(await restarted.composition.executeManualResume(request({
+      expected_revision: candidateRevision,
+      claim_attempt_id: "223e4567-e89b-42d3-a456-426614174001",
+    })), {
+      ok: false,
+      reason: "manual_resume_attempt_recovery_required",
+    });
+    assert.equal(claimActive, false);
+    assert.equal(claimCalls, 1);
+    assert.equal(dispatches, 1);
+  });
+
+  await test("Result saved / Checkpoint CAS failed remains quarantined after restart", async () => {
+    const shared = createAttemptOutcomeFixtureStore();
+    let dispatches = 0;
+    let claimCalls = 0;
+    let resultWrites = 0;
+    let checkpointWrites = 0;
+    let resultSaved = false;
+    const claimLease = {
+      acquireClaimForDispatch: async requestValue => {
+        claimCalls += 1;
+        return success({
+          state_revision: 2,
+          claim_attempt_id: requestValue.claim_attempt_id,
+          claim_lease_expires_at: "2026-08-01T01:00:00.000Z",
+        });
+      },
+    };
+    const first = build({
+      claimLease,
+      attemptOutcomeStore: shared.store,
+      executor: { resolveAndResume: async () => {
+        dispatches += 1;
+        return success(receipt());
+      } },
+    });
+    assert.equal((await first.composition.executeManualResume(request())).ok, true);
+    assert.equal([...shared.records.values()][0].status, "accepted");
+
+    // Contract sentinel only: current Composition has no Result or
+    // Checkpoint writer. Model a committed Result and failed Checkpoint CAS.
+    resultWrites += 1;
+    resultSaved = true;
+    checkpointWrites += 1;
+    const checkpointResult = failure("revision_conflict");
+    assert.equal(resultSaved, true);
+    assert.equal(checkpointResult.ok, false);
+
+    const restarted = build({
+      attemptOutcomeStore: shared.store,
+      claimLease,
+      executor: { resolveAndResume: async () => {
+        dispatches += 1;
+        return success(receipt());
+      } },
+    });
+    assert.deepEqual(await restarted.composition.executeManualResume(request({
+      claim_attempt_id: "223e4567-e89b-42d3-a456-426614174001",
+    })), {
+      ok: false,
+      reason: "manual_resume_attempt_recovery_required",
+    });
+    assert.equal(resultWrites, 1);
+    assert.equal(checkpointWrites, 1);
+    assert.equal(claimCalls, 1);
+    assert.equal(dispatches, 1);
+  });
+
   await test("a persisted Claim with an unconfirmed action request is quarantined", async () => {
     let executorCalls = 0;
     let claimCalls = 0;
