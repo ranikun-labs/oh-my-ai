@@ -274,3 +274,80 @@ different repository even when SHA, tree, and test plan match.
 - Owner approval, Jira status changes, PR creation, Source Merge, global
   installation, deployment, and private policy changes are outside this
   candidate.
+
+## Required durable Attempt / Outcome contract — not implemented
+
+The current pending-handoff Claim record is not an RPL-120 Attempt/Outcome
+record. It has only owner, Claim timestamps, and `claim_attempt_id`; the
+filesystem Store exposes candidate-state CAS, not result/checkpoint CAS. A
+Claim lease expiry therefore does not prove that a Runtime action was never
+sent. `recoverClaimLease` and `releaseClaimBeforeDelivery` must not authorize a
+Manual Resume retry based on lease expiry, caller assertion, or Claim revision
+alone. The current implementation cannot distinguish a Resume Claim from
+other Claim uses after persistence, so this candidate leaves M1 OPEN.
+
+RPL-120 needs a separately owned injected port with durable per-attempt CAS.
+The following is the proposed public contract, not an implemented Store or
+Runtime adapter:
+
+```js
+identity = {
+  candidate_id,
+  claim_attempt_id,
+  runtime_id,
+  association_ref,
+  repository_identity,
+  worktree_identity,
+}
+
+attemptOutcomePort = {
+  reserveAttempt({ identity, expected_candidate_revision }),
+  bindClaim({ identity, expected_attempt_revision, claim_revision }),
+  markDispatchStarted({ identity, expected_attempt_revision, claim_revision }),
+  recordOutcome({ identity, expected_attempt_revision, outcome, evidence_ref }),
+  reconcileOutcome({ identity, expected_attempt_revision, observation_ref }),
+  abandonBeforeDispatch({ identity, expected_attempt_revision, claim_revision }),
+  commitResultAndCheckpoint({ identity, expected_attempt_revision, expected_checkpoint_revision, result_ref, checkpoint }),
+  readAttempt({ identity }),
+}
+```
+
+Required semantics:
+
+1. `reserveAttempt` creates one durable record for `(candidate_id,
+   claim_attempt_id)` and is idempotent only for the exact same reservation.
+   A different attempt cannot acquire an active candidate's dispatch right.
+2. `markDispatchStarted` performs the durable CAS **before** calling the
+   Runtime. It changes the attempt to `DISPATCH_UNKNOWN`; a crash after this
+   write is ambiguous and cannot be retried without authoritative Runtime
+   reconciliation or an adapter's real idempotency guarantee.
+3. `abandonBeforeDispatch` wins only by atomically changing a still-reserved or
+   claim-bound attempt to terminal `NOT_DISPATCHED`. It races `markDispatchStarted`
+   on the same attempt revision. If Dispatch has started, the method must fail
+   without changing either attempt or Claim. Claim release happens only after
+   this terminal CAS succeeds.
+4. `recordOutcome` distinguishes `NOT_DISPATCHED`, `ACCEPTED`, `COMPLETED`, and
+   `UNKNOWN`. After `DISPATCH_UNKNOWN`, only `reconcileOutcome` may establish a
+   definitive result from authoritative Runtime evidence; a caller-supplied
+   result cannot rewrite an unknown outcome. The current adapter's
+   `resume_accepted` maps only to `ACCEPTED`, never to completed work. Lost
+   receipts and malformed responses remain `UNKNOWN`.
+5. `commitResultAndCheckpoint` commits a sanitized result reference and the
+   corresponding checkpoint under the same expected attempt/checkpoint
+   revisions. If the backing store cannot transact both records, it must use a
+   durable write-ahead state that can reconcile partial writes idempotently.
+6. All operations bind candidate, attempt, runtime semantic ID, Association
+   reference, claim revision, and opaque repository/worktree scope. They do not
+   persist native session IDs, prompts, transcripts, responses, or tool output.
+7. Stale CAS, missing records, unavailable storage, response loss, or unknown
+   Runtime state fail closed. No caller-supplied boolean or fixture verifier
+   authorizes recovery.
+
+No concrete RPL-95 physical-state adapter, RPL-94 Association API, RPL-93 M5
+Task Context/Fresh Observation/Resume entrypoint, or supported Runtime Result
+provider is available on this PR's public base. RPL-120 must consume those
+published contracts when available; it must not write parallel RPL-95 state
+or redefine RPL-94 Association lifecycle. Until the Attempt/Outcome CAS port is
+implemented and connected, cross-process duplicate Claim arbitration is
+verified separately from safe UNKNOWN recovery, result/checkpoint persistence,
+and product Manual Resume E2E.
