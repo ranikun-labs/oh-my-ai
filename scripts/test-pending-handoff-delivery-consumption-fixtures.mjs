@@ -2032,6 +2032,7 @@ await group("V4 Store composition boundary", async () => {
       ]);
       assert.deepEqual(Reflect.ownKeys(runtime.claimLease), [
         "acquireClaim",
+        "acquireClaimForDispatch",
         "registerPending",
         "recoverClaimLease",
         "releaseClaimBeforeDelivery",

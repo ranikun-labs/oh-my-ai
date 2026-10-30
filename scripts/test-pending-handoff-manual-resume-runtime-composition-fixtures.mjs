@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import * as moduleNamespace from "./lib/pending-handoff-manual-resume-runtime-composition.mjs";
 import { PENDING_HANDOFF_SCHEMA_VERSION } from "./lib/pending-handoff-core.mjs";
+import { createPendingHandoffManualResumeService } from "./lib/pending-handoff-manual-resume.mjs";
+import {
+  createPendingHandoffManualResumeAttemptOutcomeStoreAdapter,
+} from "./lib/pending-handoff-manual-resume-attempt-outcome-store-adapter.mjs";
 
 const SESSION_SOURCE = `phr1.session.key_A-1.${"S".repeat(43)}`;
 const SESSION_OWNER = `phr1.session.key_A-1.${"O".repeat(43)}`;
@@ -36,8 +40,8 @@ function candidate(sourceRuntime = "codex") {
   };
 }
 
-function state(sourceRuntime = "codex") {
-  return Object.freeze({ candidate: Object.freeze(candidate(sourceRuntime)), state_revision: 1, claim: null });
+function state(sourceRuntime = "codex", stateRevision = 1) {
+  return Object.freeze({ candidate: Object.freeze(candidate(sourceRuntime)), state_revision: stateRevision, claim: null });
 }
 
 function success(value) { return { ok: true, value }; }
@@ -71,8 +75,152 @@ function receipt(runtimeId = "codex") {
   };
 }
 
+function capabilityContextResult(candidateId, runtimeId, overrides = {}) {
+  const taskId = "RPL-120-manual-resume";
+  const persistedCandidate = overrides.persistedCandidate ?? {
+    candidate_id: candidateId,
+    state_revision: 1,
+    source_runtime: runtimeId,
+    source_session_identity: SESSION_SOURCE,
+    repository_identity: REPOSITORY,
+    worktree_identity: WORKTREE,
+  };
+  const scopeRef = overrides.scopeRef ?? candidateId;
+  const environmentFingerprint = overrides.environmentFingerprint ?? "manual-resume-env-v1";
+  const environmentRuntimeId = overrides.environmentRuntimeId ?? runtimeId;
+  const testPlan = { id: "manual-resume-fixtures", digest: "a".repeat(64) };
+  const sha = "b".repeat(40);
+  const treeSha = "c".repeat(40);
+  const task = {
+    task_id: taskId,
+    scope_ref: scopeRef,
+    requirements: {
+      capabilities: ["git"],
+      approval_required: false,
+      capability_scopes: {
+        git: { operation: "read", resource: "repo:ranikun-labs/oh-my-ai" },
+      },
+    },
+  };
+  const environment = {
+    provider_id: "synthetic-manual-resume",
+    fingerprint: environmentFingerprint,
+    runtime_id: environmentRuntimeId,
+    capabilities: {
+      git: {
+        status: overrides.capabilityStatus ?? "available",
+        verified: true,
+        evidence_ref: "synthetic-manual-resume-git-evidence",
+        observed_at: new Date().toISOString(),
+        provider_id: "synthetic-manual-resume",
+        runtime_id: environmentRuntimeId,
+        environment_fingerprint: environmentFingerprint,
+        capability: "git",
+        task_id: taskId,
+        scope_ref: scopeRef,
+        operation: "read",
+        resource: "repo:ranikun-labs/oh-my-ai",
+        reason: overrides.capabilityStatus === "unavailable" ? "synthetic blocked" : "",
+      },
+    },
+  };
+  const checkpoint = {
+    candidate_id: persistedCandidate.candidate_id,
+    state_revision: persistedCandidate.state_revision,
+    status: "interrupted",
+    repo: "ranikun-labs/oh-my-ai",
+    repository_identity: persistedCandidate.repository_identity,
+    worktree_identity: persistedCandidate.worktree_identity,
+    sha,
+    tree_sha: treeSha,
+    environment_fingerprint: environmentFingerprint,
+    next_step: "resume the approved candidate",
+    test_evidence: {
+      candidate_id: persistedCandidate.candidate_id,
+      state_revision: persistedCandidate.state_revision,
+      status: overrides.testStatus ?? "passed",
+      evidence_ref: "synthetic-manual-resume-test-evidence",
+      repo: "ranikun-labs/oh-my-ai",
+      repository_identity: persistedCandidate.repository_identity,
+      worktree_identity: persistedCandidate.worktree_identity,
+      plan_id: testPlan.id,
+      plan_digest: testPlan.digest,
+      sha,
+      tree_sha: treeSha,
+      environment_fingerprint: environmentFingerprint,
+    },
+  };
+  const current = {
+    candidate_id: persistedCandidate.candidate_id,
+    state_revision: persistedCandidate.state_revision,
+    repo: "ranikun-labs/oh-my-ai",
+    repository_identity: persistedCandidate.repository_identity,
+    worktree_identity: persistedCandidate.worktree_identity,
+    sha,
+    tree_sha: treeSha,
+    environment_fingerprint: environmentFingerprint,
+    test_plan: testPlan,
+  };
+  return {
+    task,
+    environment,
+    evidenceVerifiers: {
+      verifyApproval: () => true,
+      verifyCapabilityEvidence: overrides.verifyCapabilityEvidence ?? ((evidence, context) => (
+        evidence.evidence_ref === "synthetic-manual-resume-git-evidence"
+          && evidence.provider_id === context.provider_id
+          && evidence.runtime_id === context.runtime_id
+          && evidence.environment_fingerprint === context.environment_fingerprint
+          && evidence.capability === context.capability
+          && evidence.task_id === context.task_id
+          && evidence.scope_ref === context.scope_ref
+          && evidence.operation === context.requested_scope.operation
+          && evidence.resource === context.requested_scope.resource
+      )),
+    },
+    verifyManualResumeBinding: overrides.verifyManualResumeBinding ?? (binding => (
+      binding.persisted_candidate.candidate_id === persistedCandidate.candidate_id
+        && binding.persisted_candidate.state_revision === persistedCandidate.state_revision
+        && binding.persisted_candidate.source_runtime === persistedCandidate.source_runtime
+        && binding.persisted_candidate.source_session_identity === persistedCandidate.source_session_identity
+        && binding.persisted_candidate.repository_identity === persistedCandidate.repository_identity
+        && binding.persisted_candidate.worktree_identity === persistedCandidate.worktree_identity
+        && binding.task.scope_ref === persistedCandidate.candidate_id
+        && binding.task.capability_scopes.git.resource === "repo:ranikun-labs/oh-my-ai"
+        && binding.checkpoint.candidate_id === persistedCandidate.candidate_id
+        && binding.checkpoint.state_revision === persistedCandidate.state_revision
+        && binding.checkpoint.repository_identity === persistedCandidate.repository_identity
+        && binding.checkpoint.worktree_identity === persistedCandidate.worktree_identity
+        && binding.current.candidate_id === persistedCandidate.candidate_id
+        && binding.current.state_revision === persistedCandidate.state_revision
+        && binding.current.repository_identity === persistedCandidate.repository_identity
+        && binding.current.worktree_identity === persistedCandidate.worktree_identity
+        && binding.test_evidence.candidate_id === persistedCandidate.candidate_id
+        && binding.test_evidence.state_revision === persistedCandidate.state_revision
+        && binding.test_evidence.repository_identity === persistedCandidate.repository_identity
+        && binding.test_evidence.worktree_identity === persistedCandidate.worktree_identity
+    )),
+    checkpoint,
+    current,
+    verifyTestEvidence: (evidence, expected) => (
+      evidence.evidence_ref === "synthetic-manual-resume-test-evidence"
+        && evidence.repo === expected.repo
+        && evidence.candidate_id === expected.candidate_id
+        && evidence.state_revision === expected.state_revision
+        && evidence.repository_identity === expected.repository_identity
+        && evidence.worktree_identity === expected.worktree_identity
+        && evidence.sha === expected.sha
+        && evidence.tree_sha === expected.tree_sha
+        && evidence.environment_fingerprint === expected.environment_fingerprint
+        && evidence.plan_id === expected.test_plan.id
+        && evidence.plan_digest === expected.test_plan.digest
+    ),
+  };
+}
+
 function build(options = {}) {
   const calls = [];
+  let serviceFactoryCalls = 0;
   const stateReads = options.stateReads ?? [state("codex")];
   let stateIndex = 0;
   const store = options.store ?? {
@@ -83,11 +231,15 @@ function build(options = {}) {
     },
   };
   const claimLease = options.claimLease ?? {
-    acquireClaim: async request => {
+    acquireClaimForDispatch: async request => {
       calls.push(["acquireClaim", request]);
       return success({ state_revision: 2, claim_attempt_id: request.claim_attempt_id, claim_lease_expires_at: "2026-08-01T01:00:00.000Z" });
     },
   };
+  const defaultAttemptOutcome = options.attemptOutcomeStore === undefined
+    ? createAttemptOutcomeFixtureStore()
+    : { store: options.attemptOutcomeStore, records: null };
+  const attemptOutcomeStore = defaultAttemptOutcome.store;
   const codexResolution = options.codexResolution ?? {
     resolveCurrentSession: request => {
       calls.push(["codex.resolveCurrentSession", request]);
@@ -114,18 +266,81 @@ function build(options = {}) {
       return success(receipt(request.target.runtime_id));
     },
   };
-  const manualResumeServiceFactory = options.manualResumeServiceFactory ?? undefined;
-  const built = moduleNamespace.createPendingHandoffManualResumeRuntimeComposition({
+  const manualResumeServiceFactory = options.manualResumeServiceFactory ?? (serviceDependencies => {
+    serviceFactoryCalls += 1;
+    return createPendingHandoffManualResumeService(serviceDependencies);
+  });
+  const capabilityContext = {
+    resolveManualResumeContext: async input => {
+      calls.push(["resolveManualResumeContext", input]);
+      if (options.capabilityContextFailure === true) throw new Error(PRIVATE_MARKER);
+      if (options.capabilityContextResult !== undefined) {
+        return typeof options.capabilityContextResult === "function"
+          ? options.capabilityContextResult(input)
+          : options.capabilityContextResult;
+      }
+      return capabilityContextResult(input.candidate_id, input.runtime_id, {
+        persistedCandidate: input.persisted_candidate,
+      });
+    },
+  };
+  const dependencies = {
     store,
     claimLease,
+    attemptOutcomeStore,
     runtimeEntries: [
       { runtime_id: "codex", sessionResolution: codexResolution, manualResumeAction: { supported: true, executor } },
       { runtime_id: "claude", sessionResolution: claudeResolution, manualResumeAction: { supported: false } },
     ],
-    ...(manualResumeServiceFactory === undefined ? {} : { manualResumeServiceFactory }),
-  });
+    manualResumeServiceFactory,
+  };
+  if (options.omitCapabilityContext !== true) dependencies.capabilityContext = capabilityContext;
+  const built = moduleNamespace.createPendingHandoffManualResumeRuntimeComposition(dependencies);
+  if (options.omitCapabilityContext === true) {
+    assert.equal(built.ok, false);
+    return {
+      built,
+      composition: null,
+      calls,
+      store,
+      claimLease,
+      attemptOutcomeStore,
+      attemptOutcomeRecords: defaultAttemptOutcome.records,
+      get serviceFactoryCalls() { return serviceFactoryCalls; },
+    };
+  }
   assert.equal(built.ok, true);
-  return { composition: built.value, calls, store, claimLease };
+  return {
+    built,
+    composition: built.value,
+    calls,
+    store,
+    claimLease,
+    attemptOutcomeStore,
+    attemptOutcomeRecords: defaultAttemptOutcome.records,
+    get serviceFactoryCalls() { return serviceFactoryCalls; },
+  };
+}
+
+function createAttemptOutcomeFixtureStore() {
+  const records = new Map();
+  const keyOf = ({ candidate_id, action_kind }) => JSON.stringify([candidate_id, action_kind]);
+  return {
+    records,
+    store: {
+      readAttempt: async identity => success(records.get(keyOf(identity)) ?? null),
+      compareAndSetAttempt: async request => {
+        const key = keyOf(request);
+        const current = records.get(key) ?? null;
+        if ((request.expected_revision === null && current !== null)
+          || (request.expected_revision !== null && current?.revision !== request.expected_revision)) {
+          return failure("revision_conflict");
+        }
+        records.set(key, request.next_record);
+        return success(request.next_record);
+      },
+    },
+  };
 }
 
 function request(overrides = {}) {
@@ -154,14 +369,33 @@ await group("exact composition authority", async () => {
   await test("rejects supported runtime entries without an executor", () => {
     const result = moduleNamespace.createPendingHandoffManualResumeRuntimeComposition({
       store: { readState: async () => success(state()) },
-      claimLease: { acquireClaim: async () => success({}) },
+      claimLease: { acquireClaimForDispatch: async () => success({}) },
       runtimeEntries: [{
         runtime_id: "codex",
         sessionResolution: build().composition,
         manualResumeAction: { supported: true },
       }],
+      capabilityContext: {
+        resolveManualResumeContext: async input => capabilityContextResult(
+          input.candidate_id,
+          input.runtime_id,
+        ),
+      },
     });
     assert.equal(result.ok, false);
+  });
+  await test("requires the Manual Resume Attempt/Outcome CAS port", () => {
+    const result = moduleNamespace.createPendingHandoffManualResumeRuntimeComposition({
+      store: { readState: async () => success(state()) },
+      claimLease: { acquireClaimForDispatch: async () => success({}) },
+      runtimeEntries: [{
+        runtime_id: "codex",
+        sessionResolution: build().composition,
+        manualResumeAction: { supported: true, executor: { resolveAndResume: async () => success(receipt()) } },
+      }],
+      capabilityContext: { resolveManualResumeContext: async input => capabilityContextResult(input.candidate_id, input.runtime_id) },
+    });
+    assert.deepEqual(result, { ok: false, reason: "manual_resume_runtime_dependency_invalid" });
   });
 });
 
@@ -186,7 +420,266 @@ await group("authoritative pre-Claim capability selection", async () => {
   });
 });
 
+await group("F4 capability and checkpoint preflight", async () => {
+  await test("stale initial revision blocks capability preflight before the later service read", async () => {
+    const built = build({
+      stateReads: index => state("codex", index === 0 ? 1 : 2),
+    });
+    const result = await built.composition.executeManualResume(request({ expected_revision: 2 }));
+    assert.deepEqual(result, { ok: false, reason: "manual_resume_revision_conflict" });
+    assert.deepEqual(built.calls.map(([name]) => name), ["readState"]);
+    assert.equal(built.serviceFactoryCalls, 0);
+    assert.equal(built.calls.some(([name]) => name === "resolveManualResumeContext"), false);
+    assert.equal(built.calls.some(([name]) => name === "acquireClaim"), false);
+    assert.equal(built.calls.some(([name]) => name === "codex.resolveAndResume"), false);
+  });
+
+  await test("claimed attempt replay is blocked before capability context or executor", async () => {
+    const claimedCandidate = candidate("codex");
+    claimedCandidate.status = "claimed";
+    const built = build({
+      stateReads: [{
+        candidate: Object.freeze(claimedCandidate),
+        state_revision: 2,
+        claim: Object.freeze({
+          claim_attempt_id: ATTEMPT,
+          current_session_identity: SESSION_OWNER,
+          claim_lease_expires_at: "2026-08-01T01:00:00.000Z",
+        }),
+      }],
+    });
+    const result = await built.composition.executeManualResume(request({ expected_revision: 1 }));
+    assert.deepEqual(result, { ok: false, reason: "manual_resume_revision_conflict" });
+    assert.deepEqual(built.calls.map(([name]) => name), ["readState"]);
+    assert.equal(built.serviceFactoryCalls, 0);
+  });
+
+  await test("a restart with the persisted claimed revision cannot redispatch the attempt", async () => {
+    const claimedCandidate = candidate("codex");
+    claimedCandidate.status = "claimed";
+    const persistedClaim = Object.freeze({
+      claim_owner_identity: SESSION_OWNER,
+      claim_started_at: "2026-08-01T00:00:00.000Z",
+      claim_lease_expires_at: "2026-08-01T01:00:00.000Z",
+      claim_attempt_id: ATTEMPT,
+    });
+    const claimedState = Object.freeze({
+      candidate: Object.freeze(claimedCandidate),
+      state_revision: 2,
+      claim: persistedClaim,
+    });
+    const calls = [];
+    const built = build({
+      store: { readState: async () => success(claimedState) },
+      executor: { resolveAndResume: async () => {
+        calls.push("dispatch");
+        return success(receipt());
+      } },
+    });
+    const result = await built.composition.executeManualResume(request({ expected_revision: 2 }));
+    assert.deepEqual(result, { ok: false, reason: "manual_resume_revision_conflict" });
+    assert.equal(calls.includes("dispatch"), false);
+    assert.equal(built.calls.filter(([name]) => name === "acquireClaim").length, 0);
+  });
+
+  await test("missing capability-context adapter makes composition unavailable", () => {
+    const built = build({ omitCapabilityContext: true });
+    assert.deepEqual(built.built, {
+      ok: false,
+      reason: "manual_resume_runtime_dependency_invalid",
+    });
+    assert.deepEqual(built.calls, []);
+    assert.equal(built.serviceFactoryCalls, 0);
+  });
+
+  await test("missing runtime context evidence fails before service, Claim, or executor", async () => {
+    const built = build({ capabilityContextFailure: true });
+    const result = await built.composition.executeManualResume(request());
+    assert.deepEqual(result, {
+      ok: false,
+      reason: "manual_resume_capability_preflight_blocked",
+    });
+    assert.deepEqual(built.calls.map(([name]) => name), [
+      "readState",
+      "resolveManualResumeContext",
+    ]);
+    assert.equal(built.serviceFactoryCalls, 0);
+    assert.equal(built.calls.some(([name]) => name === "acquireClaim"), false);
+    assert.equal(built.calls.some(([name]) => name === "codex.resolveAndResume"), false);
+  });
+
+  await test("missing trusted handoff-binding verifier fails before service and Claim", async () => {
+    const context = capabilityContextResult("composition-candidate-001", "codex");
+    delete context.verifyManualResumeBinding;
+    const built = build({ capabilityContextResult: context });
+    const result = await built.composition.executeManualResume(request());
+    assert.deepEqual(result, {
+      ok: false,
+      reason: "manual_resume_capability_preflight_blocked",
+    });
+    assert.equal(built.serviceFactoryCalls, 0);
+    assert.equal(built.calls.some(([name]) => name === "acquireClaim"), false);
+    assert.equal(built.calls.some(([name]) => name === "codex.resolveAndResume"), false);
+  });
+
+  await test("blocked capability cannot create service, Claim, or executor action", async () => {
+    const context = capabilityContextResult(
+      "composition-candidate-001",
+      "codex",
+      { capabilityStatus: "unavailable" },
+    );
+    const built = build({ capabilityContextResult: context });
+    const result = await built.composition.executeManualResume(request());
+    assert.deepEqual(result, {
+      ok: false,
+      reason: "manual_resume_capability_preflight_blocked",
+    });
+    assert.deepEqual(built.calls.map(([name]) => name), [
+      "readState",
+      "resolveManualResumeContext",
+    ]);
+    assert.equal(built.serviceFactoryCalls, 0);
+    assert.equal(built.calls.some(([name]) => name === "acquireClaim"), false);
+    assert.equal(built.calls.some(([name]) => name === "codex.resolveAndResume"), false);
+  });
+
+  await test("candidate scope mismatch cannot reach service, Claim, or executor", async () => {
+    const context = capabilityContextResult(
+      "composition-candidate-001",
+      "codex",
+      { scopeRef: "different-persisted-candidate" },
+    );
+    const built = build({ capabilityContextResult: context });
+    const result = await built.composition.executeManualResume(request());
+    assert.deepEqual(result, {
+      ok: false,
+      reason: "manual_resume_capability_preflight_blocked",
+    });
+    assert.equal(built.serviceFactoryCalls, 0);
+    assert.equal(built.calls.some(([name]) => name === "acquireClaim"), false);
+    assert.equal(built.calls.some(([name]) => name === "codex.resolveAndResume"), false);
+  });
+
+  await test("checkpoint evidence failure cannot reach service, Claim, or executor", async () => {
+    const context = capabilityContextResult(
+      "composition-candidate-001",
+      "codex",
+      { testStatus: "failed" },
+    );
+    const built = build({ capabilityContextResult: context });
+    const result = await built.composition.executeManualResume(request());
+    assert.deepEqual(result, {
+      ok: false,
+      reason: "manual_resume_capability_preflight_blocked",
+    });
+    assert.equal(built.serviceFactoryCalls, 0);
+    assert.equal(built.calls.some(([name]) => name === "acquireClaim"), false);
+    assert.equal(built.calls.some(([name]) => name === "codex.resolveAndResume"), false);
+  });
+
+  await test("repository, worktree, or revision mismatch cannot bind another handoff", async () => {
+    const mutations = [
+      context => { context.checkpoint.repository_identity = `phr1.repository.key_A-1.${"X".repeat(43)}`; },
+      context => { context.current.worktree_identity = `phr1.worktree.key_A-1.${"Y".repeat(43)}`; },
+      context => { context.checkpoint.test_evidence.state_revision += 1; },
+    ];
+    for (const mutate of mutations) {
+      const context = capabilityContextResult("composition-candidate-001", "codex");
+      mutate(context);
+      const built = build({ capabilityContextResult: context });
+      const result = await built.composition.executeManualResume(request());
+      assert.deepEqual(result, {
+        ok: false,
+        reason: "manual_resume_capability_preflight_blocked",
+      });
+      assert.equal(built.serviceFactoryCalls, 0);
+      assert.equal(built.calls.some(([name]) => name === "acquireClaim"), false);
+      assert.equal(built.calls.some(([name]) => name === "codex.resolveAndResume"), false);
+    }
+  });
+
+  await test("Codex cannot consume Claude runtime capability evidence", async () => {
+    let verifierCalls = 0;
+    const context = capabilityContextResult(
+      "composition-candidate-001",
+      "codex",
+      {
+        environmentRuntimeId: "claude",
+        verifyCapabilityEvidence: () => {
+          verifierCalls += 1;
+          return true;
+        },
+      },
+    );
+    const built = build({ capabilityContextResult: context });
+    const result = await built.composition.executeManualResume(request());
+    assert.deepEqual(result, {
+      ok: false,
+      reason: "manual_resume_capability_preflight_blocked",
+    });
+    assert.equal(verifierCalls, 0);
+    assert.equal(built.serviceFactoryCalls, 0);
+    assert.equal(built.calls.some(([name]) => name === "acquireClaim"), false);
+    assert.equal(built.calls.some(([name]) => name === "codex.resolveAndResume"), false);
+  });
+
+  await test("an own __proto__ extra scope is preserved and rejected", async () => {
+    const context = capabilityContextResult("composition-candidate-001", "codex");
+    Object.defineProperty(context.task.requirements.capability_scopes, "__proto__", {
+      value: { operation: "read", resource: "repo:unrequested/extra" },
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+    const built = build({ capabilityContextResult: context });
+    const result = await built.composition.executeManualResume(request());
+    assert.deepEqual(result, {
+      ok: false,
+      reason: "manual_resume_capability_preflight_blocked",
+    });
+    assert.equal(built.serviceFactoryCalls, 0);
+    assert.equal(built.calls.some(([name]) => name === "acquireClaim"), false);
+    assert.equal(built.calls.some(([name]) => name === "codex.resolveAndResume"), false);
+  });
+});
+
 await group("supported Codex delegation and drift safety", async () => {
+  await test("reserves the same attempt against concurrent calls across composition instances", async () => {
+    let releaseAction;
+    const actionBarrier = new Promise(resolve => { releaseAction = resolve; });
+    let notifyActionStarted;
+    const actionStarted = new Promise(resolve => { notifyActionStarted = resolve; });
+    let dispatches = 0;
+    const executor = {
+      resolveAndResume: async () => {
+        dispatches += 1;
+        notifyActionStarted();
+        await actionBarrier;
+        return success(receipt());
+      },
+    };
+    const first = build({ executor });
+    const second = build({ executor });
+    const firstExecution = first.composition.executeManualResume(request());
+    const started = await Promise.race([
+      actionStarted.then(() => true),
+      new Promise(resolve => setTimeout(() => resolve(false), 1000)),
+    ]);
+    if (!started) {
+      throw new Error(`first dispatch was not reached: ${JSON.stringify(await firstExecution)} record=${JSON.stringify([...first.attemptOutcomeRecords.values()])}`);
+    }
+
+    const secondResult = await second.composition.executeManualResume(request());
+    assert.deepEqual(secondResult, { ok: false, reason: "manual_resume_attempt_in_progress" });
+    assert.equal(second.calls.length, 0);
+    assert.equal(dispatches, 1);
+
+    releaseAction();
+    const firstResult = await firstExecution;
+    assert.equal(firstResult.ok, true);
+    assert.equal(dispatches, 1);
+  });
+
   await test("Codex delegates through Core, Claim, then the exact executor", async () => {
     const built = build();
     const result = await built.composition.executeManualResume(request());
@@ -194,12 +687,35 @@ await group("supported Codex delegation and drift safety", async () => {
     assert.deepEqual(result.value.target, { runtime_id: "codex", session_identity: SESSION_SOURCE });
     assert.deepEqual(built.calls.map(([name]) => name), [
       "readState",
+      "resolveManualResumeContext",
       "readState",
       "codex.resolveCurrentSession",
       "codex.resolveTargetSession",
       "acquireClaim",
       "codex.resolveAndResume",
     ]);
+    assert.deepEqual(built.calls[1], [
+      "resolveManualResumeContext",
+      {
+        candidate_id: "composition-candidate-001",
+        runtime_id: "codex",
+        persisted_candidate: {
+          candidate_id: "composition-candidate-001",
+          state_revision: 1,
+          source_runtime: "codex",
+          source_session_identity: SESSION_SOURCE,
+          repository_identity: REPOSITORY,
+          worktree_identity: WORKTREE,
+        },
+      },
+    ]);
+    assert.equal(built.serviceFactoryCalls, 1);
+    assert.equal(built.calls.filter(([name]) => name === "codex.resolveAndResume").length, 1);
+    const record = [...built.attemptOutcomeRecords.values()][0];
+    assert.equal(record.status, "accepted");
+    assert.equal(record.claim_revision, 2);
+    assert.equal(record.actor_identity, SESSION_OWNER);
+    assert.equal(record.action_kind, "manual_resume");
   });
   await test("second Core read changing runtime cannot reach Claim or Codex executor", async () => {
     const built = build({ stateReads: [state("codex"), state("claude")] });
@@ -209,10 +725,398 @@ await group("supported Codex delegation and drift safety", async () => {
     assert.equal(built.calls.filter(([name]) => name === "codex.resolveAndResume").length, 0);
   });
   await test("supported capability with executor failure remains sanitized", async () => {
-    const built = build({ executor: { resolveAndResume: async () => ({ ok: false, reason: "codex_action_unavailable" }) } });
+    const executorCalls = [];
+    const built = build({ executor: { resolveAndResume: async request => {
+      executorCalls.push(request);
+      return { ok: false, reason: "codex_action_unavailable" };
+    } } });
     const result = await built.composition.executeManualResume(request());
-    assert.deepEqual(result, { ok: false, reason: "manual_resume_action_request_unavailable" });
+    assert.deepEqual(result, { ok: false, reason: "manual_resume_action_outcome_unknown" });
+    assert.equal(executorCalls.length, 1);
     assert.equal(JSON.stringify(result).includes(PRIVATE_MARKER), false);
+    assert.equal([...built.attemptOutcomeRecords.values()][0].status, "dispatch_unknown");
+  });
+
+  await test("durable Attempt ledger write failure blocks Claim and Runtime", async () => {
+    let claimCalls = 0;
+    let runtimeCalls = 0;
+    const attemptOutcomeStore = createPendingHandoffManualResumeAttemptOutcomeStoreAdapter({
+      recordStore: {
+        readRecord: async () => success(null),
+        compareAndSetRecord: async () => failure("root_unavailable"),
+      },
+    }).value;
+    const built = build({
+      attemptOutcomeStore,
+      claimLease: {
+        acquireClaimForDispatch: async () => {
+          claimCalls += 1;
+          return success({
+            state_revision: 2,
+            claim_attempt_id: ATTEMPT,
+            claim_lease_expires_at: "2026-08-01T01:00:00.000Z",
+          });
+        },
+      },
+      executor: { resolveAndResume: async () => {
+        runtimeCalls += 1;
+        return success(receipt());
+      } },
+    });
+    const result = await built.composition.executeManualResume(request());
+    assert.deepEqual(result, { ok: false, reason: "manual_resume_attempt_store_unavailable" });
+    assert.equal(claimCalls, 0);
+    assert.equal(runtimeCalls, 0);
+  });
+
+  await test("a durable UNKNOWN Attempt blocks another composition and new Attempt ID", async () => {
+    const shared = createAttemptOutcomeFixtureStore();
+    let dispatches = 0;
+    const first = build({
+      attemptOutcomeStore: shared.store,
+      executor: { resolveAndResume: async () => {
+        dispatches += 1;
+        throw new Error(PRIVATE_MARKER);
+      } },
+    });
+    const firstResult = await first.composition.executeManualResume(request());
+    assert.deepEqual(firstResult, { ok: false, reason: "manual_resume_action_outcome_unknown" });
+    assert.equal([...shared.records.values()][0].status, "dispatch_unknown");
+
+    const restarted = build({
+      attemptOutcomeStore: shared.store,
+      executor: { resolveAndResume: async () => {
+        dispatches += 1;
+        return success(receipt());
+      } },
+    });
+    const retry = await restarted.composition.executeManualResume(request({
+      claim_attempt_id: "223e4567-e89b-42d3-a456-426614174001",
+    }));
+    assert.deepEqual(retry, { ok: false, reason: "manual_resume_attempt_recovery_required" });
+    assert.equal(restarted.calls.some(([name]) => name === "acquireClaim"), false);
+    assert.equal(dispatches, 1);
+  });
+
+  await test("Claim success without durable bind cannot call the Runtime", async () => {
+    const shared = createAttemptOutcomeFixtureStore();
+    let dispatches = 0;
+    let claimWrites = 0;
+    const attemptOutcomeStore = {
+      readAttempt: shared.store.readAttempt,
+      compareAndSetAttempt: async requestValue => {
+        if (requestValue.expected_revision === 1) return failure("store_unavailable");
+        return shared.store.compareAndSetAttempt(requestValue);
+      },
+    };
+    const built = build({
+      attemptOutcomeStore,
+      claimLease: {
+        acquireClaimForDispatch: async requestValue => {
+          claimWrites += 1;
+          return success({
+            state_revision: 2,
+            claim_attempt_id: requestValue.claim_attempt_id,
+            claim_lease_expires_at: "2026-08-01T01:00:00.000Z",
+          });
+        },
+      },
+      executor: { resolveAndResume: async () => {
+        dispatches += 1;
+        return success(receipt());
+      } },
+    });
+    const result = await built.composition.executeManualResume(request());
+    assert.deepEqual(result, { ok: false, reason: "manual_resume_claim_outcome_unknown" });
+    assert.equal(claimWrites, 1);
+    assert.equal(dispatches, 0);
+    assert.equal([...shared.records.values()][0].status, "reserved");
+
+    const restarted = build({
+      attemptOutcomeStore: shared.store,
+      executor: { resolveAndResume: async () => {
+        dispatches += 1;
+        return success(receipt());
+      } },
+    });
+    const retry = await restarted.composition.executeManualResume(request({
+      claim_attempt_id: "223e4567-e89b-42d3-a456-426614174001",
+    }));
+    assert.deepEqual(retry, { ok: false, reason: "manual_resume_attempt_recovery_required" });
+    assert.equal(restarted.calls.some(([name]) => name === "acquireClaim"), false);
+    assert.equal(dispatches, 0);
+  });
+
+  await test("ACCEPTED is not completion and blocks a new Attempt", async () => {
+    const shared = createAttemptOutcomeFixtureStore();
+    const first = build({ attemptOutcomeStore: shared.store });
+    assert.equal((await first.composition.executeManualResume(request())).ok, true);
+    assert.equal([...shared.records.values()][0].status, "accepted");
+    const restarted = build({ attemptOutcomeStore: shared.store });
+    const next = await restarted.composition.executeManualResume(request({
+      claim_attempt_id: "223e4567-e89b-42d3-a456-426614174001",
+    }));
+    assert.deepEqual(next, { ok: false, reason: "manual_resume_attempt_recovery_required" });
+    assert.equal(restarted.calls.some(([name]) => name === "acquireClaim"), false);
+  });
+
+  await test("UNKNOWN Attempt stays quarantined after simulated Claim release and new Candidate revision", async () => {
+    const shared = createAttemptOutcomeFixtureStore();
+    let candidateRevision = 1;
+    let claimActive = false;
+    let claimCalls = 0;
+    let dispatches = 0;
+    const store = {
+      readState: async () => success(state("codex", candidateRevision)),
+    };
+    const claimLease = {
+      acquireClaimForDispatch: async requestValue => {
+        claimCalls += 1;
+        claimActive = true;
+        candidateRevision += 1;
+        return success({
+          state_revision: candidateRevision,
+          claim_attempt_id: requestValue.claim_attempt_id,
+          claim_lease_expires_at: "2026-08-01T01:00:00.000Z",
+        });
+      },
+    };
+    const first = build({
+      store,
+      claimLease,
+      attemptOutcomeStore: shared.store,
+      executor: { resolveAndResume: async () => {
+        dispatches += 1;
+        throw new Error(PRIVATE_MARKER);
+      } },
+    });
+    assert.deepEqual(await first.composition.executeManualResume(request()), {
+      ok: false,
+      reason: "manual_resume_action_outcome_unknown",
+    });
+    assert.equal([...shared.records.values()][0].status, "dispatch_unknown");
+    assert.equal(claimActive, true);
+    assert.equal(dispatches, 1);
+
+    // Simulate the legacy Claim recovery boundary releasing the Claim and
+    // publishing a new Candidate revision. Composition has no release API.
+    claimActive = false;
+    candidateRevision += 1;
+    const restarted = build({
+      store,
+      claimLease,
+      attemptOutcomeStore: shared.store,
+      executor: { resolveAndResume: async () => {
+        dispatches += 1;
+        return success(receipt());
+      } },
+    });
+    assert.deepEqual(await restarted.composition.executeManualResume(request({
+      expected_revision: candidateRevision,
+      claim_attempt_id: "223e4567-e89b-42d3-a456-426614174001",
+    })), {
+      ok: false,
+      reason: "manual_resume_attempt_recovery_required",
+    });
+    assert.equal(claimActive, false);
+    assert.equal(claimCalls, 1);
+    assert.equal(dispatches, 1);
+  });
+
+  await test("Result saved / Checkpoint CAS failed remains quarantined after restart", async () => {
+    const shared = createAttemptOutcomeFixtureStore();
+    let dispatches = 0;
+    let claimCalls = 0;
+    let resultWrites = 0;
+    let checkpointWrites = 0;
+    let resultSaved = false;
+    const claimLease = {
+      acquireClaimForDispatch: async requestValue => {
+        claimCalls += 1;
+        return success({
+          state_revision: 2,
+          claim_attempt_id: requestValue.claim_attempt_id,
+          claim_lease_expires_at: "2026-08-01T01:00:00.000Z",
+        });
+      },
+    };
+    const first = build({
+      claimLease,
+      attemptOutcomeStore: shared.store,
+      executor: { resolveAndResume: async () => {
+        dispatches += 1;
+        return success(receipt());
+      } },
+    });
+    assert.equal((await first.composition.executeManualResume(request())).ok, true);
+    assert.equal([...shared.records.values()][0].status, "accepted");
+
+    // Contract sentinel only: current Composition has no Result or
+    // Checkpoint writer. Model a committed Result and failed Checkpoint CAS.
+    resultWrites += 1;
+    resultSaved = true;
+    checkpointWrites += 1;
+    const checkpointResult = failure("revision_conflict");
+    assert.equal(resultSaved, true);
+    assert.equal(checkpointResult.ok, false);
+
+    const restarted = build({
+      attemptOutcomeStore: shared.store,
+      claimLease,
+      executor: { resolveAndResume: async () => {
+        dispatches += 1;
+        return success(receipt());
+      } },
+    });
+    assert.deepEqual(await restarted.composition.executeManualResume(request({
+      claim_attempt_id: "223e4567-e89b-42d3-a456-426614174001",
+    })), {
+      ok: false,
+      reason: "manual_resume_attempt_recovery_required",
+    });
+    assert.equal(resultWrites, 1);
+    assert.equal(checkpointWrites, 1);
+    assert.equal(claimCalls, 1);
+    assert.equal(dispatches, 1);
+  });
+
+  await test("a persisted Claim with an unconfirmed action request is quarantined", async () => {
+    let executorCalls = 0;
+    let claimCalls = 0;
+    const built = build({
+      claimLease: {
+        acquireClaimForDispatch: async () => {
+          claimCalls += 1;
+          return success({
+            state_revision: 3,
+            claim_attempt_id: ATTEMPT,
+            claim_lease_expires_at: "2026-08-01T01:00:00.000Z",
+          });
+        },
+      },
+      executor: { resolveAndResume: async () => {
+        executorCalls += 1;
+        return success(receipt());
+      } },
+    });
+    const result = await built.composition.executeManualResume(request());
+    assert.deepEqual(result, { ok: false, reason: "manual_resume_claim_outcome_unknown" });
+    assert.equal(executorCalls, 0);
+    assert.equal(claimCalls, 1);
+  });
+
+  await test("a same-attempt Claim replay is never treated as fresh dispatch authority", async () => {
+    let executorCalls = 0;
+    let claimCalls = 0;
+    const built = build({
+      claimLease: {
+        acquireClaimForDispatch: async () => {
+          claimCalls += 1;
+          return failure("claim_conflict");
+        },
+      },
+      executor: { resolveAndResume: async () => {
+        executorCalls += 1;
+        return success(receipt());
+      } },
+    });
+
+    const result = await built.composition.executeManualResume(request());
+    assert.deepEqual(result, { ok: false, reason: "manual_resume_claim_outcome_unknown" });
+    assert.equal(claimCalls, 1);
+    assert.equal(executorCalls, 0);
+  });
+
+  await test("an accepted action with a lost receipt remains unknown across restart", async () => {
+    let stored = state();
+    let runtimeAccepted = false;
+    const dispatches = [];
+    const store = {
+      readState: async () => success(stored),
+    };
+    const claimLease = {
+      acquireClaimForDispatch: async requestValue => {
+        const claimedCandidate = candidate("codex");
+        claimedCandidate.status = "claimed";
+        stored = Object.freeze({
+          candidate: Object.freeze(claimedCandidate),
+          state_revision: 2,
+          claim: Object.freeze({
+            claim_owner_identity: requestValue.current_session_identity,
+            claim_started_at: "2026-08-01T00:00:00.000Z",
+            claim_lease_expires_at: "2026-08-01T01:00:00.000Z",
+            claim_attempt_id: requestValue.claim_attempt_id,
+          }),
+        });
+        return success({
+          state_revision: 2,
+          claim_attempt_id: requestValue.claim_attempt_id,
+          claim_lease_expires_at: "2026-08-01T01:00:00.000Z",
+        });
+      },
+    };
+    const first = build({
+      store,
+      claimLease,
+      executor: { resolveAndResume: async () => {
+        dispatches.push("accepted-then-receipt-lost");
+        runtimeAccepted = true;
+        throw new Error(PRIVATE_MARKER);
+      } },
+    });
+    const firstResult = await first.composition.executeManualResume(request());
+    assert.deepEqual(firstResult, { ok: false, reason: "manual_resume_action_outcome_unknown" });
+    assert.equal(runtimeAccepted, true);
+    assert.equal(dispatches.length, 1);
+
+    const restarted = build({
+      store,
+      claimLease,
+      executor: { resolveAndResume: async () => {
+        dispatches.push("duplicate");
+        return success(receipt());
+      } },
+    });
+    const afterRestart = await restarted.composition.executeManualResume(request({ expected_revision: 2 }));
+    assert.deepEqual(afterRestart, { ok: false, reason: "manual_resume_revision_conflict" });
+    assert.equal(dispatches.length, 1);
+  });
+
+  await test("Claim response loss after persistence blocks the first Runtime dispatch", async () => {
+    let stored = state();
+    let claimAttempted = 0;
+    let dispatches = 0;
+    const store = { readState: async () => success(stored) };
+    const claimLease = {
+      acquireClaimForDispatch: async requestValue => {
+        claimAttempted += 1;
+        const claimedCandidate = candidate("codex");
+        claimedCandidate.status = "claimed";
+        stored = Object.freeze({
+          candidate: Object.freeze(claimedCandidate),
+          state_revision: 2,
+          claim: Object.freeze({
+            claim_owner_identity: requestValue.current_session_identity,
+            claim_started_at: "2026-08-01T00:00:00.000Z",
+            claim_lease_expires_at: "2026-08-01T01:00:00.000Z",
+            claim_attempt_id: requestValue.claim_attempt_id,
+          }),
+        });
+        throw new Error(PRIVATE_MARKER);
+      },
+    };
+    const built = build({
+      store,
+      claimLease,
+      executor: { resolveAndResume: async () => {
+        dispatches += 1;
+        return success(receipt());
+      } },
+    });
+    const result = await built.composition.executeManualResume(request());
+    assert.deepEqual(result, { ok: false, reason: "manual_resume_claim_outcome_unknown" });
+    assert.equal(claimAttempted, 1);
+    assert.equal(dispatches, 0);
   });
   await test("executor success must bind every prepared action identity field exactly", async () => {
     const mutations = [
@@ -231,17 +1135,17 @@ await group("supported Codex delegation and drift safety", async () => {
         },
       });
       const result = await built.composition.executeManualResume(request());
-      assert.deepEqual(result, { ok: false, reason: "manual_resume_action_request_unavailable" }, field);
+      assert.deepEqual(result, { ok: false, reason: "manual_resume_action_outcome_unknown" }, field);
     }
 
     const missing = { ...receipt() };
     delete missing.claim_attempt_id;
     const missingResult = await build({ executor: { resolveAndResume: async () => success(missing) } }).composition.executeManualResume(request());
-    assert.deepEqual(missingResult, { ok: false, reason: "manual_resume_action_request_unavailable" }, "missing claim_attempt_id");
+    assert.deepEqual(missingResult, { ok: false, reason: "manual_resume_action_outcome_unknown" }, "missing claim_attempt_id");
 
     const extra = { ...receipt(), native_session_id: "native-private-marker" };
     const extraResult = await build({ executor: { resolveAndResume: async () => success(extra) } }).composition.executeManualResume(request());
-    assert.deepEqual(extraResult, { ok: false, reason: "manual_resume_action_request_unavailable" }, "extra native field");
+    assert.deepEqual(extraResult, { ok: false, reason: "manual_resume_action_outcome_unknown" }, "extra native field");
 
     const valid = await build().composition.executeManualResume(request());
     assert.equal(valid.ok, true);
@@ -262,10 +1166,16 @@ await group("dependency and lifecycle boundaries", async () => {
   });
   await test("parallel compositions keep Store, Claim, and executors isolated", async () => {
     const first = build();
-    const second = build({ stateReads: [state("claude")] });
+    const claudeCandidate = candidate("claude");
+    claudeCandidate.candidate_id = "composition-candidate-002";
+    const second = build({ stateReads: [{
+      candidate: Object.freeze(claudeCandidate),
+      state_revision: 1,
+      claim: null,
+    }] });
     const [a, b] = await Promise.all([
       first.composition.executeManualResume(request({ candidate_id: "composition-candidate-001" })),
-      second.composition.executeManualResume(request({ candidate_id: "composition-candidate-001" })),
+      second.composition.executeManualResume(request({ candidate_id: "composition-candidate-002" })),
     ]);
     assert.equal(a.ok, true);
     assert.deepEqual(b, { ok: false, reason: "manual_resume_runtime_unsupported" });

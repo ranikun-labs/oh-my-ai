@@ -74,6 +74,7 @@ const STORE_PUBLIC_KEYS = Object.freeze([
 ]);
 const CLAIM_LEASE_PUBLIC_KEYS = Object.freeze([
   "acquireClaim",
+  "acquireClaimForDispatch",
   "registerPending",
   "recoverClaimLease",
   "releaseClaimBeforeDelivery",

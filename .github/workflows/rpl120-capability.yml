@@ -1,0 +1,80 @@
+name: RPL-120 Capability Native CI
+
+on:
+  pull_request:
+    branches:
+      - master
+    paths:
+      - ".github/workflows/rpl120-capability.yml"
+      - "docs/contracts/f4-execution-capability.md"
+      - "scripts/lib/f4-execution-capability.mjs"
+      - "scripts/lib/pending-handoff-claim-lease.mjs"
+      - "scripts/lib/pending-handoff-manual-resume-runtime-composition.mjs"
+      - "scripts/lib/pending-handoff-manual-resume-attempt-outcome.mjs"
+      - "scripts/lib/pending-handoff-manual-resume-attempt-outcome-store-adapter.mjs"
+      - "scripts/test-f4-execution-capability-fixtures.mjs"
+      - "scripts/test-pending-handoff-claim-lease-fixtures.mjs"
+      - "scripts/test-pending-handoff-delivery-consumption-fixtures.mjs"
+      - "scripts/test-pending-handoff-manual-resume-fixtures.mjs"
+      - "scripts/test-pending-handoff-manual-resume-runtime-composition-fixtures.mjs"
+      - "scripts/test-pending-handoff-manual-resume-attempt-outcome-fixtures.mjs"
+      - "scripts/test-pending-handoff-manual-resume-attempt-outcome-store-adapter-fixtures.mjs"
+      - "scripts/test-pending-handoff-store-fixtures.mjs"
+
+permissions:
+  contents: read
+
+jobs:
+  capability-native:
+    name: Capability and Manual Resume fixtures
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out the exact PR head
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+
+      - name: Verify whitespace and patch integrity
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: git diff --check "$BASE_SHA...$HEAD_SHA"
+
+      - name: Check changed JavaScript syntax
+        run: |
+          node --check scripts/lib/f4-execution-capability.mjs
+          node --check scripts/lib/pending-handoff-claim-lease.mjs
+          node --check scripts/lib/pending-handoff-manual-resume-runtime-composition.mjs
+          node --check scripts/lib/pending-handoff-manual-resume-attempt-outcome.mjs
+          node --check scripts/lib/pending-handoff-manual-resume-attempt-outcome-store-adapter.mjs
+          node --check scripts/test-f4-execution-capability-fixtures.mjs
+          node --check scripts/test-pending-handoff-claim-lease-fixtures.mjs
+          node --check scripts/test-pending-handoff-delivery-consumption-fixtures.mjs
+          node --check scripts/test-pending-handoff-manual-resume-fixtures.mjs
+          node --check scripts/test-pending-handoff-manual-resume-runtime-composition-fixtures.mjs
+          node --check scripts/test-pending-handoff-manual-resume-attempt-outcome-fixtures.mjs
+          node --check scripts/test-pending-handoff-manual-resume-attempt-outcome-store-adapter-fixtures.mjs
+          node --check scripts/test-pending-handoff-store-fixtures.mjs
+
+      - name: Run Capability fixtures
+        run: node scripts/test-f4-execution-capability-fixtures.mjs
+
+      - name: Run Claim and Store fixtures
+        run: |
+          node scripts/test-pending-handoff-store-fixtures.mjs
+          node scripts/test-pending-handoff-claim-lease-fixtures.mjs
+
+      - name: Run Manual Resume and Delivery fixtures
+        run: |
+          node scripts/test-pending-handoff-manual-resume-fixtures.mjs
+          node scripts/test-pending-handoff-manual-resume-runtime-composition-fixtures.mjs
+          node scripts/test-pending-handoff-manual-resume-attempt-outcome-fixtures.mjs
+          node scripts/test-pending-handoff-manual-resume-attempt-outcome-store-adapter-fixtures.mjs
+          node scripts/test-pending-handoff-delivery-consumption-fixtures.mjs
