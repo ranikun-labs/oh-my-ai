@@ -179,16 +179,17 @@ executor is invoked, a thrown, malformed, or non-accepted result is reported as
 `manual_resume_action_outcome_unknown`, except for the adapter's explicit
 unsupported-runtime response. A persisted active Claim blocks a sequential
 restart from acquiring dispatch authority again, including after lease expiry
-until an outcome-safe recovery is available. The current Claim schema has no
-durable resume-outcome tombstone. The Claim service now fails closed: expired
-`recoverClaimLease` returns `claim_lease_expired` without changing the Claim,
-and `releaseClaimBeforeDelivery` returns `claim_conflict` for a matching active
-Claim because it cannot prove the Runtime action was not accepted. Both leave
-the revision and Claim intact, preventing these operations from making an
-UNKNOWN action dispatchable again. This intentionally blocks recovery; M1
-remains open until durable Attempt/Outcome CAS can reconcile outcomes and
-authorize release only after `NOT_DISPATCHED` is committed. Result/checkpoint
-CAS remains unimplemented.
+until explicit clearing occurs. The current Claim schema has no durable
+resume-outcome tombstone. Both `recoverClaimLease` and
+`releaseClaimBeforeDelivery` can clear a Claim back to pending without knowing
+whether Manual Resume dispatched or the Runtime accepted the action. A later
+call with the new revision could then acquire fresh dispatch authority for the
+same UNKNOWN outcome. The Manual Resume composition neither exposes nor calls
+these clearing operations, and callers must not clear an UNKNOWN Runtime
+outcome. That caller rule is not enforced by the shared Claim service, so M1
+remains open for explicit Claim clearing followed by redispatch. Safe
+post-clear recovery, authoritative outcome reconciliation, and result/checkpoint
+CAS remain blocked on an owned durable Attempt/Outcome contract.
 
 ## Checkpoint evidence reuse
 
@@ -280,13 +281,10 @@ The current pending-handoff Claim record is not an RPL-120 Attempt/Outcome
 record. It has only owner, Claim timestamps, and `claim_attempt_id`; the
 filesystem Store exposes candidate-state CAS, not result/checkpoint CAS. A
 Claim lease expiry therefore does not prove that a Runtime action was never
-sent. `recoverClaimLease` now preserves expired Claims and returns
-`claim_lease_expired`; `releaseClaimBeforeDelivery` refuses a matching Claim
-without durable `NOT_DISPATCHED` evidence. Neither authorizes a Manual Resume
-retry based on lease expiry, caller assertion, or Claim revision alone. The
-current implementation cannot distinguish a Resume Claim from other Claim
-uses after persistence, so this candidate leaves M1 OPEN and may strand an
-expired Claim until the durable Attempt/Outcome port is implemented.
+sent. `recoverClaimLease` and `releaseClaimBeforeDelivery` must not authorize a
+Manual Resume retry based on lease expiry, caller assertion, or Claim revision
+alone. The current implementation cannot distinguish a Resume Claim from
+other Claim uses after persistence, so this candidate leaves M1 OPEN.
 
 RPL-120 needs a separately owned injected port with durable per-attempt CAS.
 The following is the proposed public contract, not an implemented Store or

@@ -921,7 +921,7 @@ await group("concurrent Claim exact-one", async () => {
 });
 
 await group("finite Lease boundaries and recovery", async () => {
-  await test("keeps an expired Lease claimed until durable Outcome reconciliation exists", async () => {
+  await test("keeps an active lease exclusive and recovers exactly at its expiry boundary", async () => {
     await withEnvironment(async ({ rootDirectory, store, service, clock }) => {
       const input = await seedPending(store, service, { candidate_id: "lease-boundary" });
       const claimed = assertSuccess(await service.acquireClaim({
@@ -945,28 +945,27 @@ await group("finite Lease boundaries and recovery", async () => {
       assert.equal(await rawEnvelopeText(rootDirectory, input.candidate_id), before);
 
       clock.value = Date.parse(claimed.claim_lease_expires_at);
-      assertFailure(await service.recoverClaimLease({
+      assert.deepEqual(assertSuccess(await service.recoverClaimLease({
         candidate_id: input.candidate_id,
         expected_revision: claimed.state_revision,
-      }), "claim_lease_expired");
-      assert.equal(await rawEnvelopeText(rootDirectory, input.candidate_id), before);
-      const preserved = assertSuccess(await store.readState(input.candidate_id));
-      assert.equal(preserved.candidate.status, "claimed");
-      assert.ok(preserved.claim);
-      assert.equal(preserved.state_revision, claimed.state_revision);
+      })), { state_revision: 3, status: "pending" });
+      const recovered = assertSuccess(await store.readState(input.candidate_id));
+      assert.equal(recovered.candidate.status, "pending");
+      assert.equal(recovered.claim, null);
+      assert.equal(recovered.state_revision, 3);
 
-      assertFailure(await service.acquireClaimForDispatch({
+      assert.deepEqual(assertSuccess(await service.acquireClaim({
         candidate_id: input.candidate_id,
-        expected_revision: claimed.state_revision,
+        expected_revision: 3,
         current_session_identity: OWNER_B,
         claim_attempt_id: CLAIM_ATTEMPT_B,
-      }), "claim_lease_expired");
+      })).state_revision, 4);
       assert.equal(assertSuccess(await store.readState(input.candidate_id)).candidate.status, "claimed");
     });
   });
 
-  await test("retains an expired Candidate Claim when Runtime outcome is unknown", async () => {
-    await withEnvironment(async ({ rootDirectory, store, service, clock }) => {
+  await test("gives Candidate TTL precedence over a longer finite Lease", async () => {
+    await withEnvironment(async ({ store, service, clock }) => {
       const input = await seedPending(store, service, {
         candidate_id: "ttl-precedence",
         expires_at: new Date(BASE_NOW + 500).toISOString(),
@@ -979,22 +978,13 @@ await group("finite Lease boundaries and recovery", async () => {
       }));
       assert.equal(claimed.claim_lease_expires_at, input.expires_at);
       clock.value = Date.parse(input.expires_at);
-      const before = await rawEnvelopeText(rootDirectory, input.candidate_id);
-      assertFailure(await service.recoverClaimLease({
+      assert.deepEqual(assertSuccess(await service.recoverClaimLease({
         candidate_id: input.candidate_id,
         expected_revision: claimed.state_revision,
-      }), "claim_lease_expired");
-      assert.equal(await rawEnvelopeText(rootDirectory, input.candidate_id), before);
+      })), { state_revision: 3, status: "expired" });
       const expired = assertSuccess(await store.readState(input.candidate_id));
-      assert.equal(expired.candidate.status, "claimed");
-      assert.ok(expired.claim);
-      assert.equal(expired.state_revision, claimed.state_revision);
-      assertFailure(await service.acquireClaimForDispatch({
-        candidate_id: input.candidate_id,
-        expected_revision: claimed.state_revision,
-        current_session_identity: OWNER_B,
-        claim_attempt_id: CLAIM_ATTEMPT_B,
-      }), "claim_lease_expired");
+      assert.equal(expired.candidate.status, "expired");
+      assert.equal(expired.claim, null);
     }, { leaseDurationMs: 5_000 });
   });
 
@@ -1013,7 +1003,7 @@ await group("finite Lease boundaries and recovery", async () => {
 });
 
 await group("concurrent Lease recovery", async () => {
-  await test("independent processes preserve an expired Claim without Outcome evidence", async () => {
+  await test("publishes one recovery revision when independent processes recover an expired Lease", async () => {
     await withEnvironment(async ({ rootDirectory, store, service, clock }) => {
       const input = await seedPending(store, service, { candidate_id: "lease-recovery-race" });
       const claimed = assertSuccess(await service.acquireClaim({
@@ -1056,18 +1046,19 @@ await group("concurrent Lease recovery", async () => {
         assert.equal(ready.filter(entry => entry.startsWith("ready-")).length, 2);
         await fileSystem.writeFile(join(barrierDirectory, "release"), "release\n", "utf8");
         const outcomes = await Promise.all([first, second]);
-        assert.equal(outcomes.filter(result => result.reason === "claim_lease_expired").length, 2, JSON.stringify(outcomes));
+        assert.equal(outcomes.filter(result => result.ok).length, 1);
+        assert.equal(outcomes.filter(result => result.reason === "claim_conflict").length, 1);
         const final = assertSuccess(await store.readState(input.candidate_id));
-        assert.equal(final.state_revision, claimed.state_revision);
-        assert.equal(final.candidate.status, "claimed");
-        assert.ok(final.claim);
+        assert.equal(final.state_revision, 3);
+        assert.equal(final.candidate.status, "pending");
+        assert.equal(final.claim, null);
       } finally {
         await fileSystem.rm(barrierDirectory, { recursive: true, force: true });
       }
     });
   });
 
-  await test("retains an expired-TTL Claim when concurrent Recovery has no Outcome evidence", async () => {
+  await test("publishes exactly one expired state when concurrent recovery observes expired Candidate TTL", async () => {
     await withEnvironment(async ({ rootDirectory, store, service }) => {
       const input = await seedPending(store, service, {
         candidate_id: "ttl-expired-recovery-race",
@@ -1113,11 +1104,12 @@ await group("concurrent Lease recovery", async () => {
         assert.equal(ready.filter(entry => entry.startsWith("ready-")).length, 2);
         await fileSystem.writeFile(join(barrierDirectory, "release"), "release\n", "utf8");
         const outcomes = await Promise.all([first, second]);
-        assert.equal(outcomes.filter(result => result.reason === "claim_lease_expired").length, 2, JSON.stringify(outcomes));
+        assert.equal(outcomes.filter(result => result.ok).length, 1, JSON.stringify(outcomes));
+        assert.equal(outcomes.filter(result => result.reason === "claim_conflict").length, 1, JSON.stringify(outcomes));
         const final = assertSuccess(await store.readState(input.candidate_id));
-        assert.equal(final.state_revision, claimed.state_revision);
-        assert.equal(final.candidate.status, "claimed");
-        assert.ok(final.claim);
+        assert.equal(final.state_revision, claimed.state_revision + 1);
+        assert.equal(final.candidate.status, "expired");
+        assert.equal(final.claim, null);
       } finally {
         await fileSystem.rm(barrierDirectory, { recursive: true, force: true });
       }
@@ -1126,8 +1118,8 @@ await group("concurrent Lease recovery", async () => {
 });
 
 await group("Release before Delivery", async () => {
-  await test("does not release an active Claim without durable NOT_DISPATCHED evidence", async () => {
-    await withEnvironment(async ({ rootDirectory, store, service, clock }) => {
+  await test("releases an active Claim only for the exact owner and attempt", async () => {
+    await withEnvironment(async ({ store, service, clock }) => {
       const input = await seedPending(store, service, { candidate_id: "release-before-delivery" });
       const claimed = assertSuccess(await service.acquireClaim({
         candidate_id: input.candidate_id,
@@ -1135,25 +1127,16 @@ await group("Release before Delivery", async () => {
         current_session_identity: OWNER_A,
         claim_attempt_id: CLAIM_ATTEMPT_A,
       }));
-      const before = await rawEnvelopeText(rootDirectory, input.candidate_id);
-      assertFailure(await service.releaseClaimBeforeDelivery({
+      assert.deepEqual(assertSuccess(await service.releaseClaimBeforeDelivery({
         candidate_id: input.candidate_id,
         expected_revision: claimed.state_revision,
         current_session_identity: OWNER_A,
         claim_attempt_id: CLAIM_ATTEMPT_A,
-      }), "claim_conflict");
-      assert.equal(await rawEnvelopeText(rootDirectory, input.candidate_id), before);
+      })), { state_revision: 3, status: "pending" });
       const state = assertSuccess(await store.readState(input.candidate_id));
-      assert.equal(state.candidate.status, "claimed");
-      assert.ok(state.claim);
-      assert.equal(state.state_revision, claimed.state_revision);
+      assert.equal(state.candidate.status, "pending");
+      assert.equal(state.claim, null);
       assert.equal(clock.value, BASE_NOW);
-      assertFailure(await service.acquireClaimForDispatch({
-        candidate_id: input.candidate_id,
-        expected_revision: claimed.state_revision,
-        current_session_identity: OWNER_B,
-        claim_attempt_id: CLAIM_ATTEMPT_B,
-      }), "claim_conflict");
     });
   });
 

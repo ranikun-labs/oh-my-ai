@@ -42,8 +42,8 @@ export function createPendingHandoffClaimLeaseService(options) {
       { allowSameAttemptReplay: false },
     ),
     registerPending: request => registerPending(store, mutationPort, clock, request),
-    recoverClaimLease: request => recoverClaimLease(store, clock, request),
-    releaseClaimBeforeDelivery: request => releaseClaimBeforeDelivery(store, clock, request),
+    recoverClaimLease: request => recoverClaimLease(store, mutationPort, clock, request),
+    releaseClaimBeforeDelivery: request => releaseClaimBeforeDelivery(store, mutationPort, clock, request),
   });
   return success(service);
 }
@@ -196,7 +196,7 @@ async function acquireClaim(
   }));
 }
 
-async function recoverClaimLease(store, clock, request) {
+async function recoverClaimLease(store, mutationPort, clock, request) {
   const inspected = inspectRequest(request, ["candidate_id", "expected_revision"]);
   if (!inspected.ok) return failure(inspected.reason);
   const now = readClock(clock);
@@ -218,13 +218,29 @@ async function recoverClaimLease(store, clock, request) {
   }
   if (now < leaseExpiry) return failure("claim_lease_active");
 
-  // Lease expiry says nothing about whether a Runtime action was accepted.
-  // Without a durable Attempt/Outcome reconciliation port, retain the Claim
-  // and fail closed rather than making this Candidate dispatchable again.
-  return failure("claim_lease_expired");
+  const ttlExpired = now >= candidateExpiry;
+  const transition = transitionCandidate(state.candidate, ttlExpired
+    ? { type: "expire", expiration_verified: true }
+    : {
+      type: "lease_expired",
+      lease_expiration_verified: true,
+      ttl_valid: true,
+      revision_verified: true,
+    });
+  if (!transition.ok) return failure("claim_state_invalid");
+  const published = await persistState(mutationPort, inspected.value.candidateId, state.state_revision, {
+    candidate: transition.value,
+    claim: null,
+    delivery: null,
+  });
+  if (!published.ok) return published;
+  return success(Object.freeze({
+    state_revision: published.value.new_revision,
+    status: ttlExpired ? "expired" : "pending",
+  }));
 }
 
-async function releaseClaimBeforeDelivery(store, clock, request) {
+async function releaseClaimBeforeDelivery(store, mutationPort, clock, request) {
   const inspected = inspectRequest(request, [
     "candidate_id",
     "expected_revision",
@@ -265,9 +281,23 @@ async function releaseClaimBeforeDelivery(store, clock, request) {
     return failure("claim_conflict");
   }
 
-  // The Claim record has no durable dispatch outcome. Owner/attempt identity
-  // alone cannot prove that a Runtime action was never accepted.
-  return failure("claim_conflict");
+  const pending = transitionCandidate(state.candidate, {
+    type: "release_before_delivery",
+    owner_verified: true,
+    attempt_verified: true,
+    revision_verified: true,
+    delivery_not_confirmed: true,
+  });
+  if (!pending.ok) return failure("claim_state_invalid");
+  const published = await persistState(mutationPort, inspected.value.candidateId, state.state_revision, {
+    candidate: pending.value,
+    claim: null,
+  });
+  if (!published.ok) return published;
+  return success(Object.freeze({
+    state_revision: published.value.new_revision,
+    status: "pending",
+  }));
 }
 
 async function readState(store, candidateId) {
