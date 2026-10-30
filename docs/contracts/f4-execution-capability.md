@@ -275,7 +275,7 @@ different repository even when SHA, tree, and test plan match.
   installation, deployment, and private policy changes are outside this
   candidate.
 
-## Required durable Attempt / Outcome contract — not implemented
+## Manual Resume Attempt / Outcome aggregate
 
 The current pending-handoff Claim record is not an RPL-120 Attempt/Outcome
 record. It has only owner, Claim timestamps, and `claim_attempt_id`; the
@@ -283,71 +283,71 @@ filesystem Store exposes candidate-state CAS, not result/checkpoint CAS. A
 Claim lease expiry therefore does not prove that a Runtime action was never
 sent. `recoverClaimLease` and `releaseClaimBeforeDelivery` must not authorize a
 Manual Resume retry based on lease expiry, caller assertion, or Claim revision
-alone. The current implementation cannot distinguish a Resume Claim from
-other Claim uses after persistence, so this candidate leaves M1 OPEN.
+alone. Existing Claim and Delivery contracts are unchanged.
 
-RPL-120 needs a separately owned injected port with durable per-attempt CAS.
-The following is the proposed public contract, not an implemented Store or
-Runtime adapter:
+RPL-120 now has a separate domain service in
+`scripts/lib/pending-handoff-manual-resume-attempt-outcome.mjs`. It is wired
+into the Manual Resume Composition and requires an injected Attempt/Outcome
+Store. No physical Store adapter is implemented here. The fixture Map below
+the Composition tests is test-only and does not provide process-safe or
+durable behavior. A product caller without the injected port cannot construct
+the Composition; the runtime boundary fails closed.
 
 ```js
 identity = {
   candidate_id,
-  claim_attempt_id,
+  action_kind: "manual_resume",
+  attempt_id,
   runtime_id,
-  association_ref,
+  actor_identity,
+  scope_ref,
   repository_identity,
   worktree_identity,
+  candidate_revision,
 }
 
 attemptOutcomePort = {
-  reserveAttempt({ identity, expected_candidate_revision }),
-  bindClaim({ identity, expected_attempt_revision, claim_revision }),
-  markDispatchStarted({ identity, expected_attempt_revision, claim_revision }),
-  recordOutcome({ identity, expected_attempt_revision, outcome, evidence_ref }),
-  reconcileOutcome({ identity, expected_attempt_revision, observation_ref }),
-  abandonBeforeDispatch({ identity, expected_attempt_revision, claim_revision }),
-  commitResultAndCheckpoint({ identity, expected_attempt_revision, expected_checkpoint_revision, result_ref, checkpoint }),
-  readAttempt({ identity }),
+  readAttempt({ candidate_id, action_kind }),
+  compareAndSetAttempt({ candidate_id, action_kind, expected_revision, next_record }),
 }
 ```
 
-Required semantics:
+The Store contract requires durable atomic CAS per `(candidate_id,
+action_kind)` across independent processes. The current public Store does not
+implement that contract. The domain service writes one active attempt record
+with an aggregate revision and these transitions:
 
-1. `reserveAttempt` creates one durable record for `(candidate_id,
-   claim_attempt_id)` and is idempotent only for the exact same reservation.
-   A different attempt cannot acquire an active candidate's dispatch right.
-2. `markDispatchStarted` performs the durable CAS **before** calling the
-   Runtime. It changes the attempt to `DISPATCH_UNKNOWN`; a crash after this
-   write is ambiguous and cannot be retried without authoritative Runtime
-   reconciliation or an adapter's real idempotency guarantee.
-3. `abandonBeforeDispatch` wins only by atomically changing a still-reserved or
-   claim-bound attempt to terminal `NOT_DISPATCHED`. It races `markDispatchStarted`
-   on the same attempt revision. If Dispatch has started, the method must fail
-   without changing either attempt or Claim. Claim release happens only after
-   this terminal CAS succeeds.
-4. `recordOutcome` distinguishes `NOT_DISPATCHED`, `ACCEPTED`, `COMPLETED`, and
-   `UNKNOWN`. After `DISPATCH_UNKNOWN`, only `reconcileOutcome` may establish a
-   definitive result from authoritative Runtime evidence; a caller-supplied
-   result cannot rewrite an unknown outcome. The current adapter's
-   `resume_accepted` maps only to `ACCEPTED`, never to completed work. Lost
-   receipts and malformed responses remain `UNKNOWN`.
-5. `commitResultAndCheckpoint` commits a sanitized result reference and the
-   corresponding checkpoint under the same expected attempt/checkpoint
-   revisions. If the backing store cannot transact both records, it must use a
-   durable write-ahead state that can reconcile partial writes idempotently.
-6. All operations bind candidate, attempt, runtime semantic ID, Association
-   reference, claim revision, and opaque repository/worktree scope. They do not
-   persist native session IDs, prompts, transcripts, responses, or tool output.
-7. Stale CAS, missing records, unavailable storage, response loss, or unknown
-   Runtime state fail closed. No caller-supplied boolean or fixture verifier
-   authorizes recovery.
+1. `reserved`: written after current session resolution and before Claim.
+2. `claim_bound`: stores the Claim revision after the Claim CAS succeeds.
+3. `dispatch_unknown`: written by CAS before the Runtime call. Crash or lost
+   response after this transition remains ambiguous.
+4. `accepted`: written only after the Composition validates the adapter's
+   exact `resume_accepted` receipt. Accepted is not task completion.
+
+The aggregate key is candidate plus action kind; the attempt ID is part of the
+record. A second attempt ID cannot bypass an active `reserved`, `claim_bound`,
+`dispatch_unknown`, or `accepted` record. The API currently exposes no reset,
+reconciliation, completion, result/checkpoint CAS, or Claim release operation.
+Those recovery transitions remain blocked until their authoritative providers
+and storage transaction contract are supplied. No current method can clear an
+UNKNOWN state using lease expiry or a caller-provided assertion.
+
+All records bind candidate, action, attempt, runtime semantic ID, opaque actor,
+candidate scope, repository/worktree identities, candidate revision, Claim
+revision, and aggregate revision. The current candidate scope is the
+pending-handoff candidate ID; it is not an RPL-94 Association ID. No native
+session ID, prompt, transcript, response, or tool output is stored.
+
+Stale CAS, missing records, unavailable storage, write-response loss, or
+unknown Runtime state fail closed. The service is designed to consume a Store
+that provides these semantics; it does not itself prove the injected Store is
+durable, atomic, or cross-process.
 
 No concrete RPL-95 physical-state adapter, RPL-94 Association API, RPL-93 M5
 Task Context/Fresh Observation/Resume entrypoint, or supported Runtime Result
 provider is available on this PR's public base. RPL-120 must consume those
 published contracts when available; it must not write parallel RPL-95 state
 or redefine RPL-94 Association lifecycle. Until the Attempt/Outcome CAS port is
-implemented and connected, cross-process duplicate Claim arbitration is
-verified separately from safe UNKNOWN recovery, result/checkpoint persistence,
-and product Manual Resume E2E.
+implemented and connected, M1 remains OPEN. Cross-process Claim arbitration,
+safe UNKNOWN recovery, result/checkpoint persistence, and product Manual
+Resume E2E remain separate, unverified gates.

@@ -233,6 +233,10 @@ function build(options = {}) {
       return success({ state_revision: 2, claim_attempt_id: request.claim_attempt_id, claim_lease_expires_at: "2026-08-01T01:00:00.000Z" });
     },
   };
+  const defaultAttemptOutcome = options.attemptOutcomeStore === undefined
+    ? createAttemptOutcomeFixtureStore()
+    : { store: options.attemptOutcomeStore, records: null };
+  const attemptOutcomeStore = defaultAttemptOutcome.store;
   const codexResolution = options.codexResolution ?? {
     resolveCurrentSession: request => {
       calls.push(["codex.resolveCurrentSession", request]);
@@ -280,6 +284,7 @@ function build(options = {}) {
   const dependencies = {
     store,
     claimLease,
+    attemptOutcomeStore,
     runtimeEntries: [
       { runtime_id: "codex", sessionResolution: codexResolution, manualResumeAction: { supported: true, executor } },
       { runtime_id: "claude", sessionResolution: claudeResolution, manualResumeAction: { supported: false } },
@@ -296,6 +301,8 @@ function build(options = {}) {
       calls,
       store,
       claimLease,
+      attemptOutcomeStore,
+      attemptOutcomeRecords: defaultAttemptOutcome.records,
       get serviceFactoryCalls() { return serviceFactoryCalls; },
     };
   }
@@ -306,7 +313,30 @@ function build(options = {}) {
     calls,
     store,
     claimLease,
+    attemptOutcomeStore,
+    attemptOutcomeRecords: defaultAttemptOutcome.records,
     get serviceFactoryCalls() { return serviceFactoryCalls; },
+  };
+}
+
+function createAttemptOutcomeFixtureStore() {
+  const records = new Map();
+  const keyOf = ({ candidate_id, action_kind }) => JSON.stringify([candidate_id, action_kind]);
+  return {
+    records,
+    store: {
+      readAttempt: async identity => success(records.get(keyOf(identity)) ?? null),
+      compareAndSetAttempt: async request => {
+        const key = keyOf(request);
+        const current = records.get(key) ?? null;
+        if ((request.expected_revision === null && current !== null)
+          || (request.expected_revision !== null && current?.revision !== request.expected_revision)) {
+          return failure("revision_conflict");
+        }
+        records.set(key, request.next_record);
+        return success(request.next_record);
+      },
+    },
   };
 }
 
@@ -350,6 +380,19 @@ await group("exact composition authority", async () => {
       },
     });
     assert.equal(result.ok, false);
+  });
+  await test("requires the Manual Resume Attempt/Outcome CAS port", () => {
+    const result = moduleNamespace.createPendingHandoffManualResumeRuntimeComposition({
+      store: { readState: async () => success(state()) },
+      claimLease: { acquireClaimForDispatch: async () => success({}) },
+      runtimeEntries: [{
+        runtime_id: "codex",
+        sessionResolution: build().composition,
+        manualResumeAction: { supported: true, executor: { resolveAndResume: async () => success(receipt()) } },
+      }],
+      capabilityContext: { resolveManualResumeContext: async input => capabilityContextResult(input.candidate_id, input.runtime_id) },
+    });
+    assert.deepEqual(result, { ok: false, reason: "manual_resume_runtime_dependency_invalid" });
   });
 });
 
@@ -615,7 +658,13 @@ await group("supported Codex delegation and drift safety", async () => {
     const first = build({ executor });
     const second = build({ executor });
     const firstExecution = first.composition.executeManualResume(request());
-    await actionStarted;
+    const started = await Promise.race([
+      actionStarted.then(() => true),
+      new Promise(resolve => setTimeout(() => resolve(false), 1000)),
+    ]);
+    if (!started) {
+      throw new Error(`first dispatch was not reached: ${JSON.stringify(await firstExecution)} record=${JSON.stringify([...first.attemptOutcomeRecords.values()])}`);
+    }
 
     const secondResult = await second.composition.executeManualResume(request());
     assert.deepEqual(secondResult, { ok: false, reason: "manual_resume_attempt_in_progress" });
@@ -659,6 +708,11 @@ await group("supported Codex delegation and drift safety", async () => {
     ]);
     assert.equal(built.serviceFactoryCalls, 1);
     assert.equal(built.calls.filter(([name]) => name === "codex.resolveAndResume").length, 1);
+    const record = [...built.attemptOutcomeRecords.values()][0];
+    assert.equal(record.status, "accepted");
+    assert.equal(record.claim_revision, 2);
+    assert.equal(record.actor_identity, SESSION_OWNER);
+    assert.equal(record.action_kind, "manual_resume");
   });
   await test("second Core read changing runtime cannot reach Claim or Codex executor", async () => {
     const built = build({ stateReads: [state("codex"), state("claude")] });
@@ -677,6 +731,98 @@ await group("supported Codex delegation and drift safety", async () => {
     assert.deepEqual(result, { ok: false, reason: "manual_resume_action_outcome_unknown" });
     assert.equal(executorCalls.length, 1);
     assert.equal(JSON.stringify(result).includes(PRIVATE_MARKER), false);
+    assert.equal([...built.attemptOutcomeRecords.values()][0].status, "dispatch_unknown");
+  });
+
+  await test("a durable UNKNOWN Attempt blocks another composition and new Attempt ID", async () => {
+    const shared = createAttemptOutcomeFixtureStore();
+    let dispatches = 0;
+    const first = build({
+      attemptOutcomeStore: shared.store,
+      executor: { resolveAndResume: async () => {
+        dispatches += 1;
+        throw new Error(PRIVATE_MARKER);
+      } },
+    });
+    const firstResult = await first.composition.executeManualResume(request());
+    assert.deepEqual(firstResult, { ok: false, reason: "manual_resume_action_outcome_unknown" });
+    assert.equal([...shared.records.values()][0].status, "dispatch_unknown");
+
+    const restarted = build({
+      attemptOutcomeStore: shared.store,
+      executor: { resolveAndResume: async () => {
+        dispatches += 1;
+        return success(receipt());
+      } },
+    });
+    const retry = await restarted.composition.executeManualResume(request({
+      claim_attempt_id: "223e4567-e89b-42d3-a456-426614174001",
+    }));
+    assert.deepEqual(retry, { ok: false, reason: "manual_resume_attempt_recovery_required" });
+    assert.equal(restarted.calls.some(([name]) => name === "acquireClaim"), false);
+    assert.equal(dispatches, 1);
+  });
+
+  await test("Claim success without durable bind cannot call the Runtime", async () => {
+    const shared = createAttemptOutcomeFixtureStore();
+    let dispatches = 0;
+    let claimWrites = 0;
+    const attemptOutcomeStore = {
+      readAttempt: shared.store.readAttempt,
+      compareAndSetAttempt: async requestValue => {
+        if (requestValue.expected_revision === 1) return failure("store_unavailable");
+        return shared.store.compareAndSetAttempt(requestValue);
+      },
+    };
+    const built = build({
+      attemptOutcomeStore,
+      claimLease: {
+        acquireClaimForDispatch: async requestValue => {
+          claimWrites += 1;
+          return success({
+            state_revision: 2,
+            claim_attempt_id: requestValue.claim_attempt_id,
+            claim_lease_expires_at: "2026-08-01T01:00:00.000Z",
+          });
+        },
+      },
+      executor: { resolveAndResume: async () => {
+        dispatches += 1;
+        return success(receipt());
+      } },
+    });
+    const result = await built.composition.executeManualResume(request());
+    assert.deepEqual(result, { ok: false, reason: "manual_resume_claim_outcome_unknown" });
+    assert.equal(claimWrites, 1);
+    assert.equal(dispatches, 0);
+    assert.equal([...shared.records.values()][0].status, "reserved");
+
+    const restarted = build({
+      attemptOutcomeStore: shared.store,
+      executor: { resolveAndResume: async () => {
+        dispatches += 1;
+        return success(receipt());
+      } },
+    });
+    const retry = await restarted.composition.executeManualResume(request({
+      claim_attempt_id: "223e4567-e89b-42d3-a456-426614174001",
+    }));
+    assert.deepEqual(retry, { ok: false, reason: "manual_resume_attempt_recovery_required" });
+    assert.equal(restarted.calls.some(([name]) => name === "acquireClaim"), false);
+    assert.equal(dispatches, 0);
+  });
+
+  await test("ACCEPTED is not completion and blocks a new Attempt", async () => {
+    const shared = createAttemptOutcomeFixtureStore();
+    const first = build({ attemptOutcomeStore: shared.store });
+    assert.equal((await first.composition.executeManualResume(request())).ok, true);
+    assert.equal([...shared.records.values()][0].status, "accepted");
+    const restarted = build({ attemptOutcomeStore: shared.store });
+    const next = await restarted.composition.executeManualResume(request({
+      claim_attempt_id: "223e4567-e89b-42d3-a456-426614174001",
+    }));
+    assert.deepEqual(next, { ok: false, reason: "manual_resume_attempt_recovery_required" });
+    assert.equal(restarted.calls.some(([name]) => name === "acquireClaim"), false);
   });
 
   await test("a persisted Claim with an unconfirmed action request is quarantined", async () => {

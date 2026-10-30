@@ -10,11 +10,13 @@ on:
       - "scripts/lib/f4-execution-capability.mjs"
       - "scripts/lib/pending-handoff-claim-lease.mjs"
       - "scripts/lib/pending-handoff-manual-resume-runtime-composition.mjs"
+      - "scripts/lib/pending-handoff-manual-resume-attempt-outcome.mjs"
       - "scripts/test-f4-execution-capability-fixtures.mjs"
       - "scripts/test-pending-handoff-claim-lease-fixtures.mjs"
       - "scripts/test-pending-handoff-delivery-consumption-fixtures.mjs"
       - "scripts/test-pending-handoff-manual-resume-fixtures.mjs"
       - "scripts/test-pending-handoff-manual-resume-runtime-composition-fixtures.mjs"
+      - "scripts/test-pending-handoff-manual-resume-attempt-outcome-fixtures.mjs"
       - "scripts/test-pending-handoff-store-fixtures.mjs"
 
 permissions:
@@ -48,11 +50,13 @@ jobs:
           node --check scripts/lib/f4-execution-capability.mjs
           node --check scripts/lib/pending-handoff-claim-lease.mjs
           node --check scripts/lib/pending-handoff-manual-resume-runtime-composition.mjs
+          node --check scripts/lib/pending-handoff-manual-resume-attempt-outcome.mjs
           node --check scripts/test-f4-execution-capability-fixtures.mjs
           node --check scripts/test-pending-handoff-claim-lease-fixtures.mjs
           node --check scripts/test-pending-handoff-delivery-consumption-fixtures.mjs
           node --check scripts/test-pending-handoff-manual-resume-fixtures.mjs
           node --check scripts/test-pending-handoff-manual-resume-runtime-composition-fixtures.mjs
+          node --check scripts/test-pending-handoff-manual-resume-attempt-outcome-fixtures.mjs
           node --check scripts/test-pending-handoff-store-fixtures.mjs
 
       - name: Run Capability fixtures
@@ -67,4 +71,5 @@ jobs:
         run: |
           node scripts/test-pending-handoff-manual-resume-fixtures.mjs
           node scripts/test-pending-handoff-manual-resume-runtime-composition-fixtures.mjs
+          node scripts/test-pending-handoff-manual-resume-attempt-outcome-fixtures.mjs
           node scripts/test-pending-handoff-delivery-consumption-fixtures.mjs

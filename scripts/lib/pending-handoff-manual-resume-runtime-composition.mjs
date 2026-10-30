@@ -1,5 +1,6 @@
 import { types as utilTypes } from "node:util";
 import { createPendingHandoffManualResumeService } from "./pending-handoff-manual-resume.mjs";
+import { createPendingHandoffManualResumeAttemptOutcomeService } from "./pending-handoff-manual-resume-attempt-outcome.mjs";
 import { validateOpaqueIdentity } from "./pending-handoff-identity.mjs";
 import {
   assessCheckpointResume,
@@ -16,6 +17,7 @@ const REQUEST_KEYS = Object.freeze([
 ]);
 const STORE_KEYS = Object.freeze(["readState"]);
 const CLAIM_LEASE_KEYS = Object.freeze(["acquireClaimForDispatch"]);
+const ATTEMPT_OUTCOME_STORE_KEYS = Object.freeze(["readAttempt", "compareAndSetAttempt"]);
 const RUNTIME_ENTRY_KEYS = Object.freeze(["runtime_id", "sessionResolution", "manualResumeAction"]);
 const SESSION_RESOLUTION_KEYS = Object.freeze(["resolveCurrentSession", "resolveTargetSession"]);
 const ACTION_KEYS = Object.freeze(["supported", "executor"]);
@@ -95,15 +97,52 @@ async function executeReservedManualResume(dependencies, input) {
   );
   if (!capabilityReady) return failure("manual_resume_capability_preflight_blocked");
 
-  const sessionResolution = createBoundSessionResolution(entry.runtimeId, entry.sessionResolution);
-  const attemptBoundary = { claimStatus: "NOT_ACQUIRED", dispatchStatus: "NOT_RUN" };
+  const attemptBoundary = {
+    claimStatus: "NOT_ACQUIRED",
+    dispatchStatus: "NOT_RUN",
+    attemptIdentity: null,
+    attemptRevision: null,
+    claimRevision: null,
+    outcomeFailure: null,
+  };
+  const sessionResolution = createBoundSessionResolution(
+    entry.runtimeId,
+    entry.sessionResolution,
+    async currentSession => {
+      const identity = Object.freeze({
+        candidate_id: persistedCandidate.candidate_id,
+        action_kind: "manual_resume",
+        attempt_id: input.claimAttemptId,
+        runtime_id: entry.runtimeId,
+        actor_identity: currentSession.session_identity,
+        // This is the pending-handoff candidate scope. It is not an RPL-94 Association ID.
+        scope_ref: persistedCandidate.candidate_id,
+        repository_identity: persistedCandidate.repository_identity,
+        worktree_identity: persistedCandidate.worktree_identity,
+        candidate_revision: persistedCandidate.state_revision,
+      });
+      const reserved = await dependencies.attemptOutcome.reserveAttempt({ identity });
+      if (!reserved.ok) {
+        attemptBoundary.outcomeFailure = reserved.reason;
+        return false;
+      }
+      attemptBoundary.attemptIdentity = identity;
+      attemptBoundary.attemptRevision = reserved.value.revision;
+      return true;
+    },
+  );
   const trackedClaimLease = createTrackedClaimLease(dependencies.claimLease, attemptBoundary);
+  const durableClaimLease = createOutcomeBoundClaimLease(
+    trackedClaimLease,
+    dependencies.attemptOutcome,
+    attemptBoundary,
+  );
   let serviceResult;
   try {
     serviceResult = dependencies.manualResumeServiceFactory({
       store: dependencies.store,
       sessionResolution,
-      claimLease: trackedClaimLease,
+      claimLease: durableClaimLease,
     });
   } catch {
     return failure("manual_resume_action_request_unavailable");
@@ -132,7 +171,7 @@ async function executeReservedManualResume(dependencies, input) {
   }
   if (inspectedPrepared.kind === "failure") {
     return attemptBoundary.claimStatus === "NOT_ACQUIRED"
-      ? failure(inspectedPrepared.reason)
+      ? failure(attemptBoundary.outcomeFailure ?? inspectedPrepared.reason)
       : failure("manual_resume_claim_outcome_unknown");
   }
   if (attemptBoundary.claimStatus !== "ACQUIRED") {
@@ -141,6 +180,30 @@ async function executeReservedManualResume(dependencies, input) {
 
   const actionRequest = inspectActionRequest(inspectedPrepared.value, persistedCandidate.source_runtime);
   if (!actionRequest.ok) return failure("manual_resume_claim_outcome_unknown");
+  const attemptIdentity = attemptBoundary.attemptIdentity;
+  if (attemptIdentity === null
+    || attemptBoundary.attemptRevision === null
+    || attemptIdentity.candidate_id !== actionRequest.value.candidate_id
+    || attemptIdentity.action_kind !== actionRequest.value.action_kind
+    || attemptIdentity.attempt_id !== actionRequest.value.claim_attempt_id
+    || attemptIdentity.runtime_id !== actionRequest.value.target.runtime_id
+    || attemptIdentity.actor_identity !== actionRequest.value.current_session_identity
+    || attemptIdentity.candidate_revision !== input.expectedRevision
+    || attemptBoundary.claimRevision !== actionRequest.value.state_revision
+    || actionRequest.value.claim_attempt_id !== input.claimAttemptId) {
+    return failure("manual_resume_claim_outcome_unknown");
+  }
+
+  const dispatchStarted = await dependencies.attemptOutcome.markDispatchStarted({
+    identity: attemptBoundary.attemptIdentity,
+    expected_attempt_revision: attemptBoundary.attemptRevision,
+    claim_revision: attemptBoundary.claimRevision,
+  });
+  if (!dispatchStarted.ok) {
+    attemptBoundary.outcomeFailure = dispatchStarted.reason;
+    return failure("manual_resume_attempt_outcome_unknown");
+  }
+  attemptBoundary.attemptRevision = dispatchStarted.value.revision;
 
   attemptBoundary.dispatchStatus = "UNKNOWN";
   let rawReceipt;
@@ -149,7 +212,19 @@ async function executeReservedManualResume(dependencies, input) {
   } catch {
     return failure("manual_resume_action_outcome_unknown");
   }
-  return normalizeExecutorResult(rawReceipt, actionRequest.value, attemptBoundary);
+  const normalized = normalizeExecutorResult(rawReceipt, actionRequest.value, attemptBoundary);
+  if (!normalized.ok) return normalized;
+  const accepted = await dependencies.attemptOutcome.recordValidatedAdapterAcceptance({
+    identity: attemptBoundary.attemptIdentity,
+    expected_attempt_revision: attemptBoundary.attemptRevision,
+    adapter_version: normalized.value.adapter_version,
+  });
+  if (!accepted.ok) {
+    attemptBoundary.outcomeFailure = accepted.reason;
+    return failure("manual_resume_action_outcome_unknown");
+  }
+  attemptBoundary.attemptRevision = accepted.value.revision;
+  return normalized;
 }
 
 function createTrackedClaimLease(claimLease, attemptBoundary) {
@@ -171,6 +246,35 @@ function createTrackedClaimLease(claimLease, attemptBoundary) {
   });
 }
 
+function createOutcomeBoundClaimLease(claimLease, attemptOutcome, attemptBoundary) {
+  return Object.freeze({
+    acquireClaim: async request => {
+      const raw = await claimLease.acquireClaim(request);
+      const inspected = inspectCoreResult(raw);
+      if (!inspected.ok || inspected.kind !== "success") return raw;
+      const claimRevision = inspected.value?.state_revision;
+      if (!Number.isSafeInteger(claimRevision) || claimRevision < 0
+        || attemptBoundary.attemptIdentity === null
+        || attemptBoundary.attemptRevision === null) {
+        attemptBoundary.outcomeFailure = "manual_resume_attempt_claim_conflict";
+        return failure("claim_publish_failed");
+      }
+      const bound = await attemptOutcome.bindClaim({
+        identity: attemptBoundary.attemptIdentity,
+        expected_attempt_revision: attemptBoundary.attemptRevision,
+        claim_revision: claimRevision,
+      });
+      if (!bound.ok) {
+        attemptBoundary.outcomeFailure = bound.reason;
+        return failure("claim_publish_failed");
+      }
+      attemptBoundary.attemptRevision = bound.value.revision;
+      attemptBoundary.claimRevision = claimRevision;
+      return raw;
+    },
+  });
+}
+
 function inspectDependencies(options) {
   try {
     if (utilTypes.isProxy(options) || !isPlainObject(options)) return failure("manual_resume_runtime_dependency_invalid");
@@ -178,6 +282,7 @@ function inspectDependencies(options) {
     const allowed = new Set([
       "store",
       "claimLease",
+      "attemptOutcomeStore",
       "runtimeEntries",
       "manualResumeServiceFactory",
       "capabilityContext",
@@ -187,7 +292,20 @@ function inspectDependencies(options) {
     }
     const store = snapshotFacade(options.store, STORE_KEYS);
     const claimLease = snapshotFacade(options.claimLease, CLAIM_LEASE_KEYS);
-    if (store === null || claimLease === null) return failure("manual_resume_runtime_dependency_invalid");
+    const attemptOutcomeStore = snapshotFacade(
+      options.attemptOutcomeStore,
+      ATTEMPT_OUTCOME_STORE_KEYS,
+    );
+    if (store === null || claimLease === null || attemptOutcomeStore === null) {
+      return failure("manual_resume_runtime_dependency_invalid");
+    }
+    const attemptOutcomeResult = createPendingHandoffManualResumeAttemptOutcomeService({
+      store: attemptOutcomeStore,
+    });
+    const attemptOutcome = inspectCoreResult(attemptOutcomeResult);
+    if (!attemptOutcome.ok || attemptOutcome.kind !== "success") {
+      return failure("manual_resume_runtime_dependency_invalid");
+    }
 
     const capabilityContext = snapshotExactFacade(
       options.capabilityContext,
@@ -209,6 +327,7 @@ function inspectDependencies(options) {
     return success(Object.freeze({
       store,
       claimLease,
+      attemptOutcome: attemptOutcome.value,
       capabilityContext,
       runtimeEntries: entries.value,
       manualResumeServiceFactory,
@@ -280,18 +399,40 @@ function inspectAction(value) {
   return success({ supported: true, executor });
 }
 
-function createBoundSessionResolution(runtimeId, resolution) {
+function createBoundSessionResolution(runtimeId, resolution, onCurrentSession) {
+  let currentSession = null;
   return Object.freeze({
     resolveCurrentSession: request => boundResolutionCall(
       resolution.resolveCurrentSession,
       runtimeId,
       request,
-    ),
+    ).then(result => {
+      const inspected = inspectCoreResult(result);
+      if (!inspected.ok || inspected.kind !== "success") return result;
+      const session = inspectExactDataObject(inspected.value, ["runtime_id", "session_identity"]);
+      if (!session.ok || session.values.runtime_id !== runtimeId
+        || !isSessionIdentity(session.values.session_identity)) return result;
+      currentSession = session.values;
+      return result;
+    }),
     resolveTargetSession: request => boundResolutionCall(
       resolution.resolveTargetSession,
       runtimeId,
       request,
-    ),
+    ).then(async result => {
+      const inspected = inspectCoreResult(result);
+      if (!inspected.ok || inspected.kind !== "success" || currentSession === null) return result;
+      const target = inspectExactDataObject(inspected.value, ["runtime_id", "session_identity"]);
+      if (!target.ok || target.values.runtime_id !== runtimeId
+        || !isSessionIdentity(target.values.session_identity)) return result;
+      let reserved = false;
+      try {
+        reserved = await onCurrentSession(currentSession);
+      } catch {
+        reserved = false;
+      }
+      return reserved ? result : failure("session_resolution_unavailable");
+    }),
   });
 }
 
