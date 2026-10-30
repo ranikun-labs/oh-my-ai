@@ -166,7 +166,7 @@ await test("create-if-absent and stale revisions return conflict without overwri
     action_kind: IDENTITY.action_kind,
     expected_revision: null,
     next_record: initial,
-  }), "manual_resume_attempt_revision_conflict");
+  }), "revision_conflict");
   const next = { ...initial, revision: 2, claim_revision: 8, status: "claim_bound" };
   assert.equal((await adapter.compareAndSetAttempt({
     candidate_id: IDENTITY.candidate_id,
@@ -179,11 +179,20 @@ await test("create-if-absent and stale revisions return conflict without overwri
     action_kind: IDENTITY.action_kind,
     expected_revision: 1,
     next_record: { ...next, revision: 2, status: "dispatch_unknown" },
-  }), "manual_resume_attempt_revision_conflict");
+  }), "revision_conflict");
   assert.equal((await adapter.readAttempt({
     candidate_id: IDENTITY.candidate_id,
     action_kind: IDENTITY.action_kind,
   })).value.revision, 2);
+});
+
+await test("provider create-if-absent conflicts retain the domain CAS conflict result", async () => {
+  const fixture = createMemoryRecordStore({
+    compareAndSetRecord: async () => failure("record_exists"),
+  });
+  const service = serviceFor(fixture.recordStore);
+  assertFailure(await service.reserveAttempt({ identity: IDENTITY }),
+    "manual_resume_attempt_revision_conflict");
 });
 
 await test("scope-mismatched and malformed backend records fail closed", async () => {
@@ -201,12 +210,18 @@ await test("scope-mismatched and malformed backend records fail closed", async (
   assertFailure(await adapterFor(misrouted.recordStore).readAttempt({
     candidate_id: IDENTITY.candidate_id,
     action_kind: IDENTITY.action_kind,
-  }), "manual_resume_attempt_record_invalid");
+  }), "record_invalid");
 
   const malformed = createMemoryRecordStore({
     readRecord: async () => success({ candidate_id: IDENTITY.candidate_id }),
   });
   assertFailure(await adapterFor(malformed.recordStore).readAttempt({
+    candidate_id: IDENTITY.candidate_id,
+    action_kind: IDENTITY.action_kind,
+  }), "record_invalid");
+
+  const service = serviceFor(malformed.recordStore);
+  assertFailure(await service.readAttempt({
     candidate_id: IDENTITY.candidate_id,
     action_kind: IDENTITY.action_kind,
   }), "manual_resume_attempt_record_invalid");

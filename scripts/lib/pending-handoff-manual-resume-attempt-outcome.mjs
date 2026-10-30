@@ -146,8 +146,11 @@ async function readAggregate(store, identity) {
     return failure("manual_resume_attempt_store_unavailable");
   }
   const result = inspectResult(raw);
-  if (!result.ok || result.kind !== "success") {
-    return failure("manual_resume_attempt_store_unavailable");
+  if (!result.ok) return failure("manual_resume_attempt_store_unavailable");
+  if (result.kind === "failure") {
+    return failure(result.reason === "record_invalid"
+      ? "manual_resume_attempt_record_invalid"
+      : "manual_resume_attempt_store_unavailable");
   }
   if (result.value === null) return success(null);
   const record = inspectRecord(result.value);

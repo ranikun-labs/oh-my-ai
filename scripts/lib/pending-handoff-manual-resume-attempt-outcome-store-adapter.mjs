@@ -68,7 +68,7 @@ async function readAttempt(provider, request) {
   if (!record.ok
     || record.value.candidate_id !== key.candidateId
     || record.value.action_kind !== key.actionKind) {
-    return failure("manual_resume_attempt_record_invalid");
+    return failure("record_invalid");
   }
   return success(result.value);
 }
@@ -93,7 +93,7 @@ async function compareAndSetAttempt(provider, request) {
   if (!result.ok) return failure("manual_resume_attempt_store_unavailable");
   if (result.kind === "failure") {
     return failure(result.reason === "revision_conflict" || result.reason === "record_exists"
-      ? "manual_resume_attempt_revision_conflict"
+      ? "revision_conflict"
       : "manual_resume_attempt_store_unavailable");
   }
 

@@ -409,6 +409,10 @@ try {
     ]);
     assert.equal(outcomes.filter(outcome => outcome.authorized && outcome.status === "dispatch_unknown").length, 1, JSON.stringify(outcomes));
     assert.equal(outcomes.filter(outcome => !outcome.authorized).length, 1, JSON.stringify(outcomes));
+    assert.ok([
+      "manual_resume_attempt_revision_conflict",
+      "manual_resume_attempt_recovery_required",
+    ].includes(outcomes.find(outcome => !outcome.authorized).reason), JSON.stringify(outcomes));
     tests += 1;
     process.stdout.write("PASS independent OS-process attempt CAS fixture (test-only filesystem adapter)\n");
 
