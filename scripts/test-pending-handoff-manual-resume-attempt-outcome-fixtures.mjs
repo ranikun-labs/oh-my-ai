@@ -8,6 +8,10 @@ import { fileURLToPath } from "node:url";
 import {
   createPendingHandoffManualResumeAttemptOutcomeService,
 } from "./lib/pending-handoff-manual-resume-attempt-outcome.mjs";
+import {
+  createPendingHandoffManualResumeAttemptOutcomeStoreAdapter,
+  RPL120_MANUAL_RESUME_ATTEMPT_STORE_NAMESPACE,
+} from "./lib/pending-handoff-manual-resume-attempt-outcome-store-adapter.mjs";
 
 const ATTEMPT_A = "123e4567-e89b-42d3-a456-426614174000";
 const ATTEMPT_B = "223e4567-e89b-42d3-a456-426614174001";
@@ -54,16 +58,25 @@ function createCasFixtureStore(overrides = {}) {
   return { records, store, createService: () => createPendingHandoffManualResumeAttemptOutcomeService({ store }).value };
 }
 
-function createFileCasFixtureStore(root) {
-  const recordPath = path.join(root, "manual-resume-attempt.json");
-  const lockPath = path.join(root, "manual-resume-attempt.lock");
-  async function readRecord() {
+function createFileCasRecordStore(root) {
+  function getRecordPaths(request) {
+    if (request.namespace !== RPL120_MANUAL_RESUME_ATTEMPT_STORE_NAMESPACE
+      || typeof request.record_key !== "string"
+      || !/^attempt-[0-9a-f]{64}$/.test(request.record_key)) {
+      throw new Error("invalid test record key");
+    }
+    const recordPath = path.join(root, `${request.record_key}.json`);
+    return { recordPath, lockPath: path.join(root, `${request.record_key}.lock`) };
+  }
+  async function readRecord(request) {
+    const { recordPath } = getRecordPaths(request);
     try { return JSON.parse(await fs.readFile(recordPath, "utf8")); } catch (error) {
       if (error.code === "ENOENT") return null;
       throw error;
     }
   }
-  async function withLock(operation) {
+  async function withLock(request, operation) {
+    const { lockPath } = getRecordPaths(request);
     let acquired = false;
     for (let attempt = 0; attempt < 200; attempt += 1) {
       try {
@@ -79,13 +92,14 @@ function createFileCasFixtureStore(root) {
     try { return await operation(); } finally { await fs.rm(lockPath, { recursive: true, force: true }); }
   }
   return {
-    readAttempt: async () => success(await readRecord()),
-    compareAndSetAttempt: async request => withLock(async () => {
-      const current = await readRecord();
+    readRecord: async request => success(await readRecord(request)),
+    compareAndSetRecord: async request => withLock(request, async () => {
+      const current = await readRecord(request);
       if ((request.expected_revision === null && current !== null)
         || (request.expected_revision !== null && current?.revision !== request.expected_revision)) {
         return failure("revision_conflict");
       }
+      const { recordPath } = getRecordPaths(request);
       const temporaryPath = `${recordPath}.${process.pid}.${randomUUID()}.tmp`;
       await fs.writeFile(temporaryPath, JSON.stringify(request.next_record), { flag: "wx" });
       await fs.rename(temporaryPath, recordPath);
@@ -97,8 +111,11 @@ function createFileCasFixtureStore(root) {
 async function runProcessRaceChild() {
   const root = process.argv[3];
   const attemptId = process.argv[4];
+  const store = createPendingHandoffManualResumeAttemptOutcomeStoreAdapter({
+    recordStore: createFileCasRecordStore(root),
+  }).value;
   const service = createPendingHandoffManualResumeAttemptOutcomeService({
-    store: createFileCasFixtureStore(root),
+    store,
   }).value;
   const identity = { ...IDENTITY, attempt_id: attemptId };
   const reserved = await service.reserveAttempt({ identity });
@@ -127,9 +144,38 @@ async function runProcessRaceChild() {
   }));
 }
 
+async function runProcessCrashChild() {
+  const root = process.argv[3];
+  const store = createPendingHandoffManualResumeAttemptOutcomeStoreAdapter({
+    recordStore: createFileCasRecordStore(root),
+  }).value;
+  const service = createPendingHandoffManualResumeAttemptOutcomeService({ store }).value;
+  const identity = { ...IDENTITY };
+  const reserved = await service.reserveAttempt({ identity });
+  if (!reserved.ok) throw new Error("reserve failed: " + reserved.reason);
+  const bound = await service.bindClaim({
+    identity,
+    expected_attempt_revision: reserved.value.revision,
+    claim_revision: 5,
+  });
+  if (!bound.ok) throw new Error("Claim bind failed: " + bound.reason);
+  const dispatchStarted = await service.markDispatchStarted({
+    identity,
+    expected_attempt_revision: bound.value.revision,
+    claim_revision: 5,
+  });
+  if (!dispatchStarted.ok) throw new Error("dispatch marker failed: " + dispatchStarted.reason);
+
+  // Simulate abrupt process loss after persisting UNKNOWN but before Action.
+  process.kill(process.pid, "SIGKILL");
+}
+
 const IS_PROCESS_RACE_CHILD = process.argv[2] === "--attempt-outcome-process-race-child";
+const IS_PROCESS_CRASH_CHILD = process.argv[2] === "--attempt-outcome-process-crash-child";
 if (IS_PROCESS_RACE_CHILD) {
   await runProcessRaceChild();
+} else if (IS_PROCESS_CRASH_CHILD) {
+  await runProcessCrashChild();
 }
 
 function runChild(attemptId, root) {
@@ -163,12 +209,34 @@ function runChild(attemptId, root) {
   });
 }
 
+function runCrashChild(root) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [
+      fileURLToPath(import.meta.url),
+      "--attempt-outcome-process-crash-child",
+      root,
+    ], { stdio: ["ignore", "ignore", "pipe"] });
+    let stderr = "";
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", chunk => { stderr += chunk; });
+    child.on("error", reject);
+    child.on("close", (code, signal) => {
+      if (signal === "SIGKILL") resolve();
+      else {
+        const error = new Error("crash child exited code=" + code + " signal=" + signal + ": " + stderr.slice(0, 200));
+        error.code = code === 0 ? "CRASH_NOT_TRIGGERED" : code;
+        reject(error);
+      }
+    });
+  });
+}
+
 async function test(name, callback) {
   tests += 1;
   try { await callback(); } catch (error) { error.message = `${name}: ${error.message}`; throw error; }
 }
 
-if (!IS_PROCESS_RACE_CHILD) {
+if (!IS_PROCESS_RACE_CHILD && !IS_PROCESS_CRASH_CHILD) {
 await test("requires an explicit attempt CAS port", () => {
   assert.deepEqual(createPendingHandoffManualResumeAttemptOutcomeService({}), {
     ok: false,
@@ -343,6 +411,25 @@ try {
     assert.equal(outcomes.filter(outcome => !outcome.authorized).length, 1, JSON.stringify(outcomes));
     tests += 1;
     process.stdout.write("PASS independent OS-process attempt CAS fixture (test-only filesystem adapter)\n");
+
+    const crashRoot = path.join(root, "crash-restart");
+    await fs.mkdir(crashRoot);
+    await runCrashChild(crashRoot);
+    const adapter = createPendingHandoffManualResumeAttemptOutcomeStoreAdapter({
+      recordStore: createFileCasRecordStore(crashRoot),
+    }).value;
+    const restarted = createPendingHandoffManualResumeAttemptOutcomeService({ store: adapter }).value;
+    const recovered = await restarted.readAttempt({
+      candidate_id: IDENTITY.candidate_id,
+      action_kind: IDENTITY.action_kind,
+    });
+    assert.equal(recovered.ok, true);
+    assert.equal(recovered.value.status, "dispatch_unknown");
+    assertFailure(await restarted.reserveAttempt({
+      identity: { ...IDENTITY, attempt_id: ATTEMPT_B },
+    }), "manual_resume_attempt_recovery_required");
+    tests += 1;
+    process.stdout.write("PASS abrupt process loss after UNKNOWN marker remains quarantined across restart\n");
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }

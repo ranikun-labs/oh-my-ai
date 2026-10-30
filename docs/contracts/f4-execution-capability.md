@@ -285,13 +285,13 @@ sent. `recoverClaimLease` and `releaseClaimBeforeDelivery` must not authorize a
 Manual Resume retry based on lease expiry, caller assertion, or Claim revision
 alone. Existing Claim and Delivery contracts are unchanged.
 
-RPL-120 now has a separate domain service in
-`scripts/lib/pending-handoff-manual-resume-attempt-outcome.mjs`. It is wired
-into the Manual Resume Composition and requires an injected Attempt/Outcome
-Store. No physical Store adapter is implemented here. The fixture Map below
-the Composition tests is test-only and does not provide process-safe or
-durable behavior. A product caller without the injected port cannot construct
-the Composition; the runtime boundary fails closed.
+RPL-120 has a separate domain service in
+`scripts/lib/pending-handoff-manual-resume-attempt-outcome.mjs` and a provider
+adapter in `scripts/lib/pending-handoff-manual-resume-attempt-outcome-store-adapter.mjs`.
+The adapter derives a stable path-safe key from `(candidate_id, action_kind)`,
+maps create-if-absent/revision CAS to the domain Store port, and rejects
+scope-mismatched or malformed records. It is wired at the Composition boundary
+through the Attempt/Outcome Store dependency.
 
 ```js
 identity = {
@@ -310,12 +310,26 @@ attemptOutcomePort = {
   readAttempt({ candidate_id, action_kind }),
   compareAndSetAttempt({ candidate_id, action_kind, expected_revision, next_record }),
 }
+
+atomicRecordProvider = {
+  readRecord({ namespace, record_key }),
+  compareAndSetRecord({ namespace, record_key, expected_revision, next_record }),
+}
 ```
 
-The Store contract requires durable atomic CAS per `(candidate_id,
-action_kind)` across independent processes. The current public Store does not
-implement that contract. The domain service writes one active attempt record
-with an aggregate revision and these transitions:
+`atomicRecordProvider` is the RPL-120 side of the adapter contract; this does
+not claim that RPL-95 exports this API. A `null` expected revision must mean
+atomic create-if-absent. Numeric revisions must compare and replace one record
+atomically across processes. The provider owns user-local root resolution,
+physical locking, durable publication, and unavailable-root errors. The current
+public Pending Handoff Store only CASes its signed candidate/Claim/Delivery
+record and cannot store arbitrary Attempt records. Jira RPL-95 is still in
+progress; no canonical RPL-95 source branch or provider API is published on
+the verified public base. The fixtures use a test-only generic provider and do
+not stand in for that production integration.
+
+The domain service writes one active attempt record with an aggregate revision
+and these transitions:
 
 1. `reserved`: written after current session resolution and before Claim.
 2. `claim_bound`: stores the Claim revision after the Claim CAS succeeds.
@@ -343,11 +357,12 @@ unknown Runtime state fail closed. The service is designed to consume a Store
 that provides these semantics; it does not itself prove the injected Store is
 durable, atomic, or cross-process.
 
-No concrete RPL-95 physical-state adapter, RPL-94 Association API, RPL-93 M5
+No concrete RPL-95 physical-state provider, RPL-94 Association API, RPL-93 M5
 Task Context/Fresh Observation/Resume entrypoint, or supported Runtime Result
 provider is available on this PR's public base. RPL-120 must consume those
 published contracts when available; it must not write parallel RPL-95 state
-or redefine RPL-94 Association lifecycle. Until the Attempt/Outcome CAS port is
-implemented and connected, M1 remains OPEN. Cross-process Claim arbitration,
-safe UNKNOWN recovery, result/checkpoint persistence, and product Manual
-Resume E2E remain separate, unverified gates.
+or redefine RPL-94 Association lifecycle. The RPL-120 provider adapter is
+implemented and fixture-tested, but has no approved physical provider
+connection; M1 remains OPEN. Cross-process production Claim arbitration, safe
+UNKNOWN recovery, result/checkpoint persistence, and product Manual Resume E2E
+remain separate, unverified gates.

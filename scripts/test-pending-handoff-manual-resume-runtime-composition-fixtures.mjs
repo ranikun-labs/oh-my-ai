@@ -3,6 +3,9 @@ import fs from "node:fs";
 import * as moduleNamespace from "./lib/pending-handoff-manual-resume-runtime-composition.mjs";
 import { PENDING_HANDOFF_SCHEMA_VERSION } from "./lib/pending-handoff-core.mjs";
 import { createPendingHandoffManualResumeService } from "./lib/pending-handoff-manual-resume.mjs";
+import {
+  createPendingHandoffManualResumeAttemptOutcomeStoreAdapter,
+} from "./lib/pending-handoff-manual-resume-attempt-outcome-store-adapter.mjs";
 
 const SESSION_SOURCE = `phr1.session.key_A-1.${"S".repeat(43)}`;
 const SESSION_OWNER = `phr1.session.key_A-1.${"O".repeat(43)}`;
@@ -732,6 +735,38 @@ await group("supported Codex delegation and drift safety", async () => {
     assert.equal(executorCalls.length, 1);
     assert.equal(JSON.stringify(result).includes(PRIVATE_MARKER), false);
     assert.equal([...built.attemptOutcomeRecords.values()][0].status, "dispatch_unknown");
+  });
+
+  await test("durable Attempt ledger write failure blocks Claim and Runtime", async () => {
+    let claimCalls = 0;
+    let runtimeCalls = 0;
+    const attemptOutcomeStore = createPendingHandoffManualResumeAttemptOutcomeStoreAdapter({
+      recordStore: {
+        readRecord: async () => success(null),
+        compareAndSetRecord: async () => failure("root_unavailable"),
+      },
+    }).value;
+    const built = build({
+      attemptOutcomeStore,
+      claimLease: {
+        acquireClaimForDispatch: async () => {
+          claimCalls += 1;
+          return success({
+            state_revision: 2,
+            claim_attempt_id: ATTEMPT,
+            claim_lease_expires_at: "2026-08-01T01:00:00.000Z",
+          });
+        },
+      },
+      executor: { resolveAndResume: async () => {
+        runtimeCalls += 1;
+        return success(receipt());
+      } },
+    });
+    const result = await built.composition.executeManualResume(request());
+    assert.deepEqual(result, { ok: false, reason: "manual_resume_attempt_store_unavailable" });
+    assert.equal(claimCalls, 0);
+    assert.equal(runtimeCalls, 0);
   });
 
   await test("a durable UNKNOWN Attempt blocks another composition and new Attempt ID", async () => {
