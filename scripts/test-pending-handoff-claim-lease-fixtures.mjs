@@ -299,8 +299,14 @@ async function spawnClaimChild(mode, rootDirectory, candidateId, expectedRevisio
   child.stderr.setEncoding("utf8");
   child.stdout.on("data", chunk => { stdout += chunk; });
   child.stderr.on("data", chunk => { stderr += chunk; });
-  const exitCode = await new Promise(resolve => child.once("exit", resolve));
+  const exitCode = await new Promise((resolve, reject) => {
+    child.once("error", error => reject(new Error(`claim fixture child spawn failed: ${error.code ?? "unknown"}`)));
+    child.once("exit", resolve);
+  });
   if (exitCode !== 0) throw new Error(`claim child failed: ${stderr}`);
+  if (stdout.trim().length === 0) {
+    throw new Error(`claim fixture child produced empty stdout (exit ${exitCode}; stderr: ${stderr})`);
+  }
   return JSON.parse(stdout.trim());
 }
 
@@ -313,24 +319,57 @@ if (process.argv[2]?.startsWith("--claim-child=")) {
   const owner = process.argv[7];
   const attempt = process.argv[8];
   const now = Number(process.argv[9]);
-  const runtime = runtimeFor(rootDirectory, { value: now });
+  let runtime;
+  if (mode === "hold-lock") {
+    const fileSystem = Object.freeze({
+      ...REAL_FILE_SYSTEM,
+      writeFile: async (path, ...args) => {
+        const result = await REAL_FILE_SYSTEM.writeFile(path, ...args);
+        if (String(path).includes("/.cas-lock/owner-")) {
+          await REAL_FILE_SYSTEM.writeFile(
+            join(barrierDirectory, `lock-held-${process.pid}`),
+            "lock-held\n",
+            { encoding: "utf8", flag: "wx", mode: 0o600 },
+          );
+          const holdProcessOpen = setInterval(() => {}, 1_000);
+          await new Promise(() => {});
+          clearInterval(holdProcessOpen);
+        }
+        return result;
+      },
+    });
+    runtime = runtimeFor(rootDirectory, { value: now }, { store: { fileSystem } });
+  } else {
+    runtime = runtimeFor(rootDirectory, { value: now });
+  }
   const store = runtime.store;
   const service = runtime.claimLease;
-  await fileSystem.writeFile(
-    join(barrierDirectory, `ready-${process.pid}`),
-    "ready\n",
-    { encoding: "utf8", flag: "wx", mode: 0o600 },
-  );
-  await waitForFile(join(barrierDirectory, "release"));
-  const result = mode === "recover"
-    ? await service.recoverClaimLease({ candidate_id: candidateId, expected_revision: expectedRevision })
-    : await service.acquireClaim({
+  if (mode === "hold-lock") {
+    await service.acquireClaimForDispatch({
       candidate_id: candidateId,
       expected_revision: expectedRevision,
       current_session_identity: owner,
       claim_attempt_id: attempt,
     });
-  process.stdout.write(`${JSON.stringify(result)}\n`);
+  } else {
+    await fileSystem.writeFile(
+      join(barrierDirectory, `ready-${process.pid}`),
+      "ready\n",
+      { encoding: "utf8", flag: "wx", mode: 0o600 },
+    );
+    await waitForFile(join(barrierDirectory, "release"));
+    const result = mode === "recover"
+      ? await service.recoverClaimLease({ candidate_id: candidateId, expected_revision: expectedRevision })
+      : await (mode === "claim-for-dispatch"
+        ? service.acquireClaimForDispatch
+        : service.acquireClaim)({
+        candidate_id: candidateId,
+        expected_revision: expectedRevision,
+        current_session_identity: owner,
+        claim_attempt_id: attempt,
+      });
+    process.stdout.write(`${JSON.stringify(result)}\n`);
+  }
   process.exit(0);
 }
 
@@ -386,6 +425,7 @@ await group("Claim/Lease API and dependency contract", async () => {
     }));
     assert.deepEqual(Reflect.ownKeys(service), [
       "acquireClaim",
+      "acquireClaimForDispatch",
       "registerPending",
       "recoverClaimLease",
       "releaseClaimBeforeDelivery",
@@ -583,6 +623,27 @@ await group("same-attempt idempotency and claim conflicts", async () => {
       assert.equal(await rawEnvelopeText(rootDirectory, input.candidate_id), before);
     });
   });
+
+  await test("dispatch Claim rejects an existing same-attempt replay after restart or lost response", async () => {
+    await withEnvironment(async ({ rootDirectory, store, service }) => {
+      const input = await seedPending(store, service, { candidate_id: "dispatch-claim-replay" });
+      const request = {
+        candidate_id: input.candidate_id,
+        expected_revision: 1,
+        current_session_identity: OWNER_A,
+        claim_attempt_id: CLAIM_ATTEMPT_A,
+      };
+      assertSuccess(await service.acquireClaimForDispatch(request));
+
+      // A fresh service instance models process restart after the Claim persisted.
+      const restartedService = runtimeFor(rootDirectory, { value: BASE_NOW }).claimLease;
+      assertFailure(await restartedService.acquireClaimForDispatch(request), "claim_conflict");
+
+      // The generic Claim operation keeps its pre-existing idempotent contract.
+      assertSuccess(await restartedService.acquireClaim(request));
+      assert.equal(assertSuccess(await store.readState(input.candidate_id)).state_revision, 2);
+    });
+  });
 });
 
 await group("Claim input, identity, and revision gates", async () => {
@@ -729,6 +790,128 @@ await group("concurrent Claim exact-one", async () => {
       } finally {
         await fileSystem.rm(barrierDirectory, { recursive: true, force: true });
       }
+    });
+  });
+
+  await test("only one independent process gets dispatch authority for the same attempt", async () => {
+    await withEnvironment(async ({ rootDirectory, store, service }) => {
+      const input = await seedPending(store, service, { candidate_id: "same-attempt-dispatch-process-race" });
+      const barrierDirectory = await fileSystem.mkdtemp(join(tmpdir(), "phr-dispatch-race-barrier-"));
+      try {
+        const first = spawnClaimChild(
+          "claim-for-dispatch",
+          rootDirectory,
+          input.candidate_id,
+          1,
+          barrierDirectory,
+          OWNER_A,
+          CLAIM_ATTEMPT_A,
+          BASE_NOW,
+        );
+        const second = spawnClaimChild(
+          "claim-for-dispatch",
+          rootDirectory,
+          input.candidate_id,
+          1,
+          barrierDirectory,
+          OWNER_A,
+          CLAIM_ATTEMPT_A,
+          BASE_NOW,
+        );
+        const deadline = Date.now() + 5_000;
+        while (Date.now() < deadline) {
+          const entries = await fileSystem.readdir(barrierDirectory);
+          if (entries.filter(entry => entry.startsWith("ready-")).length === 2) break;
+          await new Promise(resolve => setTimeout(resolve, 10));
+        }
+        const ready = await fileSystem.readdir(barrierDirectory);
+        assert.equal(ready.filter(entry => entry.startsWith("ready-")).length, 2);
+        await fileSystem.writeFile(join(barrierDirectory, "release"), "release\n", "utf8");
+
+        const outcomes = await Promise.all([first, second]);
+        assert.equal(outcomes.filter(result => result.ok).length, 1, JSON.stringify(outcomes));
+        assert.equal(outcomes.filter(result => result.reason === "claim_conflict").length, 1, JSON.stringify(outcomes));
+        const final = assertSuccess(await store.readState(input.candidate_id));
+        assert.equal(final.state_revision, 2);
+        assert.equal(final.candidate.status, "claimed");
+        assert.equal(final.claim.claim_owner_identity, OWNER_A);
+        assert.equal(final.claim.claim_attempt_id, CLAIM_ATTEMPT_A);
+        const restarted = await spawnClaimChild(
+          "claim-for-dispatch",
+          rootDirectory,
+          input.candidate_id,
+          1,
+          barrierDirectory,
+          OWNER_A,
+          CLAIM_ATTEMPT_A,
+          BASE_NOW,
+        );
+        assertFailure(restarted, "claim_conflict");
+      } finally {
+        await fileSystem.rm(barrierDirectory, { recursive: true, force: true });
+      }
+    });
+  });
+
+  await test("recovers a Store lock after its owning process is terminated before Claim publication", async () => {
+    await withEnvironment(async ({ rootDirectory, store, service }) => {
+      const input = await seedPending(store, service, { candidate_id: "claim-lock-owner-termination" });
+      const barrierDirectory = await fileSystem.mkdtemp(join(tmpdir(), "phr-claim-lock-owner-barrier-"));
+      let child;
+      try {
+        child = spawn(process.execPath, [
+          process.argv[1],
+          "--claim-child=hold-lock",
+          rootDirectory,
+          input.candidate_id,
+          "1",
+          barrierDirectory,
+          OWNER_A,
+          CLAIM_ATTEMPT_A,
+          String(BASE_NOW),
+        ], { stdio: ["ignore", "pipe", "pipe"] });
+        const heldLockPath = join(barrierDirectory, `lock-held-${child.pid}`);
+        const ready = await Promise.race([
+          waitForFile(heldLockPath).then(() => null),
+          new Promise(resolve => child.once("error", error => resolve(error))),
+        ]);
+        if (ready !== null) throw new Error(`claim lock child spawn failed: ${ready.code ?? "unknown"}`);
+        assert.equal(child.kill("SIGKILL"), true);
+        const exit = await new Promise(resolve => child.once("exit", (code, signal) => resolve({ code, signal })));
+        assert.equal(exit.signal, "SIGKILL");
+
+        const recovered = assertSuccess(await service.acquireClaimForDispatch({
+          candidate_id: input.candidate_id,
+          expected_revision: 1,
+          current_session_identity: OWNER_A,
+          claim_attempt_id: CLAIM_ATTEMPT_A,
+        }));
+        assert.equal(recovered.state_revision, 2);
+        assert.equal(assertSuccess(await store.readState(input.candidate_id)).candidate.status, "claimed");
+      } finally {
+        if (child && child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+        await fileSystem.rm(barrierDirectory, { recursive: true, force: true });
+      }
+    });
+  });
+
+  await test("an expired Claim blocks dispatch until explicit recovery is separately authorized", async () => {
+    await withEnvironment(async ({ store, service, clock }) => {
+      const input = await seedPending(store, service, { candidate_id: "expired-dispatch-claim" });
+      const claimed = assertSuccess(await service.acquireClaimForDispatch({
+        candidate_id: input.candidate_id,
+        expected_revision: 1,
+        current_session_identity: OWNER_A,
+        claim_attempt_id: CLAIM_ATTEMPT_A,
+      }));
+      clock.value = Date.parse(claimed.claim_lease_expires_at);
+      assertFailure(await service.acquireClaimForDispatch({
+        candidate_id: input.candidate_id,
+        expected_revision: 1,
+        current_session_identity: OWNER_A,
+        claim_attempt_id: CLAIM_ATTEMPT_A,
+      }), "claim_lease_expired");
+      assert.equal(assertSuccess(await store.readState(input.candidate_id)).state_revision, 2);
     });
   });
 });
