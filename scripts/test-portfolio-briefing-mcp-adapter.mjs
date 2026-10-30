@@ -154,6 +154,71 @@ test("does not trust success statuses returned alongside a CI connector error", 
   assert.equal(result.pull_requests[0].ci_state, "UNKNOWN");
 });
 
+test("uses completed Actions runs only when they are bound to the returned PR head", () => {
+  const entry = githubResult(90);
+  entry.workflow_for_sha = "head-90";
+  entry.workflow_result = {
+    isError: false,
+    structuredContent: { workflow_runs: [{ status: "completed", conclusion: "success" }] },
+  };
+  const result = buildPortfolioBriefingFromMcpResults({
+    captured_at: capturedAt,
+    jira_results: [jiraResult("RPL-121", "Read-only briefing", "할 일")],
+    github_results: [entry],
+    confluence_results: [confluenceResult()],
+  });
+  assert.equal(result.pull_requests[0].ci_state, "SUCCESS");
+});
+
+test("does not reuse Actions runs fetched for a different PR head", () => {
+  const entry = githubResult(90);
+  entry.workflow_for_sha = "old-head";
+  entry.workflow_result = {
+    isError: false,
+    structuredContent: { workflow_runs: [{ status: "completed", conclusion: "success" }] },
+  };
+  const result = buildPortfolioBriefingFromMcpResults({
+    captured_at: capturedAt,
+    jira_results: [jiraResult("RPL-121", "Read-only briefing", "할 일")],
+    github_results: [entry],
+    confluence_results: [confluenceResult()],
+  });
+  assert.equal(result.pull_requests[0].ci_state, "UNKNOWN");
+});
+
+test("does not trust Actions success when the workflow lookup errored", () => {
+  const entry = githubResult(90);
+  entry.workflow_for_sha = "head-90";
+  entry.status_result = { structuredContent: { statuses: [{ state: "success" }] } };
+  entry.workflow_result = {
+    isError: true,
+    structuredContent: { workflow_runs: [{ status: "completed", conclusion: "success" }] },
+  };
+  const result = buildPortfolioBriefingFromMcpResults({
+    captured_at: capturedAt,
+    jira_results: [jiraResult("RPL-121", "Read-only briefing", "할 일")],
+    github_results: [entry],
+    confluence_results: [confluenceResult()],
+  });
+  assert.equal(result.pull_requests[0].ci_state, "UNKNOWN");
+});
+
+test("reports an in-progress Actions run as pending", () => {
+  const entry = githubResult(90);
+  entry.workflow_for_sha = "head-90";
+  entry.workflow_result = {
+    isError: false,
+    structuredContent: { workflow_runs: [{ status: "in_progress", conclusion: null }] },
+  };
+  const result = buildPortfolioBriefingFromMcpResults({
+    captured_at: capturedAt,
+    jira_results: [jiraResult("RPL-121", "Read-only briefing", "할 일")],
+    github_results: [entry],
+    confluence_results: [confluenceResult()],
+  });
+  assert.equal(result.pull_requests[0].ci_state, "PENDING_OR_MIXED");
+});
+
 test("maps failed or missing connector responses to fail-closed source states", () => {
   const result = buildPortfolioBriefingFromMcpResults({
     captured_at: capturedAt,

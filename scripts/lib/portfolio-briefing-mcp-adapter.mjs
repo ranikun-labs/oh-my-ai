@@ -7,6 +7,7 @@ const DEFAULT_JIRA_BASE_URL = "https://ranikunlabs.atlassian.net";
  * Normalize read-only host MCP connector results into the F6 snapshot contract.
  * This adapter does not invoke tools, authenticate, or perform network/Writer work;
  * the host must call read-only connectors and pass their CallToolResult objects.
+ * GitHub entries may carry a commit-scoped workflow_result and workflow_for_sha.
  * Each result entry must carry checked_at from its connector-call observation;
  * captured_at is never substituted because cached results could look fresh.
  */
@@ -94,13 +95,9 @@ function normalizeGithubResults(entries) {
       || null;
     const identityMatches = returnedNumber !== null && (!requestedNumber || requestedNumber === returnedNumber);
     const identityAvailable = !result?.isError && identityMatches && url !== null && repository !== null;
-    const statuses = entry?.status_result?.structuredContent?.statuses;
     const reviews = entry?.review_result?.structuredContent?.reviews;
-    const ciState = entry?.status_result?.isError
-      ? "UNKNOWN"
-      : Array.isArray(statuses) && statuses.length > 0
-        ? summarizeCheckStates(statuses)
-        : "UNKNOWN";
+    const headSha = nonEmptyString(info.head_sha);
+    const ciState = summarizeCiEvidence(entry, headSha);
     const reviewState = entry?.review_result?.isError
       ? "UNKNOWN"
       : Array.isArray(reviews) && reviews.length > 0
@@ -109,7 +106,6 @@ function normalizeGithubResults(entries) {
     const titleKeys = [...new Set(extractIssueKeys(nonEmptyString(info.title) || ""))];
     const primaryKey = extractPrimaryJiraKey(nonEmptyString(info.body) || "");
     const jiraKeys = primaryKey ? [primaryKey] : titleKeys.length === 1 ? titleKeys : [];
-    const headSha = nonEmptyString(info.head_sha);
     const updatedAt = nonEmptyString(info.updated_at);
 
     return {
@@ -191,6 +187,46 @@ function summarizeCheckStates(statuses) {
   if (states.every(state => state === "success")) return "SUCCESS";
   if (states.some(state => state === "failure" || state === "error")) return "FAILURE";
   return "PENDING_OR_MIXED";
+}
+
+function summarizeCiEvidence(entry, headSha) {
+  if (entry?.status_result?.isError || entry?.workflow_result?.isError) return "UNKNOWN";
+
+  const states = [];
+  const statuses = entry?.status_result?.structuredContent?.statuses;
+  if (Array.isArray(statuses) && statuses.length > 0) states.push(summarizeCheckStates(statuses));
+
+  const runs = entry?.workflow_result?.structuredContent?.workflow_runs;
+  if (Array.isArray(runs) && runs.length > 0) {
+    if (!headSha || nonEmptyString(entry?.workflow_for_sha) !== headSha) return "UNKNOWN";
+    states.push(summarizeWorkflowRuns(runs));
+  }
+
+  if (states.length === 0) return "UNKNOWN";
+  if (states.includes("FAILURE")) return "FAILURE";
+  if (states.includes("UNKNOWN")) return "UNKNOWN";
+  if (states.includes("PENDING_OR_MIXED")) return "PENDING_OR_MIXED";
+  return "SUCCESS";
+}
+
+function summarizeWorkflowRuns(runs) {
+  const states = runs.map(run => {
+    const status = nonEmptyString(run?.status)?.toLowerCase();
+    const conclusion = nonEmptyString(run?.conclusion)?.toLowerCase();
+    if (status !== "completed") {
+      return ["queued", "in_progress", "waiting", "requested", "pending"].includes(status)
+        ? "PENDING_OR_MIXED"
+        : "UNKNOWN";
+    }
+    if (conclusion === "success") return "SUCCESS";
+    if (["failure", "timed_out", "startup_failure", "action_required"].includes(conclusion)) return "FAILURE";
+    if (conclusion === "cancelled") return "PENDING_OR_MIXED";
+    return "UNKNOWN";
+  });
+  if (states.includes("FAILURE")) return "FAILURE";
+  if (states.includes("UNKNOWN")) return "UNKNOWN";
+  if (states.includes("PENDING_OR_MIXED")) return "PENDING_OR_MIXED";
+  return states.length > 0 && states.every(state => state === "SUCCESS") ? "SUCCESS" : "UNKNOWN";
 }
 
 function extractPrimaryJiraKey(body) {
