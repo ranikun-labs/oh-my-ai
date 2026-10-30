@@ -151,7 +151,11 @@ async function readAggregate(store, identity) {
   }
   if (result.value === null) return success(null);
   const record = inspectRecord(result.value);
-  return record.ok ? success(record.value) : failure("manual_resume_attempt_record_invalid");
+  return record.ok
+    && record.value.candidate_id === identity.candidate_id
+    && record.value.action_kind === identity.action_kind
+    ? success(record.value)
+    : failure("manual_resume_attempt_record_invalid");
 }
 
 async function compareAndSet(store, identity, expectedRevision, record) {

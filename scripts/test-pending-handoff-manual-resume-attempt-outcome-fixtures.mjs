@@ -313,6 +313,25 @@ await test("store failure is fail-closed", async () => {
   assertFailure(await fixture.createService().reserveAttempt({ identity: IDENTITY }), "manual_resume_attempt_store_unavailable");
 });
 
+await test("read and reservation reject a valid record returned for another scope", async () => {
+  const foreignRecord = {
+    ...IDENTITY,
+    candidate_id: "another-candidate",
+    scope_ref: "another-candidate",
+    revision: 1,
+    claim_revision: null,
+    status: "reserved",
+    adapter_version: null,
+  };
+  const fixture = createCasFixtureStore({ readAttempt: async () => success(foreignRecord) });
+  const service = fixture.createService();
+  assertFailure(await service.readAttempt({
+    candidate_id: IDENTITY.candidate_id,
+    action_kind: IDENTITY.action_kind,
+  }), "manual_resume_attempt_record_invalid");
+  assertFailure(await service.reserveAttempt({ identity: IDENTITY }), "manual_resume_attempt_record_invalid");
+});
+
 try {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "rpl120-attempt-cas-"));
   try {
