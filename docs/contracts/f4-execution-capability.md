@@ -357,38 +357,60 @@ unknown Runtime state fail closed. The service is designed to consume a Store
 that provides these semantics; it does not itself prove the injected Store is
 durable, atomic, or cross-process.
 
-### Recovery and Result/Checkpoint contract draft
+### Approved Recovery invariants
 
-The approved recovery behavior while no canonical physical Provider or Runtime
-outcome reconciliation API is available is quarantine, not retry:
+The following safety invariants are approved for Manual Resume:
 
-* A persisted `reserved` Attempt does not prove the Claim CAS was absent; a
-  response may have been lost between Claim publication and Attempt binding.
-* `claim_bound` proves the Claim revision was observed, but the current API has
-  no safe same-Attempt rebind/release operation after restart.
-* `dispatch_unknown` and `accepted` never authorize another Runtime call. Lease
-  expiry, Claim release, Candidate revision change, and caller assertion do not
-  reconcile Runtime outcome.
-* If a Claim is released and the Candidate gets a new revision, the active
-  Attempt record still blocks a new Attempt for the same Candidate/action.
-  Composition does not own or implement the shared Claim release operation.
+* An UNKNOWN Runtime outcome does not authorize a new Runtime dispatch.
+* `accepted` is not `completed` and is not proof of a completed task result.
+* Claim lease expiry or Claim release alone does not establish whether the
+  Runtime action executed or what its outcome was.
 
-For a future Result-saved / Checkpoint-CAS-failed recovery, the still-unapproved
-contract is: preserve the same immutable Runtime result and Attempt identity;
-after restart, read and reconcile the persisted Result and Checkpoint revisions;
-retry only the Checkpoint publication when the Result is proven durable; never
-invoke the Runtime again for that Attempt. If the Result write or Checkpoint
-revision is ambiguous, remain blocked until authoritative reconciliation.
-`resume_accepted` is not a completed Result and cannot be used to invent either
-record. The exact Result/Checkpoint record shape, Port signatures, owner and
-lifecycle remain undecided until their canonical source contract is published.
+These invariants require fail-closed handling when execution or persistence is
+ambiguous. They do not define a Result/Checkpoint schema, a recovery API, or a
+retry procedure. In particular, no caller assertion, Candidate revision
+change, or lease transition may be treated as authoritative Runtime outcome
+evidence.
 
-The Composition fixture includes two explicitly model-only failure cases:
-UNKNOWN after simulated legacy Claim release plus a new Candidate revision,
-and an accepted Attempt with a simulated saved Result followed by failed
-Checkpoint CAS and process restart. They verify only that the current Attempt
-gate refuses a second Claim/Runtime call. They do not implement or verify a
-Checkpoint-only retry, real Result storage, or production recovery.
+### Current Attempt gate behavior and evidence limits
+
+The existing Attempt gate records `reserved`, `claim_bound`,
+`dispatch_unknown`, and `accepted` states. Its current implementation refuses a
+new Attempt for an active Candidate/action record. This is implementation
+behavior covered by the existing fixtures; it is not evidence that the injected
+Attempt Store is physically durable or that a legacy Claim release is
+transactionally coupled to that record.
+
+The Composition fixtures contain two model-only failure cases: UNKNOWN after
+simulated legacy Claim release plus a Candidate revision change, and an
+accepted Attempt with simulated Result success followed by Checkpoint CAS
+failure and process restart. They verify only that the current Attempt gate
+refuses a second Claim/Runtime call. They do not exercise a Result or
+Checkpoint Port, checkpoint-only retry, physical persistence, or production
+recovery. The separate process-contention fixtures use a test provider and do
+not establish cross-process production durability.
+
+### Owner Decision required — Result and Checkpoint contract
+
+No Result/Checkpoint production contract or implementation is authorized by
+the invariants above. The following decisions remain open and must be supplied
+by the product owner before production behavior is added:
+
+* Result and Checkpoint record shapes, Port signatures, identity/scope, and
+  revision/CAS ownership.
+* Whether and how one Attempt's Runtime result is immutable, durably stored,
+  and safely reprocessed after restart, including duplicate callbacks.
+* The exact evidence and authorization required for a Checkpoint-only retry.
+* Reconciliation behavior after partial or ambiguous Result/Checkpoint writes,
+  including the authority that can resolve an ambiguous state.
+* Retention, lifecycle/terminal states, and which actor may recover or clear
+  records.
+
+Until those decisions and their canonical APIs exist, Result/Checkpoint
+persistence and retry remain unimplemented. A simulated saved Result is not
+durability evidence; a failed or ambiguous write remains blocked.
+`resume_accepted` cannot be promoted into a completed Result or used to infer a
+Checkpoint.
 
 No concrete RPL-95 physical-state provider, RPL-94 Association API, RPL-93 M5
 Task Context/Fresh Observation/Resume entrypoint, or supported Runtime Result
