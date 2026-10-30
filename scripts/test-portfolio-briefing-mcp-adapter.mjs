@@ -167,6 +167,35 @@ test("maps failed or missing connector responses to fail-closed source states", 
   assert.equal(result.sources.find(source => source.name === "github").reasons.includes("required_source_missing"), true);
 });
 
+test("keeps partial source data while a permission-denied connector stays UNKNOWN", () => {
+  const denied = githubResult(90);
+  denied.result = {
+    isError: true,
+    content: [{ type: "text", text: "403 Forbidden: permission denied" }],
+    structuredContent: {
+      number: 90,
+      url: "https://github.com/ranikun-labs/oh-my-ai/pull/90",
+      state: "open",
+      head_sha: "must-not-be-trusted",
+    },
+  };
+
+  const result = buildPortfolioBriefingFromMcpResults({
+    captured_at: capturedAt,
+    jira_results: [jiraResult("RPL-121", "Read-only briefing", "할 일")],
+    github_results: [denied],
+    confluence_results: [confluenceResult()],
+  });
+
+  assert.equal(result.status, "UNKNOWN");
+  assert.deepEqual(result.issues.map(issue => issue.key), ["RPL-121"]);
+  assert.equal(result.issues[0].jira_status, "할 일");
+  assert.equal(result.pull_requests.length, 0);
+  assert.equal(result.sources.find(source => source.name === "github").quality, "UNKNOWN");
+  assert.equal(JSON.stringify(result).includes("must-not-be-trusted"), false);
+  assert.equal(JSON.stringify(result).includes("permission denied"), false);
+});
+
 test("marks a requested PR whose returned URL points to another identity as DRIFT", () => {
   const result = buildPortfolioBriefingFromMcpResults({
     captured_at: capturedAt,

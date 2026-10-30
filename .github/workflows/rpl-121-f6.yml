@@ -1,0 +1,54 @@
+name: RPL-121 F6 portfolio briefing
+
+on:
+  pull_request:
+    branches: [master]
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - '.github/workflows/rpl-121-f6.yml'
+      - 'Makefile'
+      - 'scripts/lib/portfolio-briefing-mcp-adapter.mjs'
+      - 'scripts/lib/portfolio-briefing-snapshot.mjs'
+      - 'scripts/test-portfolio-briefing-mcp-adapter.mjs'
+      - 'scripts/test-portfolio-briefing-snapshot.mjs'
+  push:
+    branches: [feat/rpl-121-read-only-portfolio-briefing]
+    paths:
+      - '.github/workflows/rpl-121-f6.yml'
+      - 'Makefile'
+      - 'scripts/lib/portfolio-briefing-mcp-adapter.mjs'
+      - 'scripts/lib/portfolio-briefing-snapshot.mjs'
+      - 'scripts/test-portfolio-briefing-mcp-adapter.mjs'
+      - 'scripts/test-portfolio-briefing-snapshot.mjs'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rpl-121-f6-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  f6-briefing-fixtures:
+    name: F6 adapter and snapshot fixtures
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Check JavaScript syntax
+        run: |
+          node --check scripts/lib/portfolio-briefing-mcp-adapter.mjs
+          node --check scripts/lib/portfolio-briefing-snapshot.mjs
+          node --check scripts/test-portfolio-briefing-mcp-adapter.mjs
+          node --check scripts/test-portfolio-briefing-snapshot.mjs
+
+      - name: Run F6 adapter fixtures
+        run: make test-portfolio-briefing-mcp-adapter-fixtures
+
+      - name: Run F6 snapshot fixtures
+        run: make test-portfolio-briefing-fixtures
