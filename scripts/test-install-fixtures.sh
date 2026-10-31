@@ -7,6 +7,7 @@ cd "$REPO"
 FIXTURE_ROOT="fixtures/install"
 FIXTURE_TEMP_PARENT="${TMPDIR:-/tmp}"
 TEMP_ROOT="$(mktemp -d "${FIXTURE_TEMP_PARENT%/}/oh-my-ai-install-fixtures.XXXXXX")"
+export OH_MY_AI_STATE_ROOT="$TEMP_ROOT/user-local-state"
 
 cleanup() {
   [ "${KEEP_INSTALL_FIXTURE_ARTIFACTS:-}" = "1" ] || rm -rf -- "$TEMP_ROOT"
@@ -238,6 +239,18 @@ run_installed_prompt_hook() {
     cd "$target"
     printf '%s' "$payload" | "$entry" hook "$runtime" UserPromptSubmit
   )
+}
+
+resolve_user_state_file() {
+  local target="$1"
+  local relative_path="$2"
+  local library_path="$3"
+  node --input-type=module -e '
+    import { pathToFileURL } from "node:url";
+    const [target, relativePath, libraryPath] = process.argv.slice(1);
+    const { resolveUserLocalStateLocation } = await import(pathToFileURL(libraryPath).href);
+    process.stdout.write(resolveUserLocalStateLocation(target, relativePath).filePath);
+  ' "$target" "$relative_path" "$library_path"
 }
 
 assert_post_execution_hook_suppressed() {
@@ -975,7 +988,7 @@ JSON
 
 check_work_start_post_execution_boundary() {
   local fixture="$FIXTURE_ROOT/FX-WS-E2E-007-post-execution-human-review"
-  local clone home_dir target_a target_b target_symlink invocation_log task other_task output continuation_output other_repo_output expired_task expired_output session_a session_b session_codex engine_only_task no_session_task external_state
+  local clone home_dir target_a target_b target_symlink invocation_log task other_task output continuation_output other_repo_output expired_task expired_output session_a session_b session_codex engine_only_task no_session_task external_state state_a_exec state_a_sugg state_b_exec state_b_sugg state_symlink_exec legacy_b_exec engine_state_error_log
 
   check_fixture_metadata "$fixture"
   clone="$(clone_fixture_repo work-start-post-execution-boundary)"
@@ -992,6 +1005,13 @@ check_work_start_post_execution_boundary() {
   make_target_repo "$target_a"
   make_target_repo "$target_b"
   make_target_repo "$target_symlink"
+  state_a_exec="$(resolve_user_state_file "$target_a" work-start/execution.json "$clone/scripts/lib/user-local-state.mjs")"
+  state_a_sugg="$(resolve_user_state_file "$target_a" work-start/suggestions.json "$clone/scripts/lib/user-local-state.mjs")"
+  state_b_exec="$(resolve_user_state_file "$target_b" work-start/execution.json "$clone/scripts/lib/user-local-state.mjs")"
+  state_b_sugg="$(resolve_user_state_file "$target_b" work-start/suggestions.json "$clone/scripts/lib/user-local-state.mjs")"
+  state_symlink_exec="$(resolve_user_state_file "$target_symlink" work-start/execution.json "$clone/scripts/lib/user-local-state.mjs")"
+  legacy_b_exec="$target_b/.oh-my-ai/state/work-start-execution-state.json"
+  engine_state_error_log="$TEMP_ROOT/work-start-post-execution-boundary/engine-state-error.log"
   run_setup "$clone" "$home_dir" --install-shared >/dev/null
 
   # Two Sessions can invoke an identical Task. An Engine without a verifiable
@@ -1003,14 +1023,14 @@ check_work_start_post_execution_boundary() {
 
   output="$(run_installed_work_start "$target_a" "$home_dir/.local/bin/oh-my-ai" "$task" "$invocation_log")"
   assert_work_start_artifact "$target_a" "$clone" "$output" "$invocation_log"
-  [ ! -e "$target_a/.oh-my-ai/state/work-start-execution-state.json" ] \
+  [ ! -e "$state_a_exec" ] \
     || fail "missing Engine Session created an execution marker"
   output="$(run_installed_prompt_hook "$target_a" "$home_dir/.local/bin/oh-my-ai" claude "$task" "$session_a")"
   assert_post_execution_hook_not_suppressed "$output" "Claude Session A without Engine Session"
-  rm -f -- "$target_a/.oh-my-ai/state/work-start-suggestions.json"
+  rm -f -- "$state_a_sugg"
   output="$(run_installed_prompt_hook "$target_a" "$home_dir/.local/bin/oh-my-ai" claude "$task" "$session_b")"
   assert_post_execution_hook_not_suppressed "$output" "Claude Session B without Engine Session"
-  rm -f -- "$target_a/.oh-my-ai/state/work-start-suggestions.json"
+  rm -f -- "$state_a_sugg"
 
   output="$(run_installed_work_start "$target_a" "$home_dir/.local/bin/oh-my-ai" "$task" "$invocation_log" claude "$session_a")"
   [ "$(engine_invocation_count "$invocation_log")" = "2" ] || fail "Claude exact-session Engine did not run"
@@ -1019,14 +1039,14 @@ check_work_start_post_execution_boundary() {
   assert_post_execution_hook_suppressed "$output" "Claude transformed exact-session payload"
   output="$(run_installed_prompt_hook "$target_a" "$home_dir/.local/bin/oh-my-ai" codex "$task" "$session_a")"
   assert_post_execution_hook_not_suppressed "$output" "Codex different Runtime"
-  rm -f -- "$target_a/.oh-my-ai/state/work-start-suggestions.json"
+  rm -f -- "$state_a_sugg"
   output="$(run_installed_prompt_hook "$target_a" "$home_dir/.local/bin/oh-my-ai" claude "$task" "$session_b")"
   assert_post_execution_hook_not_suppressed "$output" "Claude different Session"
-  rm -f -- "$target_a/.oh-my-ai/state/work-start-suggestions.json"
+  rm -f -- "$state_a_sugg"
 
   output="$(run_installed_prompt_hook "$target_a" "$home_dir/.local/bin/oh-my-ai" claude "$other_task" "$session_a")"
   assert_post_execution_hook_not_suppressed "$output" "Claude different Task"
-  rm -f -- "$target_a/.oh-my-ai/state/work-start-suggestions.json"
+  rm -f -- "$state_a_sugg"
 
   continuation_output="$(run_installed_prompt_hook "$target_a" "$home_dir/.local/bin/oh-my-ai" claude 'Gather Context로 진행해줘.' "$session_a")"
   if printf '%s\n' "$continuation_output" | grep -q -F -- 'Suggested by oh-my-ai: Work-start'; then
@@ -1042,24 +1062,23 @@ check_work_start_post_execution_boundary() {
   output="$(run_installed_work_start "$target_b" "$home_dir/.local/bin/oh-my-ai" "$engine_only_task" "$invocation_log" claude "$session_a")"
   output="$(run_installed_prompt_hook "$target_b" "$home_dir/.local/bin/oh-my-ai" claude "$engine_only_task" __missing__)"
   assert_post_execution_hook_not_suppressed "$output" "Claude missing Hook Session"
-  rm -f -- "$target_b/.oh-my-ai/state/work-start-suggestions.json"
+  rm -f -- "$state_b_sugg"
 
   no_session_task='구현을 시작하기 전에 관련 코드와 영향 범위를 먼저 모아줘. NO-SESSION'
   output="$(run_installed_work_start "$target_b" "$home_dir/.local/bin/oh-my-ai" "$no_session_task" "$invocation_log")"
   output="$(run_installed_prompt_hook "$target_b" "$home_dir/.local/bin/oh-my-ai" claude "$no_session_task" __missing__)"
   assert_post_execution_hook_not_suppressed "$output" "Claude missing Hook and Engine Session"
-  rm -f -- "$target_b/.oh-my-ai/state/work-start-suggestions.json"
+  rm -f -- "$state_b_sugg"
 
   expired_task='구현을 시작하기 전에 관련 코드와 영향 범위를 먼저 모아줘. EXPIRED-POST-EXECUTION-BOUNDARY'
-  node - "$target_b" "$expired_task" <<'NODE'
+  node - "$state_b_exec" "$expired_task" <<'NODE'
 const crypto = require("crypto");
 const fs = require("fs");
-const path = require("path");
-const [target, task] = process.argv.slice(2);
+const [statePath, task] = process.argv.slice(2);
 const normalized = task.replace(/\s+/g, " ").trim();
-const statePath = path.join(target, ".oh-my-ai", "state", "work-start-execution-state.json");
+fs.mkdirSync(require("path").dirname(statePath), { recursive: true, mode: 0o700 });
 fs.writeFileSync(statePath, `${JSON.stringify({
-  version: 3,
+  version: 1,
   executions: [{
     runtime: "claude",
     task_hash: crypto.createHash("sha256").update(normalized).digest("hex"),
@@ -1070,14 +1089,21 @@ fs.writeFileSync(statePath, `${JSON.stringify({
 NODE
   expired_output="$(run_installed_prompt_hook "$target_b" "$home_dir/.local/bin/oh-my-ai" claude "$expired_task" "$session_a")"
   assert_post_execution_hook_not_suppressed "$expired_output" "Claude expired marker"
-  rm -f -- "$target_b/.oh-my-ai/state/work-start-suggestions.json"
+  rm -f -- "$state_b_sugg"
 
-  printf '%s\n' '{ malformed state' >"$target_b/.oh-my-ai/state/work-start-execution-state.json"
+  rm -f -- "$state_b_exec"
+  mkdir -p "$(dirname "$legacy_b_exec")"
+  printf '%s\n' '{ malformed state' >"$legacy_b_exec"
   output="$(run_installed_prompt_hook "$target_b" "$home_dir/.local/bin/oh-my-ai" claude "$other_task" "$session_a")"
   assert_post_execution_hook_not_suppressed "$output" "Claude malformed state"
-  rm -f -- "$target_b/.oh-my-ai/state/work-start-suggestions.json"
-  output="$(run_installed_work_start "$target_b" "$home_dir/.local/bin/oh-my-ai" "$other_task" "$invocation_log" claude "$session_a")"
-  [ -s "$target_b/.oh-my-ai/state/work-start-execution-state.json" ] || fail "Engine did not recover malformed execution state"
+  printf '%s\n' "$output" | grep -q -F -- 'state_error_code=state_legacy_corrupt' \
+    || fail "malformed legacy state did not produce a sanitized warning"
+  rm -f -- "$state_b_sugg"
+  output="$(run_installed_work_start "$target_b" "$home_dir/.local/bin/oh-my-ai" "$other_task" "$invocation_log" claude "$session_a" 2>"$engine_state_error_log")"
+  grep -q -F -- 'state_error_code=state_legacy_corrupt' "$engine_state_error_log" \
+    || fail "Engine state failure was not reported"
+  [ ! -e "$state_b_exec" ] || fail "Engine overwrote corrupt legacy state with a new primary"
+  [ "$(cat "$legacy_b_exec")" = '{ malformed state' ] || fail "Engine modified corrupt legacy state"
 
   output="$(run_installed_prompt_hook "$target_a" "$home_dir/.local/bin/oh-my-ai" codex "\$work-start $task" "$session_codex")"
   assert_post_execution_hook_suppressed "$output" "Codex explicit payload"
@@ -1094,6 +1120,7 @@ NODE
   ln -s "$external_state" "$target_symlink/.oh-my-ai/state"
   output="$(run_installed_work_start "$target_symlink" "$home_dir/.local/bin/oh-my-ai" "$task" "$invocation_log" claude "$session_a")"
   [ ! -e "$external_state/work-start-execution-state.json" ] || fail "execution state followed a repository state symlink"
+  [ ! -e "$state_symlink_exec" ] || fail "unsafe legacy state path was silently replaced"
   output="$(run_installed_prompt_hook "$target_symlink" "$home_dir/.local/bin/oh-my-ai" claude "$task" "$session_a")"
   assert_post_execution_hook_not_suppressed "$output" "Claude state symlink"
 
