@@ -1,6 +1,7 @@
 name: RPL-95 user-local state
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - feat/RPL-95-user-local-state-foundation
