@@ -988,7 +988,7 @@ JSON
 
 check_work_start_post_execution_boundary() {
   local fixture="$FIXTURE_ROOT/FX-WS-E2E-007-post-execution-human-review"
-  local clone home_dir target_a target_b target_symlink invocation_log task other_task output continuation_output other_repo_output expired_task expired_output session_a session_b session_codex engine_only_task no_session_task external_state state_a_exec state_a_sugg state_b_exec state_b_sugg state_symlink_exec legacy_b_exec
+  local clone home_dir target_a target_b target_symlink invocation_log task other_task output continuation_output other_repo_output expired_task expired_output session_a session_b session_codex engine_only_task no_session_task external_state state_a_exec state_a_sugg state_b_exec state_b_sugg state_symlink_exec legacy_b_exec engine_state_error_log
 
   check_fixture_metadata "$fixture"
   clone="$(clone_fixture_repo work-start-post-execution-boundary)"
@@ -1011,6 +1011,7 @@ check_work_start_post_execution_boundary() {
   state_b_sugg="$(resolve_user_state_file "$target_b" work-start/suggestions.json "$clone/scripts/lib/user-local-state.mjs")"
   state_symlink_exec="$(resolve_user_state_file "$target_symlink" work-start/execution.json "$clone/scripts/lib/user-local-state.mjs")"
   legacy_b_exec="$target_b/.oh-my-ai/state/work-start-execution-state.json"
+  engine_state_error_log="$TEMP_ROOT/work-start-post-execution-boundary/engine-state-error.log"
   run_setup "$clone" "$home_dir" --install-shared >/dev/null
 
   # Two Sessions can invoke an identical Task. An Engine without a verifiable
@@ -1098,8 +1099,8 @@ NODE
   printf '%s\n' "$output" | grep -q -F -- 'state_error_code=state_legacy_corrupt' \
     || fail "malformed legacy state did not produce a sanitized warning"
   rm -f -- "$state_b_sugg"
-  output="$(run_installed_work_start "$target_b" "$home_dir/.local/bin/oh-my-ai" "$other_task" "$invocation_log" claude "$session_a")"
-  printf '%s\n' "$output" | grep -q -F -- 'state_error_code=state_legacy_corrupt' \
+  output="$(run_installed_work_start "$target_b" "$home_dir/.local/bin/oh-my-ai" "$other_task" "$invocation_log" claude "$session_a" 2>"$engine_state_error_log")"
+  grep -q -F -- 'state_error_code=state_legacy_corrupt' "$engine_state_error_log" \
     || fail "Engine state failure was not reported"
   [ ! -e "$state_b_exec" ] || fail "Engine overwrote corrupt legacy state with a new primary"
   [ "$(cat "$legacy_b_exec")" = '{ malformed state' ] || fail "Engine modified corrupt legacy state"
