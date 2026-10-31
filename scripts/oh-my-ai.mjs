@@ -12,6 +12,7 @@ import {
   resolveCheckpoint,
 } from "./lib/context-checkpoint-state.mjs";
 import { rememberWorkStartExecution } from "./lib/work-start-execution-state.mjs";
+import { appendHookFailure } from "./lib/hook-failure-state.mjs";
 import { handleJiraTicketRuntimeInput } from "./lib/jira-ticket-runtime-entry.mjs";
 
 const args = process.argv.slice(2);
@@ -151,14 +152,14 @@ function runHook(args) {
         : "";
 
   if (!format) {
-    logHookFailure({ runtime, eventName, reason: "unsupported runtime" });
+    logHookFailure({ runtime, eventName, errorCode: "hook_runtime_unsupported" });
     process.exit(0);
   }
 
   const repoRoot = findRepoRoot();
   const hookScript = path.join(repoRoot, "scripts", "prompt-routing-hook.mjs");
   if (!fs.existsSync(hookScript)) {
-    logHookFailure({ runtime, eventName, reason: "missing prompt-routing-hook.mjs", repoRoot });
+    logHookFailure({ runtime, eventName, errorCode: "hook_routing_script_missing" });
     process.exit(0);
   }
 
@@ -177,8 +178,7 @@ function runHook(args) {
     logHookFailure({
       runtime,
       eventName,
-      reason: result.error ? result.error.message : `exit ${result.status}`,
-      stderr: result.stderr,
+      errorCode: childHookFailureCode(result),
     });
   }
 
@@ -191,7 +191,7 @@ function sessionStartBacklog() {
   try {
     return fs.existsSync(backlog) ? fs.readFileSync(backlog, "utf8") : "";
   } catch (error) {
-    logHookFailure({ runtime: "claude", eventName: "SessionStart", reason: error.message });
+    logHookFailure({ runtime: "claude", eventName: "SessionStart", errorCode: "hook_backlog_read_failed" });
     return "";
   }
 }
@@ -340,30 +340,23 @@ function findRepoRoot() {
 }
 
 function logHookFailure(details) {
-  const repoRoot = safeRepoRoot();
-  const entry = {
-    ts: new Date().toISOString(),
-    source: "oh-my-ai",
-    ...details,
-  };
-
-  for (const file of hookFailureLogCandidates(repoRoot)) {
-    try {
-      fs.mkdirSync(path.dirname(file), { recursive: true });
-      fs.appendFileSync(file, JSON.stringify(entry) + "\n", "utf8");
-      return;
-    } catch {
-      // Hook diagnostics must never block prompt submission.
-    }
-  }
+  appendHookFailure(
+    safeRepoRoot(),
+    details.runtime,
+    details.eventName,
+    details.errorCode || "hook_failure_unknown",
+  );
 }
 
-function hookFailureLogCandidates(repoRoot) {
-  const stateHome = process.env.XDG_STATE_HOME || path.join(process.env.HOME || "", ".local", "state");
-  return [
-    path.join(stateHome, "oh-my-ai", "hook-failures.log"),
-    path.join(repoRoot, ".oh-my-ai", "state", "hook-failures.log"),
-  ];
+function childHookFailureCode(result) {
+  if (result.error) {
+    const knownCode = new Set(["EACCES", "E2BIG", "ENOENT", "EPERM", "ETIMEDOUT"]);
+    const code = knownCode.has(result.error.code) ? result.error.code.toLowerCase() : "unknown";
+    return `hook_child_${code}`;
+  }
+  return Number.isSafeInteger(result.status)
+    ? `hook_child_exit_${result.status}`
+    : "hook_child_status_unknown";
 }
 
 function safeRepoRoot() {

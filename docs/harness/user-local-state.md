@@ -3,6 +3,9 @@
 Mutable Harness state belongs outside Product repositories. The default root is
 `$XDG_STATE_HOME/oh-my-ai` or `~/.local/state/oh-my-ai`; set
 `OH_MY_AI_STATE_ROOT` to override that complete application root.
+New directories use mode `0700` and files use `0600`. Existing app directories
+owned by the current user are tightened to `0700`; foreign-owned, linked, or
+otherwise unsafe roots fail with a permission/path error.
 
 The namespace is keyed by a hash of the Git common directory and a separate
 hash of the Git directory. Clones and linked worktrees therefore get separate
@@ -49,6 +52,9 @@ be visible, so callers must read and reconcile before retrying a write.
   and worktree, matching the legacy Harness-owned log. New records store a
   prompt SHA-256, never prompt text. Execution markers and suggestion claims
   are scoped to the caller's target Product repository and worktree.
+- `appendHookFailure(harnessRepositoryRoot, runtime, eventName, errorCode)`
+  stores bounded, sanitized Hook failure codes in the same clone/worktree
+  namespace. It omits stderr, free-form reasons, and repository paths.
 
 New writes use version 1 files under `work-start/` and `automation/` in the
 user-local namespace. Legacy files under `.oh-my-ai/state/` are read-only. A
@@ -58,6 +64,9 @@ the operation returns `state_legacy_conflict` and does not overwrite either
 copy. Corrupt primary or legacy data is preserved and returned as an explicit
 error. Work-start task text, session IDs, and prompt bodies are not persisted;
 execution correlation and toil candidates use SHA-256 digests.
+Historical `hook-failures.log` files from the former XDG or repository-local
+locations are left untouched; new Hook failures use the versioned diagnostics
+state and do not persist stderr or free-form reasons.
 
 ## Failure codes
 

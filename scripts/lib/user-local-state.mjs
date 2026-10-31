@@ -116,6 +116,9 @@ export function readUserLocalState(location) {
       "The user-local state file is not a regular file.",
     );
   }
+  if (typeof process.getuid === "function" && stat.uid !== process.getuid()) {
+    throw new UserLocalStateError("state_permissions_unsafe", "The user-local state file has a different owner.");
+  }
   if ((stat.mode & 0o077) !== 0) {
     throw new UserLocalStateError(
       "state_permissions_unsafe",
@@ -428,9 +431,10 @@ function assertPrivateDirectory(directory, rootPath) {
     if (!stat.isDirectory() || stat.isSymbolicLink() || fs.realpathSync(directory) !== path.resolve(directory)) {
       throw new UserLocalStateError("state_path_unsafe", "The user-local state namespace contains a symbolic link.");
     }
-    if ((stat.mode & 0o077) !== 0) {
-      throw new UserLocalStateError("state_permissions_unsafe", "The user-local state directory is accessible outside the current user.");
+    if (typeof process.getuid === "function" && stat.uid !== process.getuid()) {
+      throw new UserLocalStateError("state_permissions_unsafe", "The user-local state directory has a different owner.");
     }
+    if ((stat.mode & 0o077) !== 0) tightenOwnedDirectoryPermissions(directory, stat);
     const relative = path.relative(rootPath, path.resolve(directory));
     if (relative.startsWith(`..${path.sep}`) || relative === ".." || path.isAbsolute(relative)) {
       throw new UserLocalStateError("state_path_unsafe", "The state namespace escaped its configured root.");
@@ -441,11 +445,34 @@ function assertPrivateDirectory(directory, rootPath) {
   }
 }
 
+function tightenOwnedDirectoryPermissions(directory, stat) {
+  const currentUid = typeof process.getuid === "function" ? process.getuid() : null;
+  if (currentUid === null || stat.uid !== currentUid) {
+    throw new UserLocalStateError("state_permissions_unsafe", "The user-local state directory is accessible outside the current user or has a different owner.");
+  }
+  try {
+    // Older hook diagnostics created this app-specific root with mkdir's
+    // default 0755 mode. Tighten only directories owned by this user; never
+    // adopt or chmod a foreign-owned state tree.
+    fs.chmodSync(directory, 0o700);
+    const tightened = fs.lstatSync(directory);
+    if (!tightened.isDirectory() || tightened.isSymbolicLink() || (tightened.mode & 0o077) !== 0) {
+      throw new UserLocalStateError("state_permissions_unsafe", "The user-local state directory could not be made private.");
+    }
+  } catch (error) {
+    if (error instanceof UserLocalStateError) throw error;
+    throw stateError("state_permissions_unsafe", error);
+  }
+}
+
 function assertTargetIsRegularOrMissing(filePath) {
   try {
     const stat = fs.lstatSync(filePath);
     if (stat.isSymbolicLink() || !stat.isFile()) {
       throw new UserLocalStateError("state_path_unsafe", "The user-local state target is not a regular file.");
+    }
+    if (typeof process.getuid === "function" && stat.uid !== process.getuid()) {
+      throw new UserLocalStateError("state_permissions_unsafe", "The user-local state target has a different owner.");
     }
   } catch (error) {
     if (error instanceof UserLocalStateError) throw error;
@@ -541,6 +568,9 @@ function readLockOwner(lockPath) {
   }
   if (!stat.isFile() || stat.isSymbolicLink()) {
     throw new UserLocalStateError("state_path_unsafe", "The physical state lock path is not a regular file.");
+  }
+  if (typeof process.getuid === "function" && stat.uid !== process.getuid()) {
+    throw new UserLocalStateError("state_permissions_unsafe", "The physical state lock has a different owner.");
   }
   if ((stat.mode & 0o077) !== 0) {
     throw new UserLocalStateError("state_permissions_unsafe", "The physical state lock is accessible outside the current user.");

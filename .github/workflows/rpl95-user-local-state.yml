@@ -10,11 +10,13 @@ on:
       - "docs/harness/user-local-state.md"
       - "scripts/lib/user-local-state.mjs"
       - "scripts/lib/work-start-execution-state.mjs"
+      - "scripts/lib/hook-failure-state.mjs"
       - "scripts/oh-my-ai.mjs"
       - "scripts/prompt-routing-hook.mjs"
       - "scripts/test-install-fixtures.sh"
       - "scripts/test-user-local-state-fixtures.mjs"
       - "scripts/test-work-start-fixtures.sh"
+      - "skills/harness-automation/SKILL.md"
 
 permissions:
   contents: read
@@ -36,6 +38,7 @@ jobs:
         run: |
           node --check scripts/lib/user-local-state.mjs
           node --check scripts/lib/work-start-execution-state.mjs
+          node --check scripts/lib/hook-failure-state.mjs
           node --check scripts/prompt-routing-hook.mjs
           node --check scripts/oh-my-ai.mjs
           node --check scripts/test-user-local-state-fixtures.mjs

@@ -11,6 +11,7 @@ import {
   getWorkStartExecutionStatus,
   rememberWorkStartExecution,
 } from "./lib/work-start-execution-state.mjs";
+import { appendHookFailure } from "./lib/hook-failure-state.mjs";
 import {
   publishUserLocalStateAtomically,
   readUserLocalState,
@@ -31,6 +32,7 @@ try {
   setupGitFixture();
   verifyIdentityIsolation();
   verifyWorkStartStateCompatibility();
+  verifyHookFailureState();
   verifyAtomicPublicationAndPermissions();
   await verifyCrossProcessLocking();
   verifyLegacySymlinkHandling();
@@ -100,7 +102,9 @@ function verifyAtomicPublicationAndPermissions() {
   fs.mkdirSync(unsafeRoot, { mode: 0o755 });
   fs.chmodSync(unsafeRoot, 0o755);
   const unsafeLocation = resolveUserLocalStateLocation(repository, "value.json", { stateRootOverride: unsafeRoot });
-  expectStateError(() => publishUserLocalStateAtomically(unsafeLocation, "unsafe"), "state_permissions_unsafe");
+  publishUserLocalStateAtomically(unsafeLocation, "private after safe migration");
+  assert.equal(fs.statSync(unsafeRoot).mode & 0o777, 0o700,
+    "a preexisting current-user-owned app root is safely tightened to owner-only");
 }
 
 function verifyWorkStartStateCompatibility() {
@@ -211,6 +215,42 @@ function verifyLegacySymlinkHandling() {
   const symlinkWrite = rememberWorkStartExecution(separateClone, "claude", "session", "task");
   assert.equal(symlinkWrite.errorCode, "state_legacy_unsafe", "writes do not follow legacy state symlinks");
   assert.deepEqual(fs.readdirSync(externalLegacyDirectory), [], "legacy symlink target is never written");
+}
+
+function verifyHookFailureState() {
+  const previousRoot = process.env.OH_MY_AI_STATE_ROOT;
+  const legacyRoot = path.join(temporaryRoot, "legacy-hook-log-root");
+  fs.mkdirSync(legacyRoot, { mode: 0o755 });
+  fs.chmodSync(legacyRoot, 0o755);
+  const legacyLogPath = path.join(legacyRoot, "hook-failures.log");
+  const legacyLogText = '{"legacy":"diagnostic"}\n';
+  fs.writeFileSync(legacyLogPath, legacyLogText, { mode: 0o644 });
+  process.env.OH_MY_AI_STATE_ROOT = legacyRoot;
+
+  try {
+    assert.equal(appendHookFailure(repository, "claude", "UserPromptSubmit", "hook_child_eperm").persisted, true,
+      "hook diagnostics use the physical user-local state API");
+    assert.equal(fs.statSync(legacyRoot).mode & 0o777, 0o700,
+      "a preexisting current-user-owned state root is tightened before use");
+    assert.equal(fs.readFileSync(legacyLogPath, "utf8"), legacyLogText,
+      "legacy hook log remains read-only during migration");
+    const location = resolveUserLocalStateLocation(repository, "diagnostics/hook-failures.json", { stateRootOverride: legacyRoot });
+    const primaryText = readUserLocalState(location);
+    const primary = JSON.parse(primaryText);
+    assert.equal(primary.failures[0].event_name, "userpromptsubmit");
+    assert.equal(primary.failures[0].error_code, "hook_child_eperm");
+    assert.ok(!primaryText.includes("legacy diagnostic") && !primaryText.includes("stderr")
+      && !fs.existsSync(path.join(repository, ".oh-my-ai", "state", "hook-failures.log")),
+    "hook failure state omits raw diagnostics and Product-tree fallback writes");
+
+    const corrupt = "{ malformed diagnostics\n";
+    publishUserLocalStateAtomically(location, corrupt);
+    assert.equal(appendHookFailure(repository, "claude", "UserPromptSubmit", "hook_child_eperm").errorCode,
+      "state_primary_corrupt", "corrupt diagnostic state is not overwritten");
+    assert.equal(readUserLocalState(location), corrupt, "corrupt hook state remains intact");
+  } finally {
+    process.env.OH_MY_AI_STATE_ROOT = previousRoot;
+  }
 }
 
 async function verifyCrossProcessLocking() {
