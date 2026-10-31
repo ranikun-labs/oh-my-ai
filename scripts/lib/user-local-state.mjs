@@ -69,6 +69,8 @@ export function resolveUserLocalStateRoot({
 export function resolveUserLocalStateLocation(cwd, relativePath, options = {}) {
   const identity = resolveGitIdentity(cwd);
   const rootPath = resolveUserLocalStateRoot(options);
+  const configuredRoot = options.stateRootOverride ?? (options.env ?? process.env)[STATE_ROOT_ENV];
+  const allowExistingRootTightening = configuredRoot === undefined || configuredRoot === null || configuredRoot === "";
   assertStateRootOutsideRepository(rootPath, identity.repositoryRoot);
 
   const segments = validateRelativeSegments(relativePath);
@@ -83,6 +85,7 @@ export function resolveUserLocalStateLocation(cwd, relativePath, options = {}) {
   const directoryPath = path.dirname(filePath);
   const location = {
     rootPath,
+    allowExistingRootTightening,
     repositoryRoot: identity.repositoryRoot,
     repositoryId: identity.repositoryId,
     worktreeId: identity.worktreeId,
@@ -340,7 +343,7 @@ function assertLocation(location) {
     );
   }
   const { rootPath, repositoryRoot, repositoryId, worktreeId, relativePath, namespacePath, directoryPath, filePath } = location;
-  if (!path.isAbsolute(rootPath) || !path.isAbsolute(repositoryRoot)
+  if (!path.isAbsolute(rootPath) || typeof location.allowExistingRootTightening !== "boolean" || !path.isAbsolute(repositoryRoot)
     || !/^[a-f0-9]{64}$/.test(repositoryId) || !/^[a-f0-9]{64}$/.test(worktreeId)) {
     throw new UserLocalStateError("state_path_unsafe", "The user-local state location is invalid.");
   }
@@ -373,7 +376,7 @@ function ensureStateDirectoryTree(location) {
   const checked = assertLocation(location);
   try {
     fs.mkdirSync(checked.rootPath, { recursive: true, mode: 0o700 });
-    assertPrivateDirectory(checked.rootPath, checked.rootPath);
+    assertPrivateDirectory(checked.rootPath, checked.rootPath, checked.allowExistingRootTightening);
     const directories = [
       path.join(checked.rootPath, "repositories"),
       path.join(checked.rootPath, "repositories", checked.repositoryId),
@@ -389,7 +392,7 @@ function ensureStateDirectoryTree(location) {
       try { fs.mkdirSync(directory, { mode: 0o700 }); } catch (error) {
         if (error?.code !== "EEXIST") throw error;
       }
-      assertPrivateDirectory(directory, checked.rootPath);
+      assertPrivateDirectory(directory, checked.rootPath, checked.allowExistingRootTightening);
     }
   } catch (error) {
     if (error instanceof UserLocalStateError) throw error;
@@ -420,12 +423,12 @@ function assertExistingStateDirectoryTree(location) {
     if (!stat.isDirectory() || stat.isSymbolicLink()) {
       throw new UserLocalStateError("state_path_unsafe", "The user-local state namespace contains a non-directory or symbolic link.");
     }
-    assertPrivateDirectory(directory, checked.rootPath);
+    assertPrivateDirectory(directory, checked.rootPath, checked.allowExistingRootTightening);
   }
   return true;
 }
 
-function assertPrivateDirectory(directory, rootPath) {
+function assertPrivateDirectory(directory, rootPath, allowExistingRootTightening) {
   try {
     const stat = fs.lstatSync(directory);
     if (!stat.isDirectory() || stat.isSymbolicLink() || fs.realpathSync(directory) !== path.resolve(directory)) {
@@ -434,7 +437,12 @@ function assertPrivateDirectory(directory, rootPath) {
     if (typeof process.getuid === "function" && stat.uid !== process.getuid()) {
       throw new UserLocalStateError("state_permissions_unsafe", "The user-local state directory has a different owner.");
     }
-    if ((stat.mode & 0o077) !== 0) tightenOwnedDirectoryPermissions(directory, stat);
+    if ((stat.mode & 0o077) !== 0) {
+      if (path.resolve(directory) === rootPath && !allowExistingRootTightening) {
+        throw new UserLocalStateError("state_permissions_unsafe", "An explicit state root must already be private.");
+      }
+      tightenOwnedDirectoryPermissions(directory, stat);
+    }
     const relative = path.relative(rootPath, path.resolve(directory));
     if (relative.startsWith(`..${path.sep}`) || relative === ".." || path.isAbsolute(relative)) {
       throw new UserLocalStateError("state_path_unsafe", "The state namespace escaped its configured root.");

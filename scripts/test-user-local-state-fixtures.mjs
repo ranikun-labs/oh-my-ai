@@ -102,9 +102,10 @@ function verifyAtomicPublicationAndPermissions() {
   fs.mkdirSync(unsafeRoot, { mode: 0o755 });
   fs.chmodSync(unsafeRoot, 0o755);
   const unsafeLocation = resolveUserLocalStateLocation(repository, "value.json", { stateRootOverride: unsafeRoot });
-  publishUserLocalStateAtomically(unsafeLocation, "private after safe migration");
-  assert.equal(fs.statSync(unsafeRoot).mode & 0o777, 0o700,
-    "a preexisting current-user-owned app root is safely tightened to owner-only");
+  expectStateError(() => publishUserLocalStateAtomically(unsafeLocation, "must not mutate shared root"),
+    "state_permissions_unsafe");
+  assert.equal(fs.statSync(unsafeRoot).mode & 0o777, 0o755,
+    "an explicit override with broad permissions is rejected without changing the directory");
 }
 
 function verifyWorkStartStateCompatibility() {
@@ -219,13 +220,17 @@ function verifyLegacySymlinkHandling() {
 
 function verifyHookFailureState() {
   const previousRoot = process.env.OH_MY_AI_STATE_ROOT;
-  const legacyRoot = path.join(temporaryRoot, "legacy-hook-log-root");
+  const previousXdgStateHome = process.env.XDG_STATE_HOME;
+  const legacyXdgStateHome = path.join(temporaryRoot, "legacy-hook-xdg");
+  const legacyRoot = path.join(legacyXdgStateHome, "oh-my-ai");
+  fs.mkdirSync(legacyXdgStateHome, { mode: 0o700 });
   fs.mkdirSync(legacyRoot, { mode: 0o755 });
   fs.chmodSync(legacyRoot, 0o755);
   const legacyLogPath = path.join(legacyRoot, "hook-failures.log");
   const legacyLogText = '{"legacy":"diagnostic"}\n';
   fs.writeFileSync(legacyLogPath, legacyLogText, { mode: 0o644 });
-  process.env.OH_MY_AI_STATE_ROOT = legacyRoot;
+  delete process.env.OH_MY_AI_STATE_ROOT;
+  process.env.XDG_STATE_HOME = legacyXdgStateHome;
 
   try {
     assert.equal(appendHookFailure(repository, "claude", "UserPromptSubmit", "hook_child_eperm").persisted, true,
@@ -234,7 +239,9 @@ function verifyHookFailureState() {
       "a preexisting current-user-owned state root is tightened before use");
     assert.equal(fs.readFileSync(legacyLogPath, "utf8"), legacyLogText,
       "legacy hook log remains read-only during migration");
-    const location = resolveUserLocalStateLocation(repository, "diagnostics/hook-failures.json", { stateRootOverride: legacyRoot });
+    const location = resolveUserLocalStateLocation(repository, "diagnostics/hook-failures.json", {
+      env: { XDG_STATE_HOME: legacyXdgStateHome },
+    });
     const primaryText = readUserLocalState(location);
     const primary = JSON.parse(primaryText);
     assert.equal(primary.failures[0].event_name, "userpromptsubmit");
@@ -249,7 +256,10 @@ function verifyHookFailureState() {
       "state_primary_corrupt", "corrupt diagnostic state is not overwritten");
     assert.equal(readUserLocalState(location), corrupt, "corrupt hook state remains intact");
   } finally {
-    process.env.OH_MY_AI_STATE_ROOT = previousRoot;
+    if (previousRoot === undefined) delete process.env.OH_MY_AI_STATE_ROOT;
+    else process.env.OH_MY_AI_STATE_ROOT = previousRoot;
+    if (previousXdgStateHome === undefined) delete process.env.XDG_STATE_HOME;
+    else process.env.XDG_STATE_HOME = previousXdgStateHome;
   }
 }
 

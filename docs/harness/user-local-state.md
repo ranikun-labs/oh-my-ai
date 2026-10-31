@@ -3,9 +3,10 @@
 Mutable Harness state belongs outside Product repositories. The default root is
 `$XDG_STATE_HOME/oh-my-ai` or `~/.local/state/oh-my-ai`; set
 `OH_MY_AI_STATE_ROOT` to override that complete application root.
-New directories use mode `0700` and files use `0600`. Existing app directories
-owned by the current user are tightened to `0700`; foreign-owned, linked, or
-otherwise unsafe roots fail with a permission/path error.
+New directories use mode `0700` and files use `0600`. Existing default app
+directories owned by the current user are tightened to `0700` to recover from
+older Harness-created roots. An explicit `OH_MY_AI_STATE_ROOT` must already be
+private; unsafe roots fail without changing the selected directory's mode.
 
 The namespace is keyed by a hash of the Git common directory and a separate
 hash of the Git directory. Clones and linked worktrees therefore get separate
