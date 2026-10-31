@@ -1,15 +1,16 @@
 #!/usr/bin/env node
 
-import fs from "node:fs";
-import path from "node:path";
 import crypto from "node:crypto";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { matchSkillCandidatesWithStatus } from "./lib/routing-status.mjs";
 import {
-  hasRecentWorkStartExecution,
-  workStartSuggestionStatePath,
+  appendAutomationCandidate,
+  claimWorkStartSuggestion,
+  getWorkStartExecutionStatus,
 } from "./lib/work-start-execution-state.mjs";
 
+const harnessRepositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const args = new Set(process.argv.slice(2));
 const format = args.has("--format=routing-json")
   ? "routing-json"
@@ -20,9 +21,6 @@ const format = args.has("--format=routing-json")
       : args.has("--format=text")
         ? "text"
         : "codex-json";
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(__dirname, "..");
-const automationCandidatesPath = path.join(repoRoot, ".oh-my-ai", "state", "automation-candidates.log");
 const SKILL_CANDIDATE_LIMIT = 2;
 
 let input = "";
@@ -102,22 +100,34 @@ function buildPromptRoutingPayload(prompt, options = {}) {
   const runtime = options.runtime;
   const sessionId = options.sessionId;
   const explicitWorkStart = hasExplicitWorkStartInvocation(prompt, runtime);
-  const completedWorkStart = hasRecentWorkStartExecution(process.cwd(), runtime, sessionId, prompt);
+  const executionStatus = getWorkStartExecutionStatus(process.cwd(), runtime, sessionId, prompt);
+  const completedWorkStart = executionStatus.recent;
   const routing = matchSkillCandidatesWithStatus(normalized, { limit: SKILL_CANDIDATE_LIMIT });
 
   // A Runtime can remove an explicit command token before a later
   // UserPromptSubmit event. Suppress only when the Engine supplied the same
   // runtime and session identifier; missing correlation deliberately fails open.
-  if (explicitWorkStart || completedWorkStart) {
-    return { context: "", systemMessage: "", routing: renderRoutingJson(routing) };
+  const notes = [];
+  if (executionStatus.errorCode) {
+    notes.push(`- Work-start state warning: state_status=unavailable; state_error_code=${executionStatus.errorCode}. Prompt routing continues without post-execution suppression.`);
   }
 
-  const notes = [];
+  if (explicitWorkStart || completedWorkStart) {
+    return {
+      context: notes.length ? ["[HARNESS:prompt-routing]", ...notes].join("\n") : "",
+      systemMessage: "",
+      routing: renderRoutingJson(routing),
+    };
+  }
+
   let workStartSuggestion = null;
 
   if (hasToilSignal(prompt, normalized)) {
-    appendAutomationCandidate(prompt);
-    notes.push("- Toil signal: check `.oh-my-ai/state/automation-candidates.log` for auto-detected candidates. Promote only user-confirmed items to `automation-backlog.md`; nudge only if the flow is recurring, stable, and worth automating. Do not create automation before user confirmation.");
+    const candidateResult = appendAutomationCandidate(harnessRepositoryRoot, prompt);
+    notes.push("- Toil signal: a prompt digest was stored under the user-local oh-my-ai state root. Promote only user-confirmed items to `automation-backlog.md`; nudge only if the flow is recurring, stable, and worth automating. Do not create automation before user confirmation.");
+    if (candidateResult.errorCode) {
+      notes.push(`- Automation candidate state warning: state_status=unavailable; state_error_code=${candidateResult.errorCode}. Prompt routing continues without candidate persistence.`);
+    }
   }
 
   const handoff = hasHandoffSignal(prompt, normalized);
@@ -141,6 +151,9 @@ function buildPromptRoutingPayload(prompt, options = {}) {
     workStartSuggestion = buildWorkStartSuggestion(prompt, options.runtime);
     if (workStartSuggestion) {
       notes.push(workStartSuggestion.context);
+      if (workStartSuggestion.errorCode) {
+        notes.push(`- Work-start suggestion state warning: state_status=unavailable; state_error_code=${workStartSuggestion.errorCode}. Suggestion remains available and may repeat.`);
+      }
     }
   }
 
@@ -202,13 +215,8 @@ function buildWorkStartSuggestion(prompt, runtime) {
   if (!normalizedPrompt) return "";
 
   const promptHash = crypto.createHash("sha256").update(normalizedPrompt).digest("hex");
-  const promptKeys = workStartSuggestionKeys(runtime, promptHash);
-  const statePath = workStartSuggestionStatePath(process.cwd());
-  if (hasSuggestedWorkStart(statePath, promptKeys)) {
-    return "";
-  }
-
-  rememberSuggestedWorkStart(statePath, promptKeys[0]);
+  const claim = claimWorkStartSuggestion(process.cwd(), runtime, promptHash);
+  if (claim.persisted && !claim.claimed) return "";
   const command = runtime === "codex"
     ? `$work-start ${normalizedPrompt}`
     : `/work-start ${normalizedPrompt}`;
@@ -256,66 +264,7 @@ function buildWorkStartSuggestion(prompt, runtime) {
     "  Do not suggest Work-start again for this same user request.",
   ].join("\n");
 
-  return { context, systemMessage };
-}
-
-function appendAutomationCandidate(prompt) {
-  try {
-    fs.mkdirSync(path.dirname(automationCandidatesPath), { recursive: true });
-    const summary = prompt.replace(/\s+/g, " ").trim().slice(0, 500);
-    if (!summary) return;
-    const entry = {
-      ts: new Date().toISOString(),
-      source: "prompt-routing-hook",
-      signal: "toil",
-      prompt: summary,
-    };
-    fs.appendFileSync(automationCandidatesPath, JSON.stringify(entry) + "\n", "utf8");
-  } catch {
-    // Routing context is helpful but must never block prompt submission.
-  }
-}
-
-function hasSuggestedWorkStart(statePath, promptHash) {
-  if (!statePath) return false;
-  try {
-    const parsed = JSON.parse(fs.readFileSync(statePath, "utf8"));
-    return Array.isArray(parsed.suggested_prompt_hashes)
-      && [].concat(promptHash).some(hash => parsed.suggested_prompt_hashes.includes(hash));
-  } catch {
-    return false;
-  }
-}
-
-function rememberSuggestedWorkStart(statePath, promptHash) {
-  if (!statePath) return;
-  try {
-    let hashes = [];
-    try {
-      const parsed = JSON.parse(fs.readFileSync(statePath, "utf8"));
-      if (Array.isArray(parsed.suggested_prompt_hashes)) hashes = parsed.suggested_prompt_hashes;
-    } catch {
-      hashes = [];
-    }
-    hashes = [promptHash, ...hashes.filter(hash => hash !== promptHash)].slice(0, 100);
-    fs.mkdirSync(path.dirname(statePath), { recursive: true });
-    fs.writeFileSync(statePath, JSON.stringify({
-      updated_at: new Date().toISOString(),
-      suggested_prompt_hashes: hashes,
-    }, null, 2) + "\n", "utf8");
-  } catch {
-    // Suggestion suppression is helpful but must never block prompt submission.
-  }
-}
-
-function workStartSuggestionKeys(runtime, promptHash) {
-  if (runtime === "claude") {
-    return [`claude:${promptHash}`, promptHash];
-  }
-  if (runtime === "codex") {
-    return [`codex:${promptHash}`];
-  }
-  return [promptHash];
+  return { context, systemMessage, errorCode: claim.errorCode };
 }
 
 function hasExplicitWorkStartInvocation(prompt, runtime) {

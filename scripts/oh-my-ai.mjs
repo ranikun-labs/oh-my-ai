@@ -84,12 +84,15 @@ function runWorkStart(args) {
   const status = result.status ?? 1;
   if (status === 0) {
     const execution = workStartExecutionContext();
-    rememberWorkStartExecution(
+    const persistence = rememberWorkStartExecution(
       process.cwd(),
       execution.runtime,
       execution.sessionId,
       task,
     );
+    if (persistence.errorCode) {
+      process.stderr.write(`work-start execution state was not saved: state_error_code=${persistence.errorCode}\n`);
+    }
   }
   process.exit(status);
 }

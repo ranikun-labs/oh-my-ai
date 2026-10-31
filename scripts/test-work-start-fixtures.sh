@@ -5,6 +5,8 @@ REPO="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$REPO"
 
 FIXTURE_ROOT="fixtures/work-start"
+STATE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/oh-my-ai-work-start-state.XXXXXX")"
+export OH_MY_AI_STATE_ROOT="$STATE_ROOT"
 cleanup_paths=()
 cleanup_files=()
 cleanup_dirs=()
@@ -20,7 +22,7 @@ cleanup() {
   done
   for path in "${cleanup_files[@]}"; do
     case "$path" in
-      .oh-my-ai/state/*) [ -f "$path" ] && rm -f -- "$path" ;;
+      "$STATE_ROOT"/*) [ -f "$path" ] && rm -f -- "$path" ;;
     esac
   done
   # Isolated-PATH sandboxes live under the system temp dir, not the repo.
@@ -29,6 +31,7 @@ cleanup() {
       */oh-my-ai-work-start-backend.*) [ -d "$path" ] && rm -rf -- "$path" ;;
     esac
   done
+  [ ! -d "$STATE_ROOT" ] || rm -rf -- "$STATE_ROOT"
   return 0
 }
 trap cleanup EXIT
@@ -36,6 +39,10 @@ trap cleanup EXIT
 fail() {
   echo "fixture failure: $*" >&2
   exit 1
+}
+
+user_local_state_file() {
+  node --input-type=module -e 'import { resolveUserLocalStateLocation } from "./scripts/lib/user-local-state.mjs"; process.stdout.write(resolveUserLocalStateLocation(process.cwd(), process.argv[1]).filePath);' "$1"
 }
 
 require_file() {
@@ -334,10 +341,12 @@ check_runtime_entry_suggestion() {
   local explicit_entry="$3"
   local explicit_command_name="${explicit_entry%% *}"
   local task_file="$fixture_dir/input/task.txt"
-  local state_file=".oh-my-ai/state/work-start-suggestions.json"
+  local state_file
   local before_count
   local after_count
   local output
+
+  state_file="$(user_local_state_file work-start/suggestions.json)"
   local visible_output
   local internal_context
   local repeated_output
@@ -429,13 +438,15 @@ check_runtime_entry_synthetic_task_notification() {
   local fixture_dir="$2"
   local task_file="$fixture_dir/input/task.txt"
   local natural_task_file="$FIXTURE_ROOT/FX-WSH-040-runtime-entry-strong-intent/input/task.txt"
-  local state_file=".oh-my-ai/state/work-start-suggestions.json"
+  local state_file
   local before_count
   local after_count
   local natural_output
   local synthetic_output
   local before_state_hash
   local after_state_hash
+
+  state_file="$(user_local_state_file work-start/suggestions.json)"
 
   require_file "$fixture_dir/fixture.yaml"
   require_file "$task_file"
@@ -464,11 +475,13 @@ check_runtime_entry_synthetic_task_notification() {
 check_runtime_entry_explicit_prompt_no_suggestion() {
   local runtime="$1"
   local explicit_prompt="$2"
-  local state_file=".oh-my-ai/state/work-start-suggestions.json"
+  local state_file
   local task_file
   local before_count
   local after_count
   local output
+
+  state_file="$(user_local_state_file work-start/suggestions.json)"
 
   task_file="$(mktemp)"
   cleanup_files+=("$state_file")
