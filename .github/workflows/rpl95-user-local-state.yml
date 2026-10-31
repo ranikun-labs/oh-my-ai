@@ -1,6 +1,9 @@
 name: RPL-95 user-local state
 
 on:
+  push:
+    branches:
+      - feat/RPL-95-user-local-state-foundation
   pull_request:
     branches: [master]
     paths:
@@ -14,6 +17,7 @@ on:
       - "scripts/oh-my-ai.mjs"
       - "scripts/prompt-routing-hook.mjs"
       - "scripts/test-install-fixtures.sh"
+      - "scripts/test-routing-fixtures.sh"
       - "scripts/test-user-local-state-fixtures.mjs"
       - "scripts/test-work-start-fixtures.sh"
       - "skills/harness-automation/SKILL.md"

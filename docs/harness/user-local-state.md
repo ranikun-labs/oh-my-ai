@@ -69,6 +69,41 @@ Historical `hook-failures.log` files from the former XDG or repository-local
 locations are left untouched; new Hook failures use the versioned diagnostics
 state and do not persist stderr or free-form reasons.
 
+## Consumer contract
+
+RPL-94/93 can use the physical location, read, atomic publish, and physical lock
+exports above, plus `getWorkStartExecutionStatus` and
+`rememberWorkStartExecution` for best-effort Work-start suppression. The stored
+execution marker is hash-correlated; this API does not create a canonical
+Task-to-Session association, Resume record, or Task lifecycle. Suggestion
+deduplication is only the atomic `claimWorkStartSuggestion` operation for one
+prompt hash.
+
+RPL-120 can compose Attempt-specific files from the same atomic publish and
+physical lock primitives. The lock serializes operations that use the same
+location; it is not a compare-and-swap API or a transaction across multiple
+files. This package does not define RPL-120 Attempt/Outcome semantics.
+
+Consumers should handle failures as follows:
+
+- A missing file reads as `null`. An unavailable repository identity or
+  invalid state root/path is an explicit error; do not invent a shared fallback
+  namespace.
+- `state_publish_durability_unknown` means rename may already be visible but
+  directory durability was not confirmed. Read and reconcile before retrying.
+- A lock timeout, unknown owner, foreign-host lock, or ambiguous recovery fails
+  closed: the callback is not run until the physical lock is safely acquired.
+- Corrupt primary/legacy data and `state_legacy_conflict` preserve both copies;
+  surface or quarantine the error without overwriting either copy.
+- Work-start status lookup failures return `recent: false` with a sanitized
+  `errorCode`, so routing proceeds without suppression. Missing runtime/session
+  correlation is an expected no-op. Persistence failure does not reverse a
+  successful engine operation.
+- Suggestion claim failures return `claimed: false`, `persisted: false`, and a
+  sanitized `errorCode`; a caller may leave the suggestion available. Candidate
+  persistence errors likewise do not block routing, and candidate files store
+  prompt hashes rather than prompt text.
+
 ## Failure codes
 
 `UserLocalStateError.code` is stable for programmatic handling. Common physical
