@@ -30,12 +30,15 @@ jobs:
   user-local-state:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    env:
-      OH_MY_AI_STATE_ROOT: ${{ runner.temp }}/oh-my-ai-user-local-state
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - name: Configure isolated test state root
+        shell: bash
+        run: |
+          test -n "${RUNNER_TEMP:-}"
+          printf '%s\n' "OH_MY_AI_STATE_ROOT=${RUNNER_TEMP}/oh-my-ai-user-local-state" >> "$GITHUB_ENV"
       - uses: actions/setup-node@v4
         with:
           node-version: 24
