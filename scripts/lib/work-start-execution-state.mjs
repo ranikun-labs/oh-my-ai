@@ -82,6 +82,9 @@ export function getWorkStartExecutionStatus(cwd, runtime, sessionId, prompt) {
     ));
     return Object.freeze({ recent, errorCode: null });
   } catch (error) {
+    if (error instanceof UserLocalStateError && error.code === "repository_context_missing") {
+      return Object.freeze({ recent: false, errorCode: null });
+    }
     return Object.freeze({ recent: false, errorCode: errorCode(error, "state_read_failed") });
   }
 }
@@ -123,13 +126,19 @@ export function claimWorkStartSuggestion(cwd, runtime, promptHash) {
   }
 }
 
-/** Store a hash-only toil candidate in the external state root. */
-export function appendAutomationCandidate(cwd, prompt) {
+/** Store a hash-only toil candidate outside both the Harness and Product trees. */
+export function appendAutomationCandidate(cwd, prompt, options = {}) {
   const normalizedPrompt = normalizeText(prompt);
   if (!normalizedPrompt) return result(false, "automation_candidate_context_invalid");
+  const productCwd = options?.productCwd;
+  if (typeof productCwd !== "string" || productCwd.trim() === "") {
+    return result(false, "product_context_unavailable");
+  }
 
   try {
-    const location = stateLocation(cwd, CANDIDATE_FILE);
+    const location = resolveUserLocalStateLocation(cwd, CANDIDATE_FILE, {
+      protectedRepositoryCwds: [productCwd],
+    });
     const legacyPath = legacyPathFor(cwd, "automation-candidates.log");
     return withPhysicalStateLock(location, () => {
       const composite = readCandidateState(location, legacyPath);
@@ -148,8 +157,8 @@ export function appendAutomationCandidate(cwd, prompt) {
   }
 }
 
-function stateLocation(cwd, relativePath) {
-  return resolveUserLocalStateLocation(cwd, relativePath);
+function stateLocation(cwd, relativePath, options = {}) {
+  return resolveUserLocalStateLocation(cwd, relativePath, options);
 }
 
 function legacyPathFor(cwd, fileName) {

@@ -123,10 +123,17 @@ function buildPromptRoutingPayload(prompt, options = {}) {
   let workStartSuggestion = null;
 
   if (hasToilSignal(prompt, normalized)) {
-    const candidateResult = appendAutomationCandidate(harnessRepositoryRoot, prompt);
-    notes.push("- Toil signal: a prompt digest was stored under the user-local oh-my-ai state root. Promote only user-confirmed items to `automation-backlog.md`; nudge only if the flow is recurring, stable, and worth automating. Do not create automation before user confirmation.");
-    if (candidateResult.errorCode) {
-      notes.push(`- Automation candidate state warning: state_status=unavailable; state_error_code=${candidateResult.errorCode}. Prompt routing continues without candidate persistence.`);
+    const candidateResult = appendAutomationCandidate(harnessRepositoryRoot, prompt, { productCwd: process.cwd() });
+    if (candidateResult.persisted) {
+      notes.push("- Toil signal: a prompt digest was stored under the user-local oh-my-ai state root. Promote only user-confirmed items to `automation-backlog.md`; nudge only if the flow is recurring, stable, and worth automating. Do not create automation before user confirmation.");
+    } else {
+      const errorCode = candidateResult.errorCode || "state_write_failed";
+      const outcomeUncertain = ["state_publish_durability_unknown", "state_lock_release_failed"].includes(errorCode);
+      const stateStatus = outcomeUncertain ? "unconfirmed" : "unavailable";
+      const persistenceMessage = outcomeUncertain
+        ? "candidate persistence could not be confirmed; state may be visible. Reconcile before retrying."
+        : "no candidate digest was stored.";
+      notes.push(`- Toil signal: ${persistenceMessage} state_status=${stateStatus}; state_error_code=${errorCode}. Prompt routing continues without relying on candidate state.`);
     }
   }
 

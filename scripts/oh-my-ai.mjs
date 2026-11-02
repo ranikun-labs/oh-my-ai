@@ -345,6 +345,7 @@ function logHookFailure(details) {
     details.runtime,
     details.eventName,
     details.errorCode || "hook_failure_unknown",
+    { productCwd: process.cwd() },
   );
 }
 

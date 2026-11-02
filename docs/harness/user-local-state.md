@@ -42,20 +42,27 @@ be visible, so callers must read and reconcile before retrying a write.
 - `getWorkStartExecutionStatus(cwd, runtime, sessionId, prompt)` returns
   `{ recent, errorCode }`. Storage or compatibility failures return
   `recent: false` and a sanitized code; prompt routing continues fail-open.
+  A current directory outside Git is an expected no-op with no warning.
 - `rememberWorkStartExecution(cwd, runtime, sessionId, task)` returns
   `{ persisted, errorCode }`. Missing runtime/session correlation is an
   expected no-op. Engine success remains successful when persistence fails.
 - `claimWorkStartSuggestion(cwd, runtime, promptHash)` returns
   `{ claimed, persisted, errorCode }`. The physical lock makes the
   once-per-prompt claim atomic across processes.
-- `appendAutomationCandidate(harnessRepositoryRoot, prompt)` returns
-  `{ persisted, errorCode }`. Candidate history is scoped to the Harness clone
-  and worktree, matching the legacy Harness-owned log. New records store a
-  prompt SHA-256, never prompt text. Execution markers and suggestion claims
-  are scoped to the caller's target Product repository and worktree.
-- `appendHookFailure(harnessRepositoryRoot, runtime, eventName, errorCode)`
-  stores bounded, sanitized Hook failure codes in the same clone/worktree
-  namespace. It omits stderr, free-form reasons, and repository paths.
+- `appendAutomationCandidate(harnessRepositoryRoot, prompt, { productCwd })`
+  returns `{ persisted, errorCode }`. The verified Product working directory
+  is required so the state root can be checked against both Harness and
+  Product repository trees; calls without it fail with
+  `product_context_unavailable` and do not write. Candidate history is scoped
+  to the Harness clone and worktree, matching the legacy Harness-owned log. New
+  records store a prompt SHA-256, never prompt text. Execution markers and
+  suggestion claims are scoped to the caller's target Product repository and
+  worktree.
+- `appendHookFailure(harnessRepositoryRoot, runtime, eventName, errorCode,
+  { productCwd })` stores bounded, sanitized Hook failure codes in the same
+  clone/worktree namespace. Product context is required; calls without it do
+  not write. The state root is checked against both repository trees. The
+  function omits stderr, free-form reasons, and repository paths.
 
 New writes use version 1 files under `work-start/` and `automation/` in the
 user-local namespace. Legacy files under `.oh-my-ai/state/` are read-only. A
@@ -89,6 +96,9 @@ Consumers should handle failures as follows:
 - A missing file reads as `null`. An unavailable repository identity or
   invalid state root/path is an explicit error; do not invent a shared fallback
   namespace.
+- Candidate and Hook-failure writers require verified Product context in
+  addition to the Harness root. Missing Product context fails closed without
+  creating state.
 - `state_publish_durability_unknown` means rename may already be visible but
   directory durability was not confirmed. Read and reconcile before retrying.
 - A lock timeout, unknown owner, foreign-host lock, or ambiguous recovery fails
@@ -108,7 +118,8 @@ Consumers should handle failures as follows:
 
 `UserLocalStateError.code` is stable for programmatic handling. Common physical
 codes include `state_root_invalid`, `state_root_unavailable`,
-`repository_identity_unavailable`, `state_path_unsafe`,
+`repository_identity_unavailable`, `repository_context_missing`,
+`product_context_unavailable`, `state_path_unsafe`,
 `state_permissions_unsafe`, `state_read_failed`, `state_write_failed`,
 `state_publish_failed`, `state_publish_durability_unknown`,
 `state_lock_callback_invalid`, `state_lock_acquire_failed`, `state_lock_timeout`,

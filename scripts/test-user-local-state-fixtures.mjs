@@ -31,7 +31,9 @@ process.env.OH_MY_AI_STATE_ROOT = stateRoot;
 try {
   setupGitFixture();
   verifyIdentityIsolation();
+  verifyProductTreeStateRootBoundary();
   verifyWorkStartStateCompatibility();
+  verifyNonGitExecutionStatusFailsOpen();
   verifyHookFailureState();
   verifyAtomicPublicationAndPermissions();
   await verifyCrossProcessLocking();
@@ -84,6 +86,90 @@ function verifyIdentityIsolation() {
   const linkedStateRoot = path.join(temporaryRoot, "linked-state-root");
   fs.symlinkSync(realStateRoot, linkedStateRoot);
   expectStateError(() => resolveUserLocalStateRoot({ stateRootOverride: linkedStateRoot }), "state_path_unsafe");
+}
+
+function verifyProductTreeStateRootBoundary() {
+  const productStateRoot = path.join(repository, ".state-inside-product");
+  const productLegacyCandidatePath = path.join(repository, ".oh-my-ai", "state", "automation-candidates.log");
+  const productLegacyCandidateBefore = fs.existsSync(productLegacyCandidatePath)
+    ? fs.readFileSync(productLegacyCandidatePath)
+    : null;
+  const previousStateRoot = process.env.OH_MY_AI_STATE_ROOT;
+  process.env.OH_MY_AI_STATE_ROOT = productStateRoot;
+
+  try {
+    assert.equal(appendAutomationCandidate(separateClone, "missing product context").errorCode,
+      "product_context_unavailable", "the legacy two-argument call cannot write without Product context");
+    assert.equal(appendHookFailure(separateClone, "codex", "UserPromptSubmit", "hook_child_eperm").errorCode,
+      "product_context_unavailable", "Hook diagnostics also require Product context");
+    assert.equal(fs.existsSync(productStateRoot), false, "missing Product context cannot create state");
+
+    assert.equal(appendAutomationCandidate(separateClone, "product boundary candidate", {
+      productCwd: repository,
+    }).errorCode, "state_path_unsafe", "automation state cannot be rooted inside the Product repository");
+    assert.equal(appendHookFailure(separateClone, "codex", "UserPromptSubmit", "hook_child_eperm", {
+      productCwd: repository,
+    }).errorCode, "state_path_unsafe", "hook diagnostics cannot be rooted inside the Product repository");
+    assert.equal(fs.existsSync(productStateRoot), false, "rejected Product-local roots are not created");
+
+    const outsideTarget = path.join(temporaryRoot, "product-state-link-target");
+    fs.mkdirSync(outsideTarget, { mode: 0o700 });
+    const linkedProductRoot = path.join(repository, ".state-root-link");
+    fs.symlinkSync(outsideTarget, linkedProductRoot);
+    process.env.OH_MY_AI_STATE_ROOT = linkedProductRoot;
+    assert.equal(appendAutomationCandidate(separateClone, "symlink boundary candidate", {
+      productCwd: repository,
+    }).errorCode, "state_path_unsafe", "a Product-local state-root symlink is rejected");
+    assert.deepEqual(fs.readdirSync(outsideTarget), [], "rejected symlink roots are not written through");
+    fs.unlinkSync(linkedProductRoot);
+
+    const productAlias = path.join(temporaryRoot, "product-root-alias");
+    fs.symlinkSync(repository, productAlias);
+    process.env.OH_MY_AI_STATE_ROOT = path.join(productAlias, "aliased-state-root");
+    assert.equal(appendAutomationCandidate(separateClone, "aliased boundary candidate", {
+      productCwd: repository,
+    }).errorCode, "state_path_unsafe", "an external-looking path that resolves into Product is rejected");
+    assert.equal(fs.existsSync(path.join(repository, "aliased-state-root")), false,
+      "canonical Product paths are checked before any state directory is created");
+  } finally {
+    if (previousStateRoot === undefined) delete process.env.OH_MY_AI_STATE_ROOT;
+    else process.env.OH_MY_AI_STATE_ROOT = previousStateRoot;
+  }
+
+  process.env.OH_MY_AI_STATE_ROOT = stateRoot;
+  assert.equal(appendAutomationCandidate(separateClone, "external candidate", {
+    productCwd: repository,
+  }).persisted, true, "external user-local state remains available to the Harness clone");
+  assert.equal(appendHookFailure(separateClone, "codex", "UserPromptSubmit", "hook_child_eperm", {
+    productCwd: repository,
+  }).persisted, true, "external diagnostic state remains available to the Harness clone");
+  const harnessLocation = resolveUserLocalStateLocation(separateClone, "automation/candidates.json", {
+    stateRootOverride: stateRoot,
+    protectedRepositoryCwds: [repository],
+  });
+  const productLocation = resolveUserLocalStateLocation(repository, "automation/candidates.json", {
+    stateRootOverride: stateRoot,
+  });
+  assert.ok(path.relative(repository, harnessLocation.filePath).startsWith(".."),
+    "Harness state remains outside the Product tree");
+  assert.notEqual(harnessLocation.repositoryId, productLocation.repositoryId,
+    "state namespace remains owned by the Harness repository identity");
+  assert.ok(fs.existsSync(harnessLocation.filePath), "the external Harness namespace receives the candidate state");
+  assert.equal(fs.existsSync(productLegacyCandidatePath), productLegacyCandidateBefore !== null,
+    "Product legacy state presence is unchanged");
+  if (productLegacyCandidateBefore !== null) {
+    assert.deepEqual(fs.readFileSync(productLegacyCandidatePath), productLegacyCandidateBefore,
+      "Product legacy candidate bytes remain untouched");
+  }
+}
+
+function verifyNonGitExecutionStatusFailsOpen() {
+  const nonGitDirectory = path.join(temporaryRoot, "non-git-workspace");
+  fs.mkdirSync(nonGitDirectory);
+  assert.deepEqual(getWorkStartExecutionStatus(nonGitDirectory, "codex", "session", "hello there"), {
+    recent: false,
+    errorCode: null,
+  }, "ordinary prompts outside Git fail open without a Work-start state warning");
 }
 
 function verifyAtomicPublicationAndPermissions() {
@@ -190,7 +276,7 @@ function verifyWorkStartStateCompatibility() {
   const legacyCandidateLine = `${JSON.stringify({ ts: new Date().toISOString(), source: "old-hook", signal: "toil", prompt: rawLegacyPrompt })}\n`;
   fs.writeFileSync(legacyCandidatePath, legacyCandidateLine);
   const rawNewPrompt = "new private prompt should only be hashed";
-  assert.equal(appendAutomationCandidate(repository, rawNewPrompt).persisted, true,
+  assert.equal(appendAutomationCandidate(repository, rawNewPrompt, { productCwd: repository }).persisted, true,
     "legacy candidate log is read and converted during append");
   const candidatePrimary = resolveUserLocalStateLocation(repository, "automation/candidates.json");
   const candidateText = readUserLocalState(candidatePrimary);
@@ -199,7 +285,7 @@ function verifyWorkStartStateCompatibility() {
   assert.equal(fs.readFileSync(legacyCandidatePath, "utf8"), legacyCandidateLine,
     "candidate migration does not rewrite or delete legacy log");
   fs.appendFileSync(legacyCandidatePath, `${JSON.stringify({ ts: new Date().toISOString(), prompt: "later legacy edit" })}\n`);
-  const candidateConflict = appendAutomationCandidate(repository, "another new prompt");
+  const candidateConflict = appendAutomationCandidate(repository, "another new prompt", { productCwd: repository });
   assert.equal(candidateConflict.errorCode, "state_legacy_conflict", "legacy candidate divergence fails closed for writes");
   assert.equal(readUserLocalState(candidatePrimary), candidateText, "candidate conflict preserves prior primary state");
 
@@ -233,7 +319,9 @@ function verifyHookFailureState() {
   process.env.XDG_STATE_HOME = legacyXdgStateHome;
 
   try {
-    assert.equal(appendHookFailure(repository, "claude", "UserPromptSubmit", "hook_child_eperm").persisted, true,
+    assert.equal(appendHookFailure(repository, "claude", "UserPromptSubmit", "hook_child_eperm", {
+      productCwd: repository,
+    }).persisted, true,
       "hook diagnostics use the physical user-local state API");
     assert.equal(fs.statSync(legacyRoot).mode & 0o777, 0o700,
       "a preexisting current-user-owned state root is tightened before use");
@@ -252,7 +340,9 @@ function verifyHookFailureState() {
 
     const corrupt = "{ malformed diagnostics\n";
     publishUserLocalStateAtomically(location, corrupt);
-    assert.equal(appendHookFailure(repository, "claude", "UserPromptSubmit", "hook_child_eperm").errorCode,
+    assert.equal(appendHookFailure(repository, "claude", "UserPromptSubmit", "hook_child_eperm", {
+      productCwd: repository,
+    }).errorCode,
       "state_primary_corrupt", "corrupt diagnostic state is not overwritten");
     assert.equal(readUserLocalState(location), corrupt, "corrupt hook state remains intact");
   } finally {

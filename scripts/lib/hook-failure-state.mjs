@@ -14,9 +14,10 @@ const RUNTIMES = new Set(["claude", "codex", "unknown"]);
 
 /**
  * Record only stable, non-sensitive Hook failure metadata in the Harness
- * clone/worktree's user-local state. Prompt text, stderr, and paths are omitted.
+ * clone/worktree's user-local state. Product context is required to protect
+ * its tree. Prompt text, stderr, and paths are omitted.
  */
-export function appendHookFailure(cwd, runtime, eventName, errorCode) {
+export function appendHookFailure(cwd, runtime, eventName, errorCode, options = {}) {
   const normalizedRuntime = RUNTIMES.has(runtime) ? runtime : "unknown";
   const normalizedEventName = typeof eventName === "string" ? eventName.toLowerCase() : "";
   if (!TOKEN_PATTERN.test(normalizedEventName)
@@ -25,7 +26,13 @@ export function appendHookFailure(cwd, runtime, eventName, errorCode) {
   }
 
   try {
-    const location = resolveUserLocalStateLocation(cwd, FAILURE_FILE);
+    const productCwd = options?.productCwd;
+    if (typeof productCwd !== "string" || productCwd.trim() === "") {
+      throw new UserLocalStateError("product_context_unavailable", "A verified Product working directory is required.");
+    }
+    const location = resolveUserLocalStateLocation(cwd, FAILURE_FILE, {
+      protectedRepositoryCwds: [productCwd],
+    });
     return withPhysicalStateLock(location, () => {
       const text = readUserLocalState(location);
       const state = text === null ? { version: 1, failures: [] } : parseFailureState(text);

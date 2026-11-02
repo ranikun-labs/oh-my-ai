@@ -72,6 +72,17 @@ export function resolveUserLocalStateLocation(cwd, relativePath, options = {}) {
   const configuredRoot = options.stateRootOverride ?? (options.env ?? process.env)[STATE_ROOT_ENV];
   const allowExistingRootTightening = configuredRoot === undefined || configuredRoot === null || configuredRoot === "";
   assertStateRootOutsideRepository(rootPath, identity.repositoryRoot);
+  const protectedRepositoryCwds = options.protectedRepositoryCwds ?? [];
+  if (!Array.isArray(protectedRepositoryCwds)) {
+    throw new UserLocalStateError(
+      "state_path_unsafe",
+      "Protected repository roots must be provided as an array of working directories.",
+    );
+  }
+  for (const protectedCwd of protectedRepositoryCwds) {
+    const protectedIdentity = resolveGitIdentity(protectedCwd);
+    assertStateRootOutsideRepository(rootPath, protectedIdentity.repositoryRoot);
+  }
 
   const segments = validateRelativeSegments(relativePath);
   const namespacePath = path.join(
@@ -266,12 +277,24 @@ function resolveGitIdentity(cwd) {
 function runGitPath(cwd, args) {
   let result;
   try {
-    result = spawnSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    result = spawnSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
   } catch (error) {
     throw stateError("repository_identity_unavailable", error);
   }
-  if (result.error || result.status !== 0) {
+  if (result.error) {
     throw stateError("repository_identity_unavailable", result.error);
+  }
+  if (result.status !== 0) {
+    if (result.status === 128
+      && args[0] === "rev-parse"
+      && args[1] === "--show-toplevel"
+      && /^fatal: not a git repository(?:\b|$)/im.test(String(result.stderr || ""))) {
+      throw new UserLocalStateError(
+        "repository_context_missing",
+        "The working directory is not inside a Git repository.",
+      );
+    }
+    throw stateError("repository_identity_unavailable");
   }
   const value = String(result.stdout || "").trim();
   if (!value) {
