@@ -211,7 +211,7 @@ function normalizedScopeTokens(text) {
     .trim()
     .split(/\s+/u)
     .map(token => token.replace(/(?:은|는|이|가|을|를|에서|에|으로|로|와|과|도|만)$/u, ""))
-    .filter(Boolean);
+    .filter(token => Boolean(token) && !["그", "사실"].includes(token));
 }
 
 function normalizeScope(text) {
