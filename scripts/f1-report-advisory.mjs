@@ -112,6 +112,7 @@ function visibleMarkdownLines(markdown) {
       }
     }
 
+    const headingCandidate = !insideHtmlComment && /^##\s+/.test(line);
     let visible = "";
     let cursor = 0;
     const backtick = String.fromCharCode(96);
@@ -144,15 +145,8 @@ function visibleMarkdownLines(markdown) {
       cursor += 1;
     }
 
-    const fenceStart = parseFenceStart(visible);
-    if (fenceStart !== null) {
-      openFence = fenceStart;
-      insideHtmlComment = false;
-      continue;
-    }
-
     if (isIndentedCodeLine(visible)) continue;
-    visibleLines.push(visible);
+    visibleLines.push({ text: visible, headingCandidate });
   }
 
   return visibleLines;
@@ -166,8 +160,8 @@ function splitSections(markdown) {
     if (current !== null) sections.set(current, body.join("\n").trimEnd());
   };
 
-  for (const line of visibleMarkdownLines(markdown)) {
-    const heading = /^##\s+(.+?)\s*$/.exec(line);
+  for (const { text: line, headingCandidate } of visibleMarkdownLines(markdown)) {
+    const heading = headingCandidate ? /^##\s+(.+?)\s*$/.exec(line) : null;
     if (heading) {
       flush();
       current = heading[1];

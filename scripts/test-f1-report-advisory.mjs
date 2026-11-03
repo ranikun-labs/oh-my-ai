@@ -182,10 +182,30 @@ const escapedCommentReport = validReport.replace(
 );
 const escapedCommentResult = validateF1Report(escapedCommentReport);
 assert.equal(escapedCommentResult.valid, true, escapedCommentResult.errors.join("; "));
+const commentPrefixedHeading = [
+  "<!-- -->## 검증",
+  ...fakeStatusLines
+].join("\n");
+const commentPrefixedHeadingReport = validReport.replace(
+  /## 검증\n[\s\S]*?(?=## 아직 안 되는 것)/,
+  commentPrefixedHeading + "\n\n"
+);
+expectInvalid(
+  "comment removal cannot synthesize a verification heading",
+  commentPrefixedHeadingReport,
+  "missing required section: ## 검증"
+);
+const commentPrefixedFenceReport = validReport.replace(
+  "## 검증\n",
+  "## 검증\n<!-- -->" + fence + "text\n"
+);
+const commentPrefixedFenceResult = validateF1Report(commentPrefixedFenceReport);
+assert.equal(commentPrefixedFenceResult.valid, true, commentPrefixedFenceResult.errors.join("; "));
 
 
 
-console.log("f1 report advisory fixtures passed: 30/30");
+
+console.log("f1 report advisory fixtures passed: 32/32");
 
 
 // F1 routing metadata regression fixtures.
