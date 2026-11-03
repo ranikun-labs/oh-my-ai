@@ -145,6 +145,7 @@ function visibleMarkdownLines(markdown) {
       && !insideHtmlComment
       && /^##\s+/.test(line);
     let visible = "";
+    let statusVisible = "";
     let cursor = 0;
     const backtick = String.fromCharCode(96);
 
@@ -198,17 +199,18 @@ function visibleMarkdownLines(markdown) {
       }
 
       visible += line[cursor];
+      statusVisible += line[cursor];
       cursor += 1;
     }
 
     if (isIndentedCodeLine(visible)) continue;
-    visibleLines.push({ text: visible, headingCandidate });
+    visibleLines.push({ text: visible, statusText: statusVisible, headingCandidate });
   }
 
   return visibleLines;
 }
 
-function splitSections(markdown) {
+function splitSections(markdown, statusEvidenceOnly = false) {
   const sections = new Map();
   let current = null;
   const body = [];
@@ -216,14 +218,14 @@ function splitSections(markdown) {
     if (current !== null) sections.set(current, body.join("\n").trimEnd());
   };
 
-  for (const { text: line, headingCandidate } of visibleMarkdownLines(markdown)) {
+  for (const { text: line, statusText, headingCandidate } of visibleMarkdownLines(markdown)) {
     const heading = headingCandidate ? /^##\s+(.+?)\s*$/.exec(line) : null;
     if (heading) {
       flush();
       current = heading[1];
       body.length = 0;
     } else if (current !== null) {
-      body.push(line);
+      body.push(statusEvidenceOnly ? statusText : line);
     }
   }
   flush();
@@ -264,7 +266,8 @@ function validateF1Report(markdown) {
     }
   }
 
-  const statusLines = parseStatusLines(sections.get("검증") ?? "");
+  const statusSections = splitSections(markdown, true);
+  const statusLines = parseStatusLines(statusSections.get("검증") ?? "");
   for (const label of STATUS_LABELS) {
     const entries = statusLines.get(label) ?? [];
     if (entries.length !== 1) {
@@ -346,3 +349,4 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 }
 
 export { REQUIRED_SECTIONS, validateF1Report, splitSections };
+

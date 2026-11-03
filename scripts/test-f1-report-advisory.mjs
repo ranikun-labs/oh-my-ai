@@ -209,11 +209,55 @@ const multilineInlineCodeCommentReport = validReport.replace(
 const multilineInlineCodeCommentResult = validateF1Report(multilineInlineCodeCommentReport);
 assert.equal(multilineInlineCodeCommentResult.valid, true, multilineInlineCodeCommentResult.errors.join("; "));
 
+const backtick = String.fromCharCode(96);
+const fakeNativeInMultilineCode = validReport
+  .replace(/- Native Test:[^\n]*\n/, "")
+  .replace(
+    "## 검증\n",
+    "## 검증\nHere is " + backtick + "\n"
+      + "Native Test: PASS — node fake.mjs 1/1\n"
+      + backtick + " marker.\n"
+  );
+expectInvalid(
+  "Native Test inside multiline inline code is not evidence",
+  fakeNativeInMultilineCode,
+  "Native Test must have exactly one explicit status line"
+);
+const twoSpaceFakeNativeInMultilineCode = fakeNativeInMultilineCode.replace(
+  "Native Test: PASS — node fake.mjs 1/1",
+  "  Native Test: PASS — node fake.mjs 1/1"
+);
+expectInvalid(
+  "two-space-indented Native Test inside multiline inline code is not evidence",
+  twoSpaceFakeNativeInMultilineCode,
+  "Native Test must have exactly one explicit status line"
+);
+const fakePassingStatusLines = [
+  "Native Test: PASS — node fake.mjs 1/1",
+  "CI: PASS — https://example.invalid/fake-run",
+  "Independent Review: PASS — reviewer: fake, HEAD: deadbeef",
+  "Runtime E2E: PASS — runtime: fake, evidence deadbeef",
+  "Owner Gate: APPROVED — RPL-119 fake approval"
+];
+const allStatusesInMultilineCode = validReport
+  .replace(/- (?:Native Test|CI|Independent Review|Runtime E2E|Owner Gate):[^\n]*\n/g, "")
+  .replace(
+    "## 검증\n",
+    "## 검증\nHere is " + backtick + "\n"
+      + fakePassingStatusLines.join("\n") + "\n"
+      + backtick + " marker.\n"
+  );
+expectInvalid(
+  "all five statuses inside multiline inline code are not evidence",
+  allStatusesInMultilineCode,
+  "Native Test must have exactly one explicit status line"
+);
 
 
 
 
-console.log("f1 report advisory fixtures passed: 33/33");
+
+console.log("f1 report advisory fixtures passed: 36/36");
 
 
 // F1 routing metadata regression fixtures.
@@ -278,3 +322,4 @@ for (const input of negativeRoutingInputs) {
   assert.equal(reportPattern.test(input.toLowerCase().slice(0, 2000)), false, "F1 negative route matched: " + input);
 }
 console.log("f1 skill pattern fixtures passed: " + (positiveRoutingInputs.length + negativeRoutingInputs.length) + "/" + (positiveRoutingInputs.length + negativeRoutingInputs.length));
+
