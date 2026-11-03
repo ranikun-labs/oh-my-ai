@@ -59,6 +59,9 @@ export function preflightDispatch(manifest, capability) {
   if (manifest.authorization.status !== "approved") {
     return result("BLOCKED", "APPROVAL_BLOCKED", ["explicit scope approval absent"]);
   }
+  if (manifest.role === "coordinator" || manifest.role === "research") {
+    return result("BLOCKED", "CAPABILITY_BLOCKED", [manifest.role + " dispatch target/authority contract not approved"]);
+  }
   if (!record(capability) || capability.runtime_id !== manifest.runtime.id || !present(capability.verification_ref)) {
     return result("BLOCKED", "CAPABILITY_BLOCKED", ["runtime-specific capability evidence missing or mismatched"]);
   }

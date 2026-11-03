@@ -11,6 +11,23 @@ const reviewer = () => ({
   authorization:{status:"approved", scope:"read-only Delta review", evidence_ref:"owner-scope-1"},
   target:{base_sha:BASE, head_sha:HEAD}, reviewing_agent_id:"writer-51",
 });
+const unsupportedRole = role => {
+  const manifest = reviewer();
+  manifest.agent_id = role + "-51";
+  manifest.role = role;
+  delete manifest.target;
+  delete manifest.reviewing_agent_id;
+  return manifest;
+};
+const writer = () => {
+  const manifest = reviewer();
+  manifest.agent_id = "writer-51";
+  manifest.role = "writer";
+  manifest.permissions = "scoped-write";
+  delete manifest.reviewing_agent_id;
+  manifest.target = {repo:"example/example-repository", branch:"feature/approved-scope", primary_jira:"EXAMPLE-123"};
+  return manifest;
+};
 const capability = () => ({
   runtime_id:"synthetic-runtime", verification_ref:"runtime-observation-1",
   model_selection:{supported:true,evidence_ref:"model-available"},
@@ -29,6 +46,14 @@ const observation = () => ({
 let count=0;
 function run(id, mutate, evalFn, expected) {
   const m=reviewer(), c=capability(), o=observation();
+  if (mutate) mutate(m,c,o);
+  const actual=evalFn(m,c,o);
+  assert.equal(actual.code,expected,id+": "+JSON.stringify(actual));
+  console.log("PASS "+id+": "+actual.code);
+  count++;
+}
+function runFrom(id, makeManifest, mutate, evalFn, expected) {
+  const m=makeManifest(), c=capability(), o=observation();
   if (mutate) mutate(m,c,o);
   const actual=evalFn(m,c,o);
   assert.equal(actual.code,expected,id+": "+JSON.stringify(actual));
@@ -68,4 +93,15 @@ run("FX-AGM-041-caller-only-reviewed-target",(m,c,o)=>{delete o.attestation.revi
 run("FX-AGM-042-attested-target-mismatch",(m,c,o)=>{o.attestation.reviewed.head_sha="c".repeat(40);o.reviewed.head_sha=HEAD},post,"REVIEW_UNVERIFIED");
 run("FX-AGM-043-normalized-unknown-requested-model",m=>{m.requested.model="  unknown  "},syntax,"F4_PROMPT_INVALID");
 run("FX-AGM-044-normalized-unknown-effective-model",(m,c,o)=>{o.attestation.effective.model=" UnKnown "},post,"ROUTING_UNVERIFIED");
+runFrom("FX-AGM-050-coordinator-targetless-blocked",()=>unsupportedRole("coordinator"),null,preflight,"CAPABILITY_BLOCKED");
+runFrom("FX-AGM-051-research-targetless-blocked",()=>unsupportedRole("research"),null,preflight,"CAPABILITY_BLOCKED");
+runFrom("FX-AGM-052-coordinator-empty-target-blocked",()=>unsupportedRole("coordinator"),m=>{m.target={}},preflight,"CAPABILITY_BLOCKED");
+runFrom("FX-AGM-053-research-empty-target-blocked",()=>unsupportedRole("research"),m=>{m.target={}},preflight,"CAPABILITY_BLOCKED");
+runFrom("FX-AGM-054-coordinator-arbitrary-target-blocked",()=>unsupportedRole("coordinator"),m=>{m.target={repo:"example/example-repository",branch:"feature/example",primary_jira:"EXAMPLE-123"}},preflight,"CAPABILITY_BLOCKED");
+runFrom("FX-AGM-055-research-arbitrary-target-blocked",()=>unsupportedRole("research"),m=>{m.target={repo:"example/example-repository",branch:"feature/example",primary_jira:"EXAMPLE-123"}},preflight,"CAPABILITY_BLOCKED");
+runFrom("FX-AGM-056-coordinator-missing-approval",()=>unsupportedRole("coordinator"),m=>{delete m.authorization.status},preflight,"APPROVAL_BLOCKED");
+runFrom("FX-AGM-057-writer-primary-jira-required",writer,m=>{delete m.target.primary_jira},syntax,"F4_PROMPT_INVALID");
+runFrom("FX-AGM-058-writer-target-contract-valid",writer,null,preflight,"READY_TO_DISPATCH");
+run("FX-AGM-059-reasoning-xhigh-not-aliased",m=>{m.requested.reasoning="xhigh"},syntax,"F4_PROMPT_INVALID");
+run("FX-AGM-060-reasoning-ultra-not-aliased",m=>{m.requested.reasoning="ultra"},syntax,"F4_PROMPT_INVALID");
 console.log("FX-AGM: "+count+"/"+count+" synthetic fixtures passed");
