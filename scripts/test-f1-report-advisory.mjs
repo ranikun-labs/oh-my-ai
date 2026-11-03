@@ -136,8 +136,43 @@ const hiddenStatuses = validReport.replace(
 );
 const hiddenStatusResult = validateF1Report(hiddenStatuses);
 assert.equal(hiddenStatusResult.valid, true, hiddenStatusResult.errors.join("; "));
+const indentedHiddenHeadingReport = validReport.replace(
+  /## 검증\n[\s\S]*?(?=## 아직 안 되는 것)/,
+  ["    ## 검증", ...fakeStatusLines.map((line) => "    " + line), ""].join("\n")
+);
+expectInvalid(
+  "indented verification heading and statuses are hidden",
+  indentedHiddenHeadingReport,
+  "missing required section: ## 검증"
+);
+const commentHiddenVerification = [
+  "<!--",
+  "## 검증",
+  ...fakeStatusLines,
+  "-->"
+].join("\n");
+const commentHiddenHeadingReport = validReport.replace(
+  /## 검증\n[\s\S]*?(?=## 아직 안 되는 것)/,
+  commentHiddenVerification + "\n\n"
+);
+expectInvalid(
+  "verification heading and five fake statuses inside an HTML comment are hidden",
+  commentHiddenHeadingReport,
+  "missing required section: ## 검증"
+);
+const indentedCommentOpenerReport = validReport.replace("## 검증\n", "## 검증\n    <!--\n");
+const indentedCommentOpenerResult = validateF1Report(indentedCommentOpenerReport);
+assert.equal(indentedCommentOpenerResult.valid, true, indentedCommentOpenerResult.errors.join("; "));
+const fence = String.fromCharCode(96).repeat(3);
+const fencedCommentOpenerReport = validReport.replace(
+  "## 검증\n",
+  "## 검증\n" + fence + "text\n<!--\nfake status text\n" + fence + "\n"
+);
+const fencedCommentOpenerResult = validateF1Report(fencedCommentOpenerReport);
+assert.equal(fencedCommentOpenerResult.valid, true, fencedCommentOpenerResult.errors.join("; "));
 
-console.log("f1 report advisory fixtures passed: 24/24");
+
+console.log("f1 report advisory fixtures passed: 28/28");
 
 
 // F1 routing metadata regression fixtures.

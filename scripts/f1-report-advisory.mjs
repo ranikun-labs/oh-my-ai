@@ -20,27 +20,114 @@ const EVIDENCE_STATUSES = new Set(["PASS", "FAIL", "NOT_RUN", "BLOCKED", "UNKNOW
 const OWNER_STATUSES = new Set(["APPROVED", "PENDING", "BLOCKED", "UNKNOWN", "NOT_REQUIRED"]);
 const STATUS_LABELS = ["Native Test", "CI", "Independent Review", "Runtime E2E", "Owner Gate"];
 
+function isIndentedCodeLine(line) {
+  let columns = 0;
+  for (const character of line) {
+    if (character === " ") {
+      columns += 1;
+    } else if (character === "\t") {
+      columns += 4 - (columns % 4);
+    } else {
+      break;
+    }
+  }
+  return columns >= 4;
+}
+
+function parseFenceStart(line) {
+  let index = 0;
+  while (index < 3 && line[index] === " ") index += 1;
+  const character = line[index];
+  if (character !== String.fromCharCode(96) && character !== "~") return null;
+
+  let end = index;
+  while (line[end] === character) end += 1;
+  if (end - index < 3) return null;
+  return { character, length: end - index };
+}
+
+function isFenceClosing(line, openFence) {
+  let index = 0;
+  while (index < 3 && line[index] === " ") index += 1;
+  if (line[index] !== openFence.character) return false;
+
+  let end = index;
+  while (line[end] === openFence.character) end += 1;
+  if (end - index < openFence.length) return false;
+
+  for (; end < line.length; end += 1) {
+    if (line[end] !== " " && line[end] !== "\t") return false;
+  }
+  return true;
+}
+
+// One document-level scan keeps heading and status visibility in the same Markdown context.
+function visibleMarkdownLines(markdown) {
+  const visibleLines = [];
+  let openFence = null;
+  let insideHtmlComment = false;
+
+  for (const line of String(markdown).split(/\r?\n/)) {
+    if (openFence !== null) {
+      if (isFenceClosing(line, openFence)) openFence = null;
+      continue;
+    }
+
+    if (!insideHtmlComment && isIndentedCodeLine(line)) continue;
+
+    if (!insideHtmlComment) {
+      const fenceStart = parseFenceStart(line);
+      if (fenceStart !== null) {
+        openFence = fenceStart;
+        continue;
+      }
+    }
+
+    let visible = "";
+    let cursor = 0;
+    while (cursor < line.length) {
+      if (insideHtmlComment) {
+        const close = line.indexOf("-->", cursor);
+        if (close === -1) break;
+        insideHtmlComment = false;
+        cursor = close + 3;
+        continue;
+      }
+
+      const open = line.indexOf("<!--", cursor);
+      if (open === -1) {
+        visible += line.slice(cursor);
+        break;
+      }
+
+      visible += line.slice(cursor, open);
+      insideHtmlComment = true;
+      cursor = open + 4;
+    }
+
+    const fenceStart = parseFenceStart(visible);
+    if (fenceStart !== null) {
+      openFence = fenceStart;
+      insideHtmlComment = false;
+      continue;
+    }
+
+    if (isIndentedCodeLine(visible)) continue;
+    visibleLines.push(visible);
+  }
+
+  return visibleLines;
+}
+
 function splitSections(markdown) {
   const sections = new Map();
   let current = null;
-  let openFence = null;
   const body = [];
   const flush = () => {
     if (current !== null) sections.set(current, body.join("\n").trimEnd());
   };
 
-  for (const line of String(markdown).split(/\r?\n/)) {
-    if (openFence) {
-      const closingFence = new RegExp(`^ {0,3}${openFence.char}{${openFence.length},}[ \\t]*$`);
-      if (closingFence.test(line)) openFence = null;
-      continue;
-    }
-    const fenceStart = /^ {0,3}(`{3,}|~{3,})/.exec(line);
-    if (fenceStart) {
-      openFence = { char: fenceStart[1][0], length: fenceStart[1].length };
-      continue;
-    }
-
+  for (const line of visibleMarkdownLines(markdown)) {
     const heading = /^##\s+(.+?)\s*$/.exec(line);
     if (heading) {
       flush();
@@ -63,55 +150,10 @@ function hasUsableContent(body) {
   });
 }
 
-function statusEvidenceLines(markdown) {
-  let insideHtmlComment = false;
-  const lines = [];
-
-  for (const line of String(markdown).split(/\r?\n/)) {
-    let visible = "";
-    let cursor = 0;
-
-    while (cursor < line.length) {
-      if (insideHtmlComment) {
-        const close = line.indexOf("-->", cursor);
-        if (close === -1) break;
-        insideHtmlComment = false;
-        cursor = close + 3;
-        continue;
-      }
-
-      const open = line.indexOf("<!--", cursor);
-      if (open === -1) {
-        visible += line.slice(cursor);
-        break;
-      }
-
-      visible += line.slice(cursor, open);
-      insideHtmlComment = true;
-      cursor = open + 4;
-    }
-
-    let indentation = 0;
-    for (const character of visible) {
-      if (character === " ") {
-        indentation += 1;
-      } else if (character === "\t") {
-        indentation += 4 - (indentation % 4);
-      } else {
-        break;
-      }
-    }
-
-    if (indentation < 4) lines.push(visible);
-  }
-
-  return lines;
-}
-
 function parseStatusLines(markdown) {
   const found = new Map();
   const re = /^[ \t]*(?:[-*][ \t]*)?(Native Test|CI|Independent Review|Runtime E2E|Owner Gate)[ \t]*:[ \t]*([A-Z_]+)(?:[ \t]*[—-][ \t]*([^\r\n]*))?[ \t]*$/gim;
-  for (const match of statusEvidenceLines(markdown).join("\n").matchAll(re)) {
+  for (const match of String(markdown).matchAll(re)) {
     const label = match[1];
     const status = match[2].toUpperCase();
     const items = found.get(label) ?? [];
