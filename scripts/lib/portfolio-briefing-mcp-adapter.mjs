@@ -7,7 +7,7 @@ const DEFAULT_JIRA_BASE_URL = "https://ranikunlabs.atlassian.net";
  * Normalize read-only host MCP connector results into the F6 snapshot contract.
  * This adapter does not invoke tools, authenticate, or perform network/Writer work;
  * the host must call read-only connectors and pass their CallToolResult objects.
- * GitHub entries may carry a commit-scoped workflow_result and workflow_for_sha.
+ * GitHub CI and review evidence is accepted only when its commit identity matches the PR head.
  * Each result entry must carry checked_at from its connector-call observation;
  * captured_at is never substituted because cached results could look fresh.
  */
@@ -95,14 +95,9 @@ function normalizeGithubResults(entries) {
       || null;
     const identityMatches = returnedNumber !== null && (!requestedNumber || requestedNumber === returnedNumber);
     const identityAvailable = !result?.isError && identityMatches && url !== null && repository !== null;
-    const reviews = entry?.review_result?.structuredContent?.reviews;
     const headSha = nonEmptyString(info.head_sha);
     const ciState = summarizeCiEvidence(entry, headSha);
-    const reviewState = entry?.review_result?.isError
-      ? "UNKNOWN"
-      : Array.isArray(reviews) && reviews.length > 0
-        ? [...new Set(reviews.map(review => nonEmptyString(review?.state)).filter(Boolean))].sort().join(",") || "UNKNOWN"
-        : "NOT_OBSERVED";
+    const reviewState = summarizeReviewEvidence(entry, headSha);
     const titleKeys = [...new Set(extractIssueKeys(nonEmptyString(info.title) || ""))];
     const primaryKey = extractPrimaryJiraKey(nonEmptyString(info.body) || "");
     const jiraKeys = primaryKey ? [primaryKey] : titleKeys.length === 1 ? titleKeys : [];
@@ -190,16 +185,39 @@ function summarizeCheckStates(statuses) {
 }
 
 function summarizeCiEvidence(entry, headSha) {
-  if (entry?.status_result?.isError || entry?.workflow_result?.isError) return "UNKNOWN";
+  if (!headSha || entry?.status_result?.isError || entry?.workflow_result?.isError) return "UNKNOWN";
 
   const states = [];
-  const statuses = entry?.status_result?.structuredContent?.statuses;
-  if (Array.isArray(statuses) && statuses.length > 0) states.push(summarizeCheckStates(statuses));
+  const statusResult = entry?.status_result;
+  if (statusResult != null) {
+    const statusResponse = statusResult?.structuredContent;
+    const statuses = statusResponse?.statuses;
+    if (!Array.isArray(statuses)) return "UNKNOWN";
+    if (statuses.length > 0) {
+      const statusForSha = nonEmptyString(entry?.status_for_sha);
+      const responseSha = nonEmptyString(statusResponse?.sha);
+      const everyStatusHasHeadSha = statuses.every(status => nonEmptyString(status?.sha) === headSha);
+      if (statusForSha !== headSha || (responseSha && responseSha !== headSha)) return "UNKNOWN";
+      if (!responseSha && !everyStatusHasHeadSha) return "UNKNOWN";
+      if (statuses.some(status => {
+        const statusSha = nonEmptyString(status?.sha);
+        return !positiveInteger(status?.id) || (statusSha !== null && statusSha !== headSha);
+      })) return "UNKNOWN";
+      states.push(summarizeCheckStates(statuses));
+    }
+  }
 
-  const runs = entry?.workflow_result?.structuredContent?.workflow_runs;
-  if (Array.isArray(runs) && runs.length > 0) {
-    if (!headSha || nonEmptyString(entry?.workflow_for_sha) !== headSha) return "UNKNOWN";
-    states.push(summarizeWorkflowRuns(runs));
+  const workflowResult = entry?.workflow_result;
+  if (workflowResult != null) {
+    const runs = workflowResult?.structuredContent?.workflow_runs;
+    if (!Array.isArray(runs)) return "UNKNOWN";
+    if (runs.length > 0) {
+      if (nonEmptyString(entry?.workflow_for_sha) !== headSha) return "UNKNOWN";
+      if (runs.some(run => positiveInteger(run?.id) === null || nonEmptyString(run?.head_sha) !== headSha)) {
+        return "UNKNOWN";
+      }
+      states.push(summarizeWorkflowRuns(runs));
+    }
   }
 
   if (states.length === 0) return "UNKNOWN";
@@ -207,6 +225,20 @@ function summarizeCiEvidence(entry, headSha) {
   if (states.includes("UNKNOWN")) return "UNKNOWN";
   if (states.includes("PENDING_OR_MIXED")) return "PENDING_OR_MIXED";
   return "SUCCESS";
+}
+
+function summarizeReviewEvidence(entry, headSha) {
+  const result = entry?.review_result;
+  if (result?.isError) return "UNKNOWN";
+
+  const reviews = result?.structuredContent?.reviews;
+  if (!Array.isArray(reviews)) return "UNKNOWN";
+  if (reviews.length === 0) return "NOT_OBSERVED";
+  if (!headSha || reviews.some(review => nonEmptyString(review?.commit_id) !== headSha)) return "UNKNOWN";
+
+  const states = reviews.map(review => nonEmptyString(review?.state));
+  if (states.some(state => state === null)) return "UNKNOWN";
+  return [...new Set(states)].sort().join(",");
 }
 
 function summarizeWorkflowRuns(runs) {
