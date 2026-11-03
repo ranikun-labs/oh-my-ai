@@ -89,8 +89,55 @@ expectInvalid("owner approval unsupported", validReport.replace("Owner Gate: PEN
 expectInvalid("approval without reference", validReport.replace("Owner Gate: PENDING — Source Merge 승인은 별도다.", "Owner Gate: APPROVED — owner approved"), "linked issue, comment, or approval URL");
 expectInvalid("evidence lacks identifier", validReport.replace("- Base: 6d2a93893c0c7a40e1d0b99b691a8f950aa17969", "- Base: unknown"), "must include a URL or a source SHA");
 expectInvalid("status outside verification section", validReport.replace(/- Native Test:.*\n/, "").replace("- Script: scripts/f1-report-advisory.mjs", "- Script: scripts/f1-report-advisory.mjs\n- Native Test: PASS — node scripts/test-f1-report-advisory.mjs"), "Native Test must have exactly one");
+const replaceNativeStatus = (replacement) =>
+  validReport.replace(/- Native Test:[^\n]*/, replacement);
+expectInvalid(
+  "four-space indented status is not evidence",
+  replaceNativeStatus("    - Native Test: PASS — node fake-test.mjs 1/1"),
+  "Native Test must have exactly one explicit status line"
+);
+expectInvalid(
+  "tab-indented status is not evidence",
+  replaceNativeStatus("\t- Native Test: PASS — node fake-test.mjs 1/1"),
+  "Native Test must have exactly one explicit status line"
+);
+expectInvalid(
+  "leading blank lines do not expose indented status",
+  replaceNativeStatus("\n\n    - Native Test: PASS — node fake-test.mjs 1/1"),
+  "Native Test must have exactly one explicit status line"
+);
+expectInvalid(
+  "single-line HTML comment is not evidence",
+  replaceNativeStatus("<!-- Native Test: PASS — node fake-test.mjs 1/1 -->"),
+  "Native Test must have exactly one explicit status line"
+);
+expectInvalid(
+  "multi-line HTML comment is not evidence",
+  replaceNativeStatus(["<!--", "- Native Test: PASS — node fake-test.mjs 1/1", "-->"].join("\n")),
+  "Native Test must have exactly one explicit status line"
+);
+expectInvalid(
+  "fenced status inside verification section is not evidence",
+  replaceNativeStatus(["```text", "- Native Test: PASS — node fake-test.mjs 1/1", "```"].join("\n")),
+  "Native Test must have exactly one explicit status line"
+);
+const fakeStatusLines = [
+  "- Native Test: FAIL — node fake-test.mjs 0/1",
+  "- CI: FAIL — https://example.invalid/fake-run",
+  "- Independent Review: FAIL — reviewer: fake, HEAD: deadbeef",
+  "- Runtime E2E: FAIL — runtime: fake, evidence deadbeef",
+  "- Owner Gate: BLOCKED — fake"
+];
+const hiddenStatuses = validReport.replace(
+  "## 검증\n",
+  "## 검증\n<!--\n" + fakeStatusLines.join("\n") + "\n-->\n"
+    + fakeStatusLines.map((line) => "    " + line).join("\n") + "\n"
+    + fakeStatusLines.map((line) => "\t" + line).join("\n") + "\n"
+);
+const hiddenStatusResult = validateF1Report(hiddenStatuses);
+assert.equal(hiddenStatusResult.valid, true, hiddenStatusResult.errors.join("; "));
 
-console.log("f1 report advisory fixtures passed: 17/17");
+console.log("f1 report advisory fixtures passed: 24/24");
 
 
 // F1 routing metadata regression fixtures.

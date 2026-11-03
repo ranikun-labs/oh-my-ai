@@ -26,7 +26,7 @@ function splitSections(markdown) {
   let openFence = null;
   const body = [];
   const flush = () => {
-    if (current !== null) sections.set(current, body.join("\n").trim());
+    if (current !== null) sections.set(current, body.join("\n").trimEnd());
   };
 
   for (const line of String(markdown).split(/\r?\n/)) {
@@ -63,10 +63,55 @@ function hasUsableContent(body) {
   });
 }
 
+function statusEvidenceLines(markdown) {
+  let insideHtmlComment = false;
+  const lines = [];
+
+  for (const line of String(markdown).split(/\r?\n/)) {
+    let visible = "";
+    let cursor = 0;
+
+    while (cursor < line.length) {
+      if (insideHtmlComment) {
+        const close = line.indexOf("-->", cursor);
+        if (close === -1) break;
+        insideHtmlComment = false;
+        cursor = close + 3;
+        continue;
+      }
+
+      const open = line.indexOf("<!--", cursor);
+      if (open === -1) {
+        visible += line.slice(cursor);
+        break;
+      }
+
+      visible += line.slice(cursor, open);
+      insideHtmlComment = true;
+      cursor = open + 4;
+    }
+
+    let indentation = 0;
+    for (const character of visible) {
+      if (character === " ") {
+        indentation += 1;
+      } else if (character === "\t") {
+        indentation += 4 - (indentation % 4);
+      } else {
+        break;
+      }
+    }
+
+    if (indentation < 4) lines.push(visible);
+  }
+
+  return lines;
+}
+
 function parseStatusLines(markdown) {
   const found = new Map();
   const re = /^[ \t]*(?:[-*][ \t]*)?(Native Test|CI|Independent Review|Runtime E2E|Owner Gate)[ \t]*:[ \t]*([A-Z_]+)(?:[ \t]*[—-][ \t]*([^\r\n]*))?[ \t]*$/gim;
-  for (const match of String(markdown).matchAll(re)) {
+  for (const match of statusEvidenceLines(markdown).join("\n").matchAll(re)) {
     const label = match[1];
     const status = match[2].toUpperCase();
     const items = found.get(label) ?? [];
