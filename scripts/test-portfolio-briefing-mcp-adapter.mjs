@@ -484,6 +484,14 @@ const statusEvidenceCases = [
     expected: "UNKNOWN",
   },
   {
+    name: "rejects a partial status row without state even when another row succeeds",
+    entry: statusEvidence(evidenceHead, statusResult({
+      responseSha: evidenceHead,
+      statuses: [{ id: 10, state: "success" }, { id: 15 }],
+    })),
+    expected: "UNKNOWN",
+  },
+  {
     name: "keeps errored status reads UNKNOWN even when the payload says success",
     entry: statusEvidence(evidenceHead, statusResult({ responseSha: evidenceHead, statuses: [{ id: 11, state: "success" }], isError: true })),
     expected: "UNKNOWN",

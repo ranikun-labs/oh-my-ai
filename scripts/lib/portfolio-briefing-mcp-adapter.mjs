@@ -201,7 +201,9 @@ function summarizeCiEvidence(entry, headSha) {
       if (!responseSha && !everyStatusHasHeadSha) return "UNKNOWN";
       if (statuses.some(status => {
         const statusSha = nonEmptyString(status?.sha);
-        return !positiveInteger(status?.id) || (statusSha !== null && statusSha !== headSha);
+        return !positiveInteger(status?.id)
+          || !nonEmptyString(status?.state)
+          || (statusSha !== null && statusSha !== headSha);
       })) return "UNKNOWN";
       states.push(summarizeCheckStates(statuses));
     }
