@@ -207,11 +207,14 @@ function extractScopeReferences(text) {
 function normalizedScopeTokens(text) {
   return text.toLowerCase()
     .replace(/\b(?:rpl-\d+|pr\s*#?\d+)\b/giu, " ")
+    // These words identify a correction or refer back to an existing scope;
+    // they must not make a same-target cancellation look like a new target.
+    .replace(/(?:^|\s)(?:그|해당|사실|실은)(?=\s|$)/gu, " ")
     .replace(/[^\p{L}\p{N}#-]+/gu, " ")
     .trim()
     .split(/\s+/u)
     .map(token => token.replace(/(?:은|는|이|가|을|를|에서|에|으로|로|와|과|도|만)$/u, ""))
-    .filter(token => Boolean(token) && !["그", "사실"].includes(token));
+    .filter(Boolean);
 }
 
 function normalizeScope(text) {
