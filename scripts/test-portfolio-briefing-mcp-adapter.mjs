@@ -55,7 +55,8 @@ function githubResult(number, overrides = {}) {
         ...overrides,
       },
     },
-    status_result: { structuredContent: { statuses: [] } },
+    status_for_sha: `head-${number}`,
+    status_result: { structuredContent: { sha: `head-${number}`, statuses: [] } },
     review_result: { structuredContent: { reviews: [] } },
   };
 }
@@ -507,6 +508,17 @@ const statusEvidenceCases = [
     expected: "FAILURE",
   },
   {
+    name: "keeps a current-head failure UNKNOWN when another status state is unsupported",
+    entry: statusEvidence(evidenceHead, statusResult({
+      responseSha: evidenceHead,
+      statuses: [
+        { id: 15, sha: evidenceHead, state: "failure" },
+        { id: 16, sha: evidenceHead, state: "scheduled" },
+      ],
+    })),
+    expected: "UNKNOWN",
+  },
+  {
     name: "reports a current-head pending status after verifying its ID and SHA",
     entry: statusEvidence(evidenceHead, statusResult({ responseSha: evidenceHead, statuses: [{ id: 14, sha: evidenceHead, state: "pending" }] })),
     expected: "PENDING_OR_MIXED",
@@ -588,6 +600,82 @@ const workflowEvidenceCases = [
 ];
 
 for (const { name, entry, expected } of workflowEvidenceCases) {
+  test(name, () => {
+    assert.equal(portfolioPullRequestFor(entry).ci_state, expected);
+  });
+}
+
+const combinedCiEvidenceCases = [
+  {
+    name: "keeps a failed Actions run UNKNOWN when another current-head run is partial",
+    entry: {
+      ...githubResult(90),
+      workflow_for_sha: evidenceHead,
+      workflow_result: { structuredContent: { workflow_runs: [
+        { id: 31, head_sha: evidenceHead, status: "completed", conclusion: "failure" },
+        { id: 32, head_sha: evidenceHead, status: "completed" },
+      ] } },
+    },
+    expected: "UNKNOWN",
+  },
+  {
+    name: "keeps a valid status failure UNKNOWN when the Actions result is partial",
+    entry: {
+      ...statusEvidence(evidenceHead, statusResult({ responseSha: evidenceHead, statuses: [{ id: 33, sha: evidenceHead, state: "failure" }] })),
+      workflow_for_sha: evidenceHead,
+      workflow_result: { structuredContent: { workflow_runs: [
+        { id: 34, head_sha: evidenceHead, status: "completed" },
+      ] } },
+    },
+    expected: "UNKNOWN",
+  },
+  {
+    name: "rejects stale empty status evidence alongside current successful Actions",
+    entry: {
+      ...githubResult(90),
+      status_for_sha: "old-head",
+      status_result: { structuredContent: { sha: "old-head", statuses: [] } },
+      workflow_for_sha: evidenceHead,
+      workflow_result: { structuredContent: { workflow_runs: [
+        { id: 35, head_sha: evidenceHead, status: "completed", conclusion: "success" },
+      ] } },
+    },
+    expected: "UNKNOWN",
+  },
+  {
+    name: "accepts current empty status evidence alongside current successful Actions",
+    entry: {
+      ...githubResult(90),
+      status_for_sha: evidenceHead,
+      status_result: { structuredContent: { sha: evidenceHead, statuses: [] } },
+      workflow_for_sha: evidenceHead,
+      workflow_result: { structuredContent: { workflow_runs: [
+        { id: 36, head_sha: evidenceHead, status: "completed", conclusion: "success" },
+      ] } },
+    },
+    expected: "SUCCESS",
+  },
+  {
+    name: "rejects stale empty Actions evidence alongside current successful statuses",
+    entry: {
+      ...statusEvidence(evidenceHead, statusResult({ responseSha: evidenceHead, statuses: [{ id: 37, sha: evidenceHead, state: "success" }] })),
+      workflow_for_sha: "old-head",
+      workflow_result: { structuredContent: { workflow_runs: [] } },
+    },
+    expected: "UNKNOWN",
+  },
+  {
+    name: "accepts current empty Actions evidence alongside current successful statuses",
+    entry: {
+      ...statusEvidence(evidenceHead, statusResult({ responseSha: evidenceHead, statuses: [{ id: 38, sha: evidenceHead, state: "success" }] })),
+      workflow_for_sha: evidenceHead,
+      workflow_result: { structuredContent: { workflow_runs: [] } },
+    },
+    expected: "SUCCESS",
+  },
+];
+
+for (const { name, entry, expected } of combinedCiEvidenceCases) {
   test(name, () => {
     assert.equal(portfolioPullRequestFor(entry).ci_state, expected);
   });

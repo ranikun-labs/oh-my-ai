@@ -177,8 +177,9 @@ function normalizeConfluenceResults(entries) {
 }
 
 function summarizeCheckStates(statuses) {
-  const states = statuses.map(status => nonEmptyString(status?.state)?.toLowerCase()).filter(Boolean);
-  if (states.length === 0) return "UNKNOWN";
+  const states = statuses.map(status => nonEmptyString(status?.state)?.toLowerCase());
+  if (states.length === 0 || states.some(state => state === null)) return "UNKNOWN";
+  if (states.some(state => !["success", "failure", "error", "pending"].includes(state))) return "UNKNOWN";
   if (states.every(state => state === "success")) return "SUCCESS";
   if (states.some(state => state === "failure" || state === "error")) return "FAILURE";
   return "PENDING_OR_MIXED";
@@ -193,11 +194,12 @@ function summarizeCiEvidence(entry, headSha) {
     const statusResponse = statusResult?.structuredContent;
     const statuses = statusResponse?.statuses;
     if (!Array.isArray(statuses)) return "UNKNOWN";
+    const statusForSha = nonEmptyString(entry?.status_for_sha);
+    const responseSha = nonEmptyString(statusResponse?.sha);
+    if (statusForSha !== headSha) return "UNKNOWN";
     if (statuses.length > 0) {
-      const statusForSha = nonEmptyString(entry?.status_for_sha);
-      const responseSha = nonEmptyString(statusResponse?.sha);
       const everyStatusHasHeadSha = statuses.every(status => nonEmptyString(status?.sha) === headSha);
-      if (statusForSha !== headSha || (responseSha && responseSha !== headSha)) return "UNKNOWN";
+      if (responseSha && responseSha !== headSha) return "UNKNOWN";
       if (!responseSha && !everyStatusHasHeadSha) return "UNKNOWN";
       if (statuses.some(status => {
         const statusSha = nonEmptyString(status?.sha);
@@ -206,6 +208,8 @@ function summarizeCiEvidence(entry, headSha) {
           || (statusSha !== null && statusSha !== headSha);
       })) return "UNKNOWN";
       states.push(summarizeCheckStates(statuses));
+    } else if (responseSha !== headSha) {
+      return "UNKNOWN";
     }
   }
 
@@ -213,8 +217,8 @@ function summarizeCiEvidence(entry, headSha) {
   if (workflowResult != null) {
     const runs = workflowResult?.structuredContent?.workflow_runs;
     if (!Array.isArray(runs)) return "UNKNOWN";
+    if (nonEmptyString(entry?.workflow_for_sha) !== headSha) return "UNKNOWN";
     if (runs.length > 0) {
-      if (nonEmptyString(entry?.workflow_for_sha) !== headSha) return "UNKNOWN";
       if (runs.some(run => positiveInteger(run?.id) === null || nonEmptyString(run?.head_sha) !== headSha)) {
         return "UNKNOWN";
       }
@@ -223,8 +227,8 @@ function summarizeCiEvidence(entry, headSha) {
   }
 
   if (states.length === 0) return "UNKNOWN";
-  if (states.includes("FAILURE")) return "FAILURE";
   if (states.includes("UNKNOWN")) return "UNKNOWN";
+  if (states.includes("FAILURE")) return "FAILURE";
   if (states.includes("PENDING_OR_MIXED")) return "PENDING_OR_MIXED";
   return "SUCCESS";
 }
@@ -257,8 +261,8 @@ function summarizeWorkflowRuns(runs) {
     if (conclusion === "cancelled") return "PENDING_OR_MIXED";
     return "UNKNOWN";
   });
-  if (states.includes("FAILURE")) return "FAILURE";
   if (states.includes("UNKNOWN")) return "UNKNOWN";
+  if (states.includes("FAILURE")) return "FAILURE";
   if (states.includes("PENDING_OR_MIXED")) return "PENDING_OR_MIXED";
   return states.length > 0 && states.every(state => state === "SUCCESS") ? "SUCCESS" : "UNKNOWN";
 }
