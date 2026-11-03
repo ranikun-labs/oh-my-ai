@@ -78,33 +78,62 @@ function backtickRunLength(text, start) {
   return end - start;
 }
 
-function findClosingBacktickRun(text, start, runLength) {
-  const backtick = String.fromCharCode(96);
-  let cursor = start;
-  while (cursor < text.length) {
-    const next = text.indexOf(backtick, cursor);
-    if (next === -1) return -1;
-    const length = backtickRunLength(text, next);
-    if (length === runLength) return next + length;
-    cursor = next + length;
+function isAtxHeadingLine(line) {
+  let index = 0;
+  while (index < 3 && line[index] === " ") index += 1;
+
+  let level = 0;
+  while (level < 6 && line[index] === "#") {
+    index += 1;
+    level += 1;
   }
-  return -1;
+
+  return level > 0 && (index === line.length || line[index] === " " || line[index] === "\t");
+}
+
+function findClosingBacktickRun(lines, startLine, startColumn, runLength) {
+  const backtick = String.fromCharCode(96);
+
+  for (let lineIndex = startLine; lineIndex < lines.length; lineIndex += 1) {
+    const line = lines[lineIndex];
+    if (lineIndex > startLine
+      && (line.trim().length === 0
+        || isIndentedCodeLine(line)
+        || parseFenceStart(line) !== null
+        || isAtxHeadingLine(line))) {
+      return null;
+    }
+
+    let cursor = lineIndex === startLine ? startColumn : 0;
+    while (cursor < line.length) {
+      const next = line.indexOf(backtick, cursor);
+      if (next === -1) break;
+      const length = backtickRunLength(line, next);
+      if (length === runLength) return { lineIndex, end: next + length };
+      cursor = next + length;
+    }
+  }
+
+  return null;
 }
 
 function visibleMarkdownLines(markdown) {
+  const sourceLines = String(markdown).split(/\r?\n/);
   const visibleLines = [];
   let openFence = null;
   let insideHtmlComment = false;
+  let inlineCodeDelimiterLength = 0;
 
-  for (const line of String(markdown).split(/\r?\n/)) {
+  for (let lineIndex = 0; lineIndex < sourceLines.length; lineIndex += 1) {
+    const line = sourceLines[lineIndex];
     if (openFence !== null) {
       if (isFenceClosing(line, openFence)) openFence = null;
       continue;
     }
 
-    if (!insideHtmlComment && isIndentedCodeLine(line)) continue;
+    if (inlineCodeDelimiterLength === 0 && !insideHtmlComment && isIndentedCodeLine(line)) continue;
 
-    if (!insideHtmlComment) {
+    if (inlineCodeDelimiterLength === 0 && !insideHtmlComment) {
       const fenceStart = parseFenceStart(line);
       if (fenceStart !== null) {
         openFence = fenceStart;
@@ -112,10 +141,13 @@ function visibleMarkdownLines(markdown) {
       }
     }
 
-    const headingCandidate = !insideHtmlComment && /^##\s+/.test(line);
+    const headingCandidate = inlineCodeDelimiterLength === 0
+      && !insideHtmlComment
+      && /^##\s+/.test(line);
     let visible = "";
     let cursor = 0;
     const backtick = String.fromCharCode(96);
+
     while (cursor < line.length) {
       if (insideHtmlComment) {
         const close = line.indexOf("-->", cursor);
@@ -125,14 +157,38 @@ function visibleMarkdownLines(markdown) {
         continue;
       }
 
-      if (line[cursor] === backtick && !isEscapedAt(line, cursor)) {
-        const runLength = backtickRunLength(line, cursor);
-        const close = findClosingBacktickRun(line, cursor + runLength, runLength);
-        if (close !== -1) {
-          visible += line.slice(cursor, close);
-          cursor = close;
+      if (inlineCodeDelimiterLength > 0) {
+        const close = findClosingBacktickRun(sourceLines, lineIndex, cursor, inlineCodeDelimiterLength);
+        if (close !== null && close.lineIndex === lineIndex) {
+          visible += line.slice(cursor, close.end);
+          cursor = close.end;
+          inlineCodeDelimiterLength = 0;
           continue;
         }
+
+        visible += line.slice(cursor);
+        cursor = line.length;
+        continue;
+      }
+
+      if (line[cursor] === backtick && !isEscapedAt(line, cursor)) {
+        const runLength = backtickRunLength(line, cursor);
+        const close = findClosingBacktickRun(sourceLines, lineIndex, cursor + runLength, runLength);
+        if (close !== null) {
+          if (close.lineIndex === lineIndex) {
+            visible += line.slice(cursor, close.end);
+            cursor = close.end;
+          } else {
+            visible += line.slice(cursor);
+            cursor = line.length;
+            inlineCodeDelimiterLength = runLength;
+          }
+          continue;
+        }
+
+        visible += line.slice(cursor, cursor + runLength);
+        cursor += runLength;
+        continue;
       }
 
       if (line.startsWith("<!--", cursor) && !isEscapedAt(line, cursor)) {

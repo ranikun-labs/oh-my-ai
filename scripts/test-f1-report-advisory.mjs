@@ -201,11 +201,19 @@ const commentPrefixedFenceReport = validReport.replace(
 );
 const commentPrefixedFenceResult = validateF1Report(commentPrefixedFenceReport);
 assert.equal(commentPrefixedFenceResult.valid, true, commentPrefixedFenceResult.errors.join("; "));
+const multilineInlineCodeCommentReport = validReport.replace(
+  "## 검증\n",
+  "## 검증\nLiteral " + String.fromCharCode(96) + "<!--\n"
+    + String.fromCharCode(96) + " marker in a multiline code span.\n"
+);
+const multilineInlineCodeCommentResult = validateF1Report(multilineInlineCodeCommentReport);
+assert.equal(multilineInlineCodeCommentResult.valid, true, multilineInlineCodeCommentResult.errors.join("; "));
 
 
 
 
-console.log("f1 report advisory fixtures passed: 32/32");
+
+console.log("f1 report advisory fixtures passed: 33/33");
 
 
 // F1 routing metadata regression fixtures.
