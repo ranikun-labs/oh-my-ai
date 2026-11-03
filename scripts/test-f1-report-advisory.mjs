@@ -170,9 +170,22 @@ const fencedCommentOpenerReport = validReport.replace(
 );
 const fencedCommentOpenerResult = validateF1Report(fencedCommentOpenerReport);
 assert.equal(fencedCommentOpenerResult.valid, true, fencedCommentOpenerResult.errors.join("; "));
+const inlineCodeCommentReport = validReport.replace(
+  "## 검증\n",
+  "## 검증\nThe literal " + String.fromCharCode(96) + "<!--" + String.fromCharCode(96) + " appears here.\n"
+);
+const inlineCodeCommentResult = validateF1Report(inlineCodeCommentReport);
+assert.equal(inlineCodeCommentResult.valid, true, inlineCodeCommentResult.errors.join("; "));
+const escapedCommentReport = validReport.replace(
+  "## 검증\n",
+  "## 검증\nThe literal \\<!-- appears here.\n"
+);
+const escapedCommentResult = validateF1Report(escapedCommentReport);
+assert.equal(escapedCommentResult.valid, true, escapedCommentResult.errors.join("; "));
 
 
-console.log("f1 report advisory fixtures passed: 28/28");
+
+console.log("f1 report advisory fixtures passed: 30/30");
 
 
 // F1 routing metadata regression fixtures.

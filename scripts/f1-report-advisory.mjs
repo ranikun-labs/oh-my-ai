@@ -62,6 +62,35 @@ function isFenceClosing(line, openFence) {
 }
 
 // One document-level scan keeps heading and status visibility in the same Markdown context.
+function isEscapedAt(text, index) {
+  const backslash = String.fromCharCode(92);
+  let count = 0;
+  for (let cursor = index - 1; cursor >= 0 && text[cursor] === backslash; cursor -= 1) {
+    count += 1;
+  }
+  return count % 2 === 1;
+}
+
+function backtickRunLength(text, start) {
+  const backtick = String.fromCharCode(96);
+  let end = start;
+  while (text[end] === backtick) end += 1;
+  return end - start;
+}
+
+function findClosingBacktickRun(text, start, runLength) {
+  const backtick = String.fromCharCode(96);
+  let cursor = start;
+  while (cursor < text.length) {
+    const next = text.indexOf(backtick, cursor);
+    if (next === -1) return -1;
+    const length = backtickRunLength(text, next);
+    if (length === runLength) return next + length;
+    cursor = next + length;
+  }
+  return -1;
+}
+
 function visibleMarkdownLines(markdown) {
   const visibleLines = [];
   let openFence = null;
@@ -85,6 +114,7 @@ function visibleMarkdownLines(markdown) {
 
     let visible = "";
     let cursor = 0;
+    const backtick = String.fromCharCode(96);
     while (cursor < line.length) {
       if (insideHtmlComment) {
         const close = line.indexOf("-->", cursor);
@@ -94,15 +124,24 @@ function visibleMarkdownLines(markdown) {
         continue;
       }
 
-      const open = line.indexOf("<!--", cursor);
-      if (open === -1) {
-        visible += line.slice(cursor);
-        break;
+      if (line[cursor] === backtick && !isEscapedAt(line, cursor)) {
+        const runLength = backtickRunLength(line, cursor);
+        const close = findClosingBacktickRun(line, cursor + runLength, runLength);
+        if (close !== -1) {
+          visible += line.slice(cursor, close);
+          cursor = close;
+          continue;
+        }
       }
 
-      visible += line.slice(cursor, open);
-      insideHtmlComment = true;
-      cursor = open + 4;
+      if (line.startsWith("<!--", cursor) && !isEscapedAt(line, cursor)) {
+        insideHtmlComment = true;
+        cursor += 4;
+        continue;
+      }
+
+      visible += line[cursor];
+      cursor += 1;
     }
 
     const fenceStart = parseFenceStart(visible);
