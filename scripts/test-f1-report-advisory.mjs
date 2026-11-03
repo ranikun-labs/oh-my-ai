@@ -322,4 +322,3 @@ for (const input of negativeRoutingInputs) {
   assert.equal(reportPattern.test(input.toLowerCase().slice(0, 2000)), false, "F1 negative route matched: " + input);
 }
 console.log("f1 skill pattern fixtures passed: " + (positiveRoutingInputs.length + negativeRoutingInputs.length) + "/" + (positiveRoutingInputs.length + negativeRoutingInputs.length));
-

@@ -349,4 +349,3 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 }
 
 export { REQUIRED_SECTIONS, validateF1Report, splitSections };
-
