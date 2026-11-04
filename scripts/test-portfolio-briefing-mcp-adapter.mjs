@@ -1,0 +1,893 @@
+import assert from "node:assert/strict";
+import { buildPortfolioBriefingFromMcpResults } from "./lib/portfolio-briefing-mcp-adapter.mjs";
+
+const capturedAt = "2026-10-30T10:40:00.000Z";
+let passed = 0;
+
+function headShaFor(number) {
+  return Number(number).toString(16).padStart(40, "0");
+}
+
+function test(name, fn) {
+  fn();
+  passed += 1;
+  process.stdout.write(`PASS ${name}\n`);
+}
+
+function jiraResult(key, summary, status, updated = "2026-10-30T10:30:00.000Z") {
+  return {
+    requested_issue_key: key,
+    checked_at: capturedAt,
+    result: {
+      isError: false,
+      structuredContent: {
+        issues: { nodes: [{
+          id: `id-${key}`,
+          key,
+          fields: {
+            summary,
+            status: { name: status },
+            updated,
+            parent: { key: "RPL-112" },
+            assignee: { emailAddress: "private@example.test", displayName: "Private Name" },
+          },
+        }] },
+      },
+    },
+  };
+}
+
+function githubResult(number, overrides = {}) {
+  return {
+    requested_number: number,
+    checked_at: capturedAt,
+    repository_full_name: "ranikun-labs/oh-my-ai",
+    result: {
+      isError: false,
+      structuredContent: {
+        number,
+        url: `https://github.com/ranikun-labs/oh-my-ai/pull/${number}`,
+        head_repo_full_name: "ranikun-labs/oh-my-ai",
+        head_sha: headShaFor(number),
+        base_sha: "base-sha",
+        state: "open",
+        draft: true,
+        merged: false,
+        updated_at: "2026-10-30T10:35:00Z",
+        title: `feat(RPL-119): report for PR ${number}`,
+        body: "RPL-115 is referenced as a dependency.\nPrimary Jira: RPL-119",
+        ...overrides,
+      },
+    },
+    status_for_sha: headShaFor(number),
+    status_for_repository: "ranikun-labs/oh-my-ai",
+    status_result: { structuredContent: { sha: headShaFor(number), statuses: [] } },
+    workflow_for_sha: headShaFor(number),
+    workflow_for_repository: "ranikun-labs/oh-my-ai",
+    review_for_pr_number: number,
+    review_for_repository: "ranikun-labs/oh-my-ai",
+    review_for_head_sha: headShaFor(number),
+    review_result: { structuredContent: { reviews: [] } },
+  };
+}
+
+function confluenceResult(body = "read-only roadmap body") {
+  return {
+    requested_page_id: "21495809",
+    checked_at: capturedAt,
+    result: {
+      isError: false,
+      structuredContent: {
+        content: { nodes: [{
+          id: "21495809",
+          title: "Personal AI Work OS",
+          webUrl: "https://ranikunlabs.atlassian.net/wiki/spaces/RLAB/pages/21495809",
+          body,
+        }] },
+      },
+    },
+  };
+}
+
+test("normalizes real MCP envelope shapes and keeps Jira status separate from execution", () => {
+  const result = buildPortfolioBriefingFromMcpResults({
+    captured_at: capturedAt,
+    jira_results: [
+      jiraResult("RPL-119", "Korean result reporting", "할 일"),
+      jiraResult("RPL-115", "Single actor E2E", "할 일"),
+    ],
+    github_results: [{
+      ...githubResult(88, { body: "Primary Jira: RPL-119; see RPL-115 for a dependency." }),
+      status_for_sha: headShaFor(88),
+      status_result: { structuredContent: { sha: headShaFor(88), statuses: [{ id: 881, sha: headShaFor(88), state: "success" }] } },
+      review_result: { structuredContent: { reviews: [{ id: "PRR_88", commit_id: headShaFor(88), state: "COMMENTED" }] } },
+    }],
+    confluence_results: [confluenceResult()],
+  });
+
+  assert.equal(result.status, "CURRENT");
+  assert.equal(result.verification_status, "UNVERIFIED");
+  assert.equal(result.issues[0].jira_status, "할 일");
+  assert.equal(result.issues[0].execution.state, "UNKNOWN");
+  assert.deepEqual(result.issues.find(issue => issue.key === "RPL-119").linked_pull_requests, ["ranikun-labs/oh-my-ai#88"]);
+  assert.deepEqual(result.issues.find(issue => issue.key === "RPL-115").linked_pull_requests, []);
+  assert.deepEqual(result.pull_requests[0].jira_keys, ["RPL-119"]);
+  assert.equal(result.pull_requests[0].ci_state, "SUCCESS");
+  assert.equal(result.pull_requests[0].review_state, "COMMENTED");
+  assert.equal(result.pull_requests[0].merge_state, "DRAFT_OPEN_UNMERGED");
+  assert.equal(JSON.stringify(result).includes("private@example.test"), false);
+  assert.equal(JSON.stringify(result).includes("Private Name"), false);
+});
+
+test("does not infer a Jira association from non-primary PR body references", () => {
+  const result = buildPortfolioBriefingFromMcpResults({
+    captured_at: capturedAt,
+    github_results: [githubResult(88, { title: "feature report", body: "RPL-115 is mentioned, but not the primary Jira." })],
+    jira_results: [jiraResult("RPL-115", "E2E", "할 일")],
+    confluence_results: [confluenceResult()],
+  });
+  assert.deepEqual(result.pull_requests[0].jira_keys, []);
+  assert.deepEqual(result.issues[0].linked_pull_requests, []);
+});
+
+test("preserves unknown CI and Reviewer data when connectors return no evidence", () => {
+  const result = buildPortfolioBriefingFromMcpResults({
+    captured_at: capturedAt,
+    jira_results: [jiraResult("RPL-119", "Report", "할 일")],
+    github_results: [githubResult(88)],
+    confluence_results: [confluenceResult()],
+  });
+  assert.equal(result.pull_requests[0].ci_state, "UNKNOWN");
+  assert.equal(result.pull_requests[0].review_state, "NOT_OBSERVED");
+  assert.equal(result.issues[0].execution.status, "NOT_OBSERVED");
+  assert.equal(result.verification_status, "UNVERIFIED");
+});
+
+test("keeps Reviewer lookup errors distinct from an empty review list", () => {
+  const result = buildPortfolioBriefingFromMcpResults({
+    captured_at: capturedAt,
+    jira_results: [jiraResult("RPL-119", "Report", "할 일")],
+    github_results: [{ ...githubResult(88), review_result: { isError: true } }],
+    confluence_results: [confluenceResult()],
+  });
+  assert.equal(result.pull_requests[0].review_state, "UNKNOWN");
+});
+
+test("does not trust success statuses returned alongside a CI connector error", () => {
+  const result = buildPortfolioBriefingFromMcpResults({
+    captured_at: capturedAt,
+    jira_results: [jiraResult("RPL-119", "Report", "할 일")],
+    github_results: [{
+      ...githubResult(88),
+      status_result: { isError: true, structuredContent: { statuses: [{ state: "success" }] } },
+    }],
+    confluence_results: [confluenceResult()],
+  });
+  assert.equal(result.pull_requests[0].ci_state, "UNKNOWN");
+});
+
+test("uses completed Actions runs only when they are bound to the returned PR head", () => {
+  const entry = githubResult(90);
+  entry.workflow_for_sha = headShaFor(90);
+  entry.workflow_result = {
+    isError: false,
+    structuredContent: { workflow_runs: [{ id: 9001, head_sha: headShaFor(90), status: "completed", conclusion: "success" }] },
+  };
+  const result = buildPortfolioBriefingFromMcpResults({
+    captured_at: capturedAt,
+    jira_results: [jiraResult("RPL-121", "Read-only briefing", "할 일")],
+    github_results: [entry],
+    confluence_results: [confluenceResult()],
+  });
+  assert.equal(result.pull_requests[0].ci_state, "SUCCESS");
+});
+
+test("does not reuse Actions runs fetched for a different PR head", () => {
+  const entry = githubResult(90);
+  entry.workflow_for_sha = "old-head";
+  entry.workflow_result = {
+    isError: false,
+    structuredContent: { workflow_runs: [{ id: 9001, head_sha: "old-head", status: "completed", conclusion: "success" }] },
+  };
+  const result = buildPortfolioBriefingFromMcpResults({
+    captured_at: capturedAt,
+    jira_results: [jiraResult("RPL-121", "Read-only briefing", "할 일")],
+    github_results: [entry],
+    confluence_results: [confluenceResult()],
+  });
+  assert.equal(result.pull_requests[0].ci_state, "UNKNOWN");
+});
+
+test("does not trust Actions success when the workflow lookup errored", () => {
+  const entry = githubResult(90);
+  entry.workflow_for_sha = headShaFor(90);
+  entry.status_for_sha = headShaFor(90);
+  entry.status_result = { structuredContent: { sha: headShaFor(90), statuses: [{ id: 9002, sha: headShaFor(90), state: "success" }] } };
+  entry.workflow_result = {
+    isError: true,
+    structuredContent: { workflow_runs: [{ id: 9003, head_sha: headShaFor(90), status: "completed", conclusion: "success" }] },
+  };
+  const result = buildPortfolioBriefingFromMcpResults({
+    captured_at: capturedAt,
+    jira_results: [jiraResult("RPL-121", "Read-only briefing", "할 일")],
+    github_results: [entry],
+    confluence_results: [confluenceResult()],
+  });
+  assert.equal(result.pull_requests[0].ci_state, "UNKNOWN");
+});
+
+test("reports an in-progress Actions run as pending", () => {
+  const entry = githubResult(90);
+  entry.workflow_for_sha = headShaFor(90);
+  entry.workflow_result = {
+    isError: false,
+    structuredContent: { workflow_runs: [{ id: 9004, head_sha: headShaFor(90), status: "in_progress", conclusion: null }] },
+  };
+  const result = buildPortfolioBriefingFromMcpResults({
+    captured_at: capturedAt,
+    jira_results: [jiraResult("RPL-121", "Read-only briefing", "할 일")],
+    github_results: [entry],
+    confluence_results: [confluenceResult()],
+  });
+  assert.equal(result.pull_requests[0].ci_state, "PENDING_OR_MIXED");
+});
+
+test("maps failed or missing connector responses to fail-closed source states", () => {
+  const result = buildPortfolioBriefingFromMcpResults({
+    captured_at: capturedAt,
+    jira_results: [{ requested_issue_key: "RPL-119", result: { isError: true } }],
+    github_results: [],
+    confluence_results: [{ requested_page_id: "21495809", result: { isError: true } }],
+  });
+  assert.equal(result.status, "UNKNOWN");
+  assert.equal(result.sources.find(source => source.name === "jira").quality, "UNKNOWN");
+  assert.equal(result.sources.find(source => source.name === "confluence").quality, "UNKNOWN");
+  assert.equal(result.sources.find(source => source.name === "github").reasons.includes("required_source_missing"), true);
+});
+
+test("keeps partial source data while a permission-denied connector stays UNKNOWN", () => {
+  const denied = githubResult(90);
+  denied.result = {
+    isError: true,
+    content: [{ type: "text", text: "403 Forbidden: permission denied" }],
+    structuredContent: {
+      number: 90,
+      url: "https://github.com/ranikun-labs/oh-my-ai/pull/90",
+      state: "open",
+      head_sha: "must-not-be-trusted",
+    },
+  };
+
+  const result = buildPortfolioBriefingFromMcpResults({
+    captured_at: capturedAt,
+    jira_results: [jiraResult("RPL-121", "Read-only briefing", "할 일")],
+    github_results: [denied],
+    confluence_results: [confluenceResult()],
+  });
+
+  assert.equal(result.status, "UNKNOWN");
+  assert.deepEqual(result.issues.map(issue => issue.key), ["RPL-121"]);
+  assert.equal(result.issues[0].jira_status, "할 일");
+  assert.equal(result.pull_requests.length, 0);
+  assert.equal(result.sources.find(source => source.name === "github").quality, "UNKNOWN");
+  assert.equal(JSON.stringify(result).includes("must-not-be-trusted"), false);
+  assert.equal(JSON.stringify(result).includes("permission denied"), false);
+});
+
+test("marks a requested PR whose returned URL points to another identity as DRIFT", () => {
+  const result = buildPortfolioBriefingFromMcpResults({
+    captured_at: capturedAt,
+    jira_results: [jiraResult("RPL-119", "Report", "할 일")],
+    github_results: [githubResult(88, { url: "https://github.com/ranikun-labs/oh-my-ai/pull/89" })],
+    confluence_results: [confluenceResult()],
+  });
+  assert.equal(result.status, "DRIFT");
+  assert.equal(result.sources.find(source => source.name === "github").reasons.includes("pull_request_identity_conflict"), true);
+  assert.equal(result.counts.unique_pull_requests, 0);
+});
+
+test("does not silently replace the requested PR number with a different response number", () => {
+  const entry = githubResult(88);
+  entry.requested_number = 89;
+  const result = buildPortfolioBriefingFromMcpResults({
+    captured_at: capturedAt,
+    jira_results: [jiraResult("RPL-119", "Report", "할 일")],
+    github_results: [entry],
+    confluence_results: [confluenceResult()],
+  });
+  assert.equal(result.status, "UNKNOWN");
+  assert.equal(result.sources.find(source => source.name === "github").quality, "UNKNOWN");
+  assert.equal(result.counts.unique_pull_requests, 0);
+});
+
+test("rejects a response number that conflicts with the requested number even when URL matches", () => {
+  const result = buildPortfolioBriefingFromMcpResults({
+    captured_at: capturedAt,
+    jira_results: [jiraResult("RPL-119", "Report", "할 일")],
+    github_results: [githubResult(88, { number: 89 })],
+    confluence_results: [confluenceResult()],
+  });
+  assert.equal(result.status, "UNKNOWN");
+  assert.equal(result.counts.unique_pull_requests, 0);
+});
+
+test("uses the requested target repository instead of a fork's head repository", () => {
+  const result = buildPortfolioBriefingFromMcpResults({
+    captured_at: capturedAt,
+    jira_results: [jiraResult("RPL-119", "Report", "할 일")],
+    github_results: [githubResult(88, { head_repo_full_name: "contributor/oh-my-ai" })],
+    confluence_results: [confluenceResult()],
+  });
+  assert.equal(result.pull_requests[0].id, "ranikun-labs/oh-my-ai#88");
+  assert.equal(result.status, "CURRENT");
+});
+
+test("rejects a Jira response whose issue key differs from the requested issue", () => {
+  const entry = jiraResult("RPL-119", "Wrong issue", "할 일");
+  entry.result.structuredContent.issues.nodes[0].key = "RPL-115";
+  const result = buildPortfolioBriefingFromMcpResults({
+    captured_at: capturedAt,
+    jira_results: [entry],
+    github_results: [githubResult(88)],
+    confluence_results: [confluenceResult()],
+  });
+  assert.equal(result.issues.length, 0);
+  assert.equal(result.sources.find(source => source.name === "jira").quality, "UNKNOWN");
+});
+
+test("rejects a Jira response without a returned issue key", () => {
+  const entry = jiraResult("RPL-119", "Report", "할 일");
+  entry.result.structuredContent.issues.nodes[0].key = null;
+  const result = buildPortfolioBriefingFromMcpResults({
+    captured_at: capturedAt,
+    jira_results: [entry],
+    github_results: [githubResult(88)],
+    confluence_results: [confluenceResult()],
+  });
+  assert.equal(result.issues.length, 0);
+  assert.equal(result.sources.find(source => source.name === "jira").quality, "UNKNOWN");
+});
+
+test("rejects a Confluence response whose page ID differs from the requested page", () => {
+  const entry = confluenceResult();
+  entry.result.structuredContent.content.nodes[0].id = "99999999";
+  const result = buildPortfolioBriefingFromMcpResults({
+    captured_at: capturedAt,
+    jira_results: [jiraResult("RPL-119", "Report", "할 일")],
+    github_results: [githubResult(88)],
+    confluence_results: [entry],
+  });
+  assert.equal(result.status, "UNKNOWN");
+  assert.equal(result.sources.find(source => source.name === "confluence").quality, "UNKNOWN");
+});
+
+test("rejects a Confluence response without a returned page ID", () => {
+  const entry = confluenceResult();
+  entry.result.structuredContent.content.nodes[0].id = null;
+  const result = buildPortfolioBriefingFromMcpResults({
+    captured_at: capturedAt,
+    jira_results: [jiraResult("RPL-119", "Report", "할 일")],
+    github_results: [githubResult(88)],
+    confluence_results: [entry],
+  });
+  assert.equal(result.status, "UNKNOWN");
+  assert.equal(result.sources.find(source => source.name === "confluence").quality, "UNKNOWN");
+});
+
+test("requires the connector observation time instead of treating capture time as query time", () => {
+  const jira = jiraResult("RPL-119", "Report", "할 일");
+  delete jira.checked_at;
+  const result = buildPortfolioBriefingFromMcpResults({
+    captured_at: capturedAt,
+    jira_results: [jira],
+    github_results: [githubResult(88)],
+    confluence_results: [confluenceResult()],
+  });
+  assert.equal(result.status, "UNKNOWN");
+  assert.equal(result.sources.find(source => source.name === "jira").quality, "UNKNOWN");
+  assert.equal(result.issues[0].quality, "UNKNOWN");
+});
+
+test("propagates an old connector observation time as STALE", () => {
+  const jira = jiraResult("RPL-119", "Report", "할 일");
+  jira.checked_at = "2026-10-30T08:00:00.000Z";
+  const result = buildPortfolioBriefingFromMcpResults({
+    captured_at: capturedAt,
+    jira_results: [jira],
+    github_results: [githubResult(88)],
+    confluence_results: [confluenceResult()],
+  });
+  assert.equal(result.sources.find(source => source.name === "jira").quality, "STALE");
+  assert.equal(result.issues[0].quality, "STALE");
+});
+
+function portfolioPullRequestFor(entry) {
+  const result = buildPortfolioBriefingFromMcpResults({
+    captured_at: capturedAt,
+    jira_results: [jiraResult("RPL-121", "Read-only briefing", "할 일")],
+    github_results: [entry],
+    confluence_results: [confluenceResult()],
+  });
+  return result.pull_requests[0];
+}
+
+const evidenceHead = headShaFor(90);
+
+function statusResult({ responseSha, statuses, isError = false, includeResponseSha = true, includeStatuses = true } = {}) {
+  const structuredContent = {};
+  if (includeResponseSha && responseSha !== undefined) structuredContent.sha = responseSha;
+  if (includeStatuses) structuredContent.statuses = statuses;
+  return { isError, structuredContent };
+}
+
+function statusEvidence(statusForSha, result) {
+  return {
+    ...githubResult(90),
+    status_for_sha: statusForSha,
+    status_result: result,
+  };
+}
+
+const statusEvidenceCases = [
+  {
+    name: "accepts status success with matching request and response SHA plus status ID",
+    entry: statusEvidence(evidenceHead, statusResult({ responseSha: evidenceHead, statuses: [{ id: 1, state: "success" }] })),
+    expected: "SUCCESS",
+  },
+  {
+    name: "accepts status success with matching request and every individual status SHA",
+    entry: statusEvidence(evidenceHead, statusResult({
+      responseSha: undefined,
+      includeResponseSha: false,
+      statuses: [{ id: 2, sha: evidenceHead, state: "success" }],
+    })),
+    expected: "SUCCESS",
+  },
+  {
+    name: "rejects status success without status_for_sha",
+    entry: statusEvidence(undefined, statusResult({ responseSha: evidenceHead, statuses: [{ id: 3, state: "success" }] })),
+    expected: "UNKNOWN",
+  },
+  {
+    name: "rejects status success fetched for an older requested SHA",
+    entry: statusEvidence("old-head", statusResult({ responseSha: evidenceHead, statuses: [{ id: 4, state: "success" }] })),
+    expected: "UNKNOWN",
+  },
+  {
+    name: "rejects status evidence queried from a different repository",
+    entry: { ...statusEvidence(evidenceHead, statusResult({ responseSha: evidenceHead, statuses: [{ id: 41, state: "success" }] })), status_for_repository: "someone/fork" },
+    expected: "UNKNOWN",
+  },
+  {
+    name: "accepts a SHA-less status row when the exact repository and SHA query scope is recorded",
+    entry: statusEvidence(evidenceHead, statusResult({
+      responseSha: undefined,
+      includeResponseSha: false,
+      statuses: [{ id: 5, state: "success" }],
+    })),
+    expected: "SUCCESS",
+  },
+  {
+    name: "rejects a SHA-less status row when exact query scope is missing",
+    entry: { ...statusEvidence(evidenceHead, statusResult({ responseSha: undefined, includeResponseSha: false, statuses: [{ id: 51, state: "success" }] })), status_for_sha: undefined },
+    expected: "UNKNOWN",
+  },
+  {
+    name: "rejects a stale top-level status response SHA",
+    entry: statusEvidence(evidenceHead, statusResult({ responseSha: "old-head", statuses: [{ id: 6, state: "success" }] })),
+    expected: "UNKNOWN",
+  },
+  {
+    name: "rejects an explicitly empty top-level status response SHA",
+    entry: statusEvidence(evidenceHead, statusResult({ responseSha: "", statuses: [{ id: 61, state: "success" }] })),
+    expected: "UNKNOWN",
+  },
+  {
+    name: "rejects a non-string top-level status response SHA",
+    entry: statusEvidence(evidenceHead, statusResult({ responseSha: 123, statuses: [{ id: 62, state: "success" }] })),
+    expected: "UNKNOWN",
+  },
+  {
+    name: "accepts an explicitly null status response SHA only with exact query scope",
+    entry: statusEvidence(evidenceHead, statusResult({ responseSha: null, statuses: [{ id: 63, state: "success" }] })),
+    expected: "SUCCESS",
+  },
+  {
+    name: "rejects an individual status bound to an older SHA",
+    entry: statusEvidence(evidenceHead, statusResult({
+      responseSha: undefined,
+      includeResponseSha: false,
+      statuses: [{ id: 7, sha: "old-head", state: "success" }],
+    })),
+    expected: "UNKNOWN",
+  },
+  {
+    name: "rejects an explicitly empty status row SHA",
+    entry: statusEvidence(evidenceHead, statusResult({ responseSha: undefined, includeResponseSha: false, statuses: [{ id: 71, sha: "", state: "success" }] })),
+    expected: "UNKNOWN",
+  },
+  {
+    name: "rejects a non-string status row SHA",
+    entry: statusEvidence(evidenceHead, statusResult({ responseSha: undefined, includeResponseSha: false, statuses: [{ id: 72, sha: 123, state: "success" }] })),
+    expected: "UNKNOWN",
+  },
+  {
+    name: "accepts a null status row SHA only with exact query scope",
+    entry: statusEvidence(evidenceHead, statusResult({ responseSha: undefined, includeResponseSha: false, statuses: [{ id: 73, sha: null, state: "success" }] })),
+    expected: "SUCCESS",
+  },
+  {
+    name: "rejects conflicting response and individual status SHAs",
+    entry: statusEvidence(evidenceHead, statusResult({
+      responseSha: evidenceHead,
+      statuses: [{ id: 8, sha: "old-head", state: "success" }],
+    })),
+    expected: "UNKNOWN",
+  },
+  {
+    name: "rejects status success without a status ID",
+    entry: statusEvidence(evidenceHead, statusResult({ responseSha: evidenceHead, statuses: [{ state: "success" }] })),
+    expected: "UNKNOWN",
+  },
+  {
+    name: "rejects a non-positive status ID",
+    entry: statusEvidence(evidenceHead, statusResult({ responseSha: evidenceHead, statuses: [{ id: 0, state: "success" }] })),
+    expected: "UNKNOWN",
+  },
+  {
+    name: "rejects a partial status row without state even when another row succeeds",
+    entry: statusEvidence(evidenceHead, statusResult({
+      responseSha: evidenceHead,
+      statuses: [{ id: 10, state: "success" }, { id: 15 }],
+    })),
+    expected: "UNKNOWN",
+  },
+  {
+    name: "keeps errored status reads UNKNOWN even when the payload says success",
+    entry: statusEvidence(evidenceHead, statusResult({ responseSha: evidenceHead, statuses: [{ id: 11, state: "success" }], isError: true })),
+    expected: "UNKNOWN",
+  },
+  {
+    name: "keeps a partial status response UNKNOWN when statuses are missing",
+    entry: statusEvidence(evidenceHead, statusResult({ responseSha: evidenceHead, includeStatuses: false })),
+    expected: "UNKNOWN",
+  },
+  {
+    name: "reports a current-head failure status after verifying its ID and SHA",
+    entry: statusEvidence(evidenceHead, statusResult({ responseSha: evidenceHead, statuses: [{ id: 13, sha: evidenceHead, state: "failure" }] })),
+    expected: "FAILURE",
+  },
+  {
+    name: "keeps a current-head failure UNKNOWN when another status state is unsupported",
+    entry: statusEvidence(evidenceHead, statusResult({
+      responseSha: evidenceHead,
+      statuses: [
+        { id: 15, sha: evidenceHead, state: "failure" },
+        { id: 16, sha: evidenceHead, state: "scheduled" },
+      ],
+    })),
+    expected: "UNKNOWN",
+  },
+  {
+    name: "reports a current-head pending status after verifying its ID and SHA",
+    entry: statusEvidence(evidenceHead, statusResult({ responseSha: evidenceHead, statuses: [{ id: 14, sha: evidenceHead, state: "pending" }] })),
+    expected: "PENDING_OR_MIXED",
+  },
+  {
+    name: "deduplicates identical status records with the same ID",
+    entry: statusEvidence(evidenceHead, statusResult({ responseSha: evidenceHead, statuses: [
+      { id: 74, sha: evidenceHead, state: "success", context: "ci/test" },
+      { id: 74, sha: evidenceHead, state: "success", context: "ci/test" },
+    ] })),
+    expected: "SUCCESS",
+  },
+  {
+    name: "rejects conflicting status states for the same evidence ID",
+    entry: statusEvidence(evidenceHead, statusResult({ responseSha: evidenceHead, statuses: [
+      { id: 75, sha: evidenceHead, state: "success" },
+      { id: 75, sha: evidenceHead, state: "failure" },
+    ] })),
+    expected: "UNKNOWN",
+  },
+];
+
+for (const { name, entry, expected } of statusEvidenceCases) {
+  test(name, () => {
+    assert.equal(portfolioPullRequestFor(entry).ci_state, expected);
+  });
+}
+
+function workflowEvidence({ workflowForSha, runId = 21, runHeadSha, status = "completed", conclusion = "success", isError = false, includeRuns = true } = {}) {
+  const entry = { ...githubResult(90), workflow_for_sha: workflowForSha };
+  const structuredContent = {};
+  if (includeRuns) {
+    structuredContent.workflow_runs = [{
+      ...(runId === undefined || runId === null ? {} : { id: runId }),
+      ...(runHeadSha === undefined ? {} : { head_sha: runHeadSha }),
+      status,
+      conclusion,
+    }];
+  }
+  entry.workflow_result = { isError, structuredContent };
+  return entry;
+}
+
+const workflowEvidenceCases = [
+  {
+    name: "accepts an Actions success run with matching request SHA, run ID, and run head SHA",
+    entry: workflowEvidence({ workflowForSha: evidenceHead, runHeadSha: evidenceHead }),
+    expected: "SUCCESS",
+  },
+  {
+    name: "rejects Actions success without workflow_for_sha",
+    entry: workflowEvidence({ workflowForSha: undefined, runHeadSha: evidenceHead }),
+    expected: "UNKNOWN",
+  },
+  {
+    name: "rejects Actions success fetched for an older workflow SHA",
+    entry: workflowEvidence({ workflowForSha: "old-head", runHeadSha: evidenceHead }),
+    expected: "UNKNOWN",
+  },
+  {
+    name: "rejects Actions evidence queried from a different repository",
+    entry: { ...workflowEvidence({ workflowForSha: evidenceHead }), workflow_for_repository: "someone/fork" },
+    expected: "UNKNOWN",
+  },
+  {
+    name: "rejects an Actions run without its run ID",
+    entry: workflowEvidence({ workflowForSha: evidenceHead, runId: null, runHeadSha: evidenceHead }),
+    expected: "UNKNOWN",
+  },
+  {
+    name: "rejects a non-positive Actions run ID",
+    entry: workflowEvidence({ workflowForSha: evidenceHead, runId: 0, runHeadSha: evidenceHead }),
+    expected: "UNKNOWN",
+  },
+  {
+    name: "accepts an Actions run without head_sha only when the exact repository and SHA query scope is recorded",
+    entry: workflowEvidence({ workflowForSha: evidenceHead }),
+    expected: "SUCCESS",
+  },
+  {
+    name: "accepts an explicitly null Actions head_sha only with exact query scope",
+    entry: workflowEvidence({ workflowForSha: evidenceHead, runHeadSha: null }),
+    expected: "SUCCESS",
+  },
+  {
+    name: "rejects an explicitly empty Actions head_sha",
+    entry: workflowEvidence({ workflowForSha: evidenceHead, runHeadSha: "" }),
+    expected: "UNKNOWN",
+  },
+  {
+    name: "rejects a non-string Actions head_sha",
+    entry: workflowEvidence({ workflowForSha: evidenceHead, runHeadSha: 123 }),
+    expected: "UNKNOWN",
+  },
+  {
+    name: "rejects a malformed non-empty Actions head_sha",
+    entry: workflowEvidence({ workflowForSha: evidenceHead, runHeadSha: "not-a-git-sha" }),
+    expected: "UNKNOWN",
+  },
+  {
+    name: "rejects an Actions run from an older PR head",
+    entry: workflowEvidence({ workflowForSha: evidenceHead, runHeadSha: "old-head" }),
+    expected: "UNKNOWN",
+  },
+  {
+    name: "keeps errored Actions reads UNKNOWN even when a run says success",
+    entry: workflowEvidence({ workflowForSha: evidenceHead, runHeadSha: evidenceHead, isError: true }),
+    expected: "UNKNOWN",
+  },
+  {
+    name: "keeps a partial Actions response UNKNOWN when workflow_runs are missing",
+    entry: workflowEvidence({ workflowForSha: evidenceHead, runHeadSha: evidenceHead, includeRuns: false }),
+    expected: "UNKNOWN",
+  },
+  {
+    name: "does not infer Actions success from an actual empty run list",
+    entry: { ...githubResult(90), workflow_for_sha: evidenceHead, workflow_result: { structuredContent: { workflow_runs: [] } } },
+    expected: "UNKNOWN",
+  },
+  {
+    name: "deduplicates identical workflow runs with the same ID",
+    entry: { ...githubResult(90), workflow_for_sha: evidenceHead, workflow_result: { structuredContent: { workflow_runs: [
+      { id: 22, head_sha: evidenceHead, status: "completed", conclusion: "success" },
+      { id: 22, head_sha: evidenceHead, status: "completed", conclusion: "success" },
+    ] } } },
+    expected: "SUCCESS",
+  },
+  {
+    name: "rejects conflicting conclusions for the same workflow run ID",
+    entry: { ...githubResult(90), workflow_for_sha: evidenceHead, workflow_result: { structuredContent: { workflow_runs: [
+      { id: 23, head_sha: evidenceHead, status: "completed", conclusion: "success" },
+      { id: 23, head_sha: evidenceHead, status: "completed", conclusion: "failure" },
+    ] } } },
+    expected: "UNKNOWN",
+  },
+];
+
+for (const { name, entry, expected } of workflowEvidenceCases) {
+  test(name, () => {
+    assert.equal(portfolioPullRequestFor(entry).ci_state, expected);
+  });
+}
+
+const combinedCiEvidenceCases = [
+  {
+    name: "keeps a failed Actions run UNKNOWN when another current-head run is partial",
+    entry: {
+      ...githubResult(90),
+      workflow_for_sha: evidenceHead,
+      workflow_result: { structuredContent: { workflow_runs: [
+        { id: 31, head_sha: evidenceHead, status: "completed", conclusion: "failure" },
+        { id: 32, head_sha: evidenceHead, status: "completed" },
+      ] } },
+    },
+    expected: "UNKNOWN",
+  },
+  {
+    name: "keeps a valid status failure UNKNOWN when the Actions result is partial",
+    entry: {
+      ...statusEvidence(evidenceHead, statusResult({ responseSha: evidenceHead, statuses: [{ id: 33, sha: evidenceHead, state: "failure" }] })),
+      workflow_for_sha: evidenceHead,
+      workflow_result: { structuredContent: { workflow_runs: [
+        { id: 34, head_sha: evidenceHead, status: "completed" },
+      ] } },
+    },
+    expected: "UNKNOWN",
+  },
+  {
+    name: "rejects stale empty status evidence alongside current successful Actions",
+    entry: {
+      ...githubResult(90),
+      status_for_sha: "old-head",
+      status_result: { structuredContent: { sha: "old-head", statuses: [] } },
+      workflow_for_sha: evidenceHead,
+      workflow_result: { structuredContent: { workflow_runs: [
+        { id: 35, head_sha: evidenceHead, status: "completed", conclusion: "success" },
+      ] } },
+    },
+    expected: "UNKNOWN",
+  },
+  {
+    name: "accepts current empty status evidence alongside current successful Actions",
+    entry: {
+      ...githubResult(90),
+      status_for_sha: evidenceHead,
+      status_result: { structuredContent: { sha: evidenceHead, statuses: [] } },
+      workflow_for_sha: evidenceHead,
+      workflow_result: { structuredContent: { workflow_runs: [
+        { id: 36, head_sha: evidenceHead, status: "completed", conclusion: "success" },
+      ] } },
+    },
+    expected: "SUCCESS",
+  },
+  {
+    name: "rejects stale empty Actions evidence alongside current successful statuses",
+    entry: {
+      ...statusEvidence(evidenceHead, statusResult({ responseSha: evidenceHead, statuses: [{ id: 37, sha: evidenceHead, state: "success" }] })),
+      workflow_for_sha: "old-head",
+      workflow_result: { structuredContent: { workflow_runs: [] } },
+    },
+    expected: "UNKNOWN",
+  },
+  {
+    name: "accepts current empty Actions evidence alongside current successful statuses",
+    entry: {
+      ...statusEvidence(evidenceHead, statusResult({ responseSha: evidenceHead, statuses: [{ id: 38, sha: evidenceHead, state: "success" }] })),
+      workflow_for_sha: evidenceHead,
+      workflow_result: { structuredContent: { workflow_runs: [] } },
+    },
+    expected: "SUCCESS",
+  },
+];
+
+for (const { name, entry, expected } of combinedCiEvidenceCases) {
+  test(name, () => {
+    assert.equal(portfolioPullRequestFor(entry).ci_state, expected);
+  });
+}
+
+const reviewEvidenceCases = [
+  {
+    name: "reports NOT_OBSERVED only for an actual empty review array",
+    entry: { ...githubResult(90), review_result: { structuredContent: { reviews: [] } } },
+    expected: "NOT_OBSERVED",
+  },
+  {
+    name: "keeps missing review arrays UNKNOWN",
+    entry: { ...githubResult(90), review_result: { structuredContent: {} } },
+    expected: "UNKNOWN",
+  },
+  {
+    name: "keeps errored review reads UNKNOWN even when reviews are returned",
+    entry: { ...githubResult(90), review_result: { isError: true, structuredContent: { reviews: [{ commit_id: evidenceHead, state: "APPROVED" }] } } },
+    expected: "UNKNOWN",
+  },
+  {
+    name: "displays a review state when its commit ID matches the current PR head",
+    entry: { ...githubResult(90), review_result: { structuredContent: { reviews: [{ id: "PRR_900", commit_id: evidenceHead, state: "COMMENTED" }] } } },
+    expected: "COMMENTED",
+  },
+  {
+    name: "keeps a review on an older PR commit UNKNOWN",
+    entry: { ...githubResult(90), review_result: { structuredContent: { reviews: [{ id: "PRR_901", commit_id: "old-head", state: "APPROVED" }] } } },
+    expected: "UNKNOWN",
+  },
+  {
+    name: "keeps mixed current and stale reviews UNKNOWN",
+    entry: { ...githubResult(90), review_result: { structuredContent: { reviews: [
+      { id: "PRR_902", commit_id: evidenceHead, state: "APPROVED" },
+      { id: "PRR_903", commit_id: "old-head", state: "COMMENTED" },
+    ] } } },
+    expected: "UNKNOWN",
+  },
+  {
+    name: "keeps reviews without commit IDs UNKNOWN",
+    entry: { ...githubResult(90), review_result: { structuredContent: { reviews: [{ state: "APPROVED" }] } } },
+    expected: "UNKNOWN",
+  },
+  {
+    name: "keeps review evidence UNKNOWN without a review ID",
+    entry: { ...githubResult(90), review_result: { structuredContent: { reviews: [{ commit_id: evidenceHead, state: "APPROVED" }] } } },
+    expected: "UNKNOWN",
+  },
+  {
+    name: "keeps review evidence UNKNOWN when the requested PR binding differs",
+    entry: { ...githubResult(90), review_for_pr_number: 89, review_result: { structuredContent: { reviews: [{ id: "PRR_905", commit_id: evidenceHead, state: "APPROVED" }] } } },
+    expected: "UNKNOWN",
+  },
+  {
+    name: "keeps review evidence UNKNOWN when the requested repository binding differs",
+    entry: { ...githubResult(90), review_for_repository: "someone/fork", review_result: { structuredContent: { reviews: [{ id: "PRR_906", commit_id: evidenceHead, state: "APPROVED" }] } } },
+    expected: "UNKNOWN",
+  },
+  {
+    name: "keeps review evidence UNKNOWN when the current head binding is missing",
+    entry: { ...githubResult(90), review_for_head_sha: undefined, review_result: { structuredContent: { reviews: [] } } },
+    expected: "UNKNOWN",
+  },
+  {
+    name: "deduplicates identical reviews with the same ID",
+    entry: { ...githubResult(90), review_result: { structuredContent: { reviews: [
+      { id: "PRR_DUPLICATE", commit_id: evidenceHead, state: "COMMENTED" },
+      { id: "PRR_DUPLICATE", commit_id: evidenceHead, state: "COMMENTED" },
+    ] } } },
+    expected: "COMMENTED",
+  },
+  {
+    name: "rejects conflicting review states for the same review ID",
+    entry: { ...githubResult(90), review_result: { structuredContent: { reviews: [
+      { id: "PRR_CONFLICT", commit_id: evidenceHead, state: "APPROVED" },
+      { id: "PRR_CONFLICT", commit_id: evidenceHead, state: "CHANGES_REQUESTED" },
+    ] } } },
+    expected: "UNKNOWN",
+  },
+];
+
+for (const { name, entry, expected } of reviewEvidenceCases) {
+  test(name, () => {
+    assert.equal(portfolioPullRequestFor(entry).review_state, expected);
+  });
+}
+
+test("normalizes the current GitHub connector response shape using recorded request scope", () => {
+  const entry = {
+    ...githubResult(90, { head_sha: "79480b9d6ca1fabf36a7987b54f836fcd3a6492f" }),
+    status_for_sha: "79480b9d6ca1fabf36a7987b54f836fcd3a6492f",
+    status_for_repository: "ranikun-labs/oh-my-ai",
+    status_result: { structuredContent: { statuses: [] } },
+    workflow_for_sha: "79480b9d6ca1fabf36a7987b54f836fcd3a6492f",
+    workflow_for_repository: "ranikun-labs/oh-my-ai",
+    workflow_result: { structuredContent: { workflow_runs: [{ id: 41754286050, status: "completed", conclusion: "success" }] } },
+    review_for_pr_number: 90,
+    review_for_repository: "ranikun-labs/oh-my-ai",
+    review_for_head_sha: "79480b9d6ca1fabf36a7987b54f836fcd3a6492f",
+    review_result: { structuredContent: { reviews: [] } },
+  };
+  const pr = portfolioPullRequestFor(entry);
+  assert.equal(pr.ci_state, "SUCCESS");
+  assert.equal(pr.review_state, "NOT_OBSERVED");
+});
+
+process.stdout.write(`PORTFOLIO BRIEFING MCP ADAPTER FIXTURES ${passed}/${passed} PASS\n`);

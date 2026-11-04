@@ -1,0 +1,363 @@
+import { createHash } from "node:crypto";
+import { buildPortfolioBriefingSnapshot } from "./portfolio-briefing-snapshot.mjs";
+
+const DEFAULT_JIRA_BASE_URL = "https://ranikunlabs.atlassian.net";
+
+/**
+ * Normalize read-only host MCP connector results into the F6 snapshot contract.
+ * This adapter does not invoke tools, authenticate, or perform network/Writer work;
+ * the host must call read-only connectors and pass their CallToolResult objects.
+ * CI query-scope fields must be copied from exact host connector call arguments.
+ * Review scope binds the exact repository/PR query to the PR head observed alongside it.
+ * Never infer scope from a user prompt or synthesize per-row identities.
+ * Each result entry must carry checked_at from its connector-call observation;
+ * captured_at is never substituted because cached results could look fresh.
+ */
+export function buildPortfolioBriefingFromMcpResults(input = {}) {
+  const capturedAt = input.captured_at;
+  const jiraBaseUrl = trimTrailingSlash(nonEmptyString(input.jira_base_url) || DEFAULT_JIRA_BASE_URL);
+  const sourceSnapshots = [
+    ...normalizeJiraResults(input.jira_results, jiraBaseUrl),
+    ...normalizeGithubResults(input.github_results),
+    ...normalizeConfluenceResults(input.confluence_results),
+  ];
+
+  return buildPortfolioBriefingSnapshot({
+    captured_at: capturedAt,
+    source_snapshots: sourceSnapshots,
+    required_sources: input.required_sources,
+    max_age_seconds: input.max_age_seconds,
+    execution_observations: input.execution_observations,
+  });
+}
+
+function normalizeJiraResults(entries, baseUrl) {
+  if (!Array.isArray(entries)) return [];
+  const snapshots = [];
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index] || {};
+    const result = entry.result;
+    const nodes = result?.structuredContent?.issues?.nodes;
+    if (result?.isError || !Array.isArray(nodes) || nodes.length === 0) {
+      const requestedKey = validIssueKey(entry.requested_issue_key) || `UNKNOWN-${index + 1}`;
+      snapshots.push({
+        name: "jira",
+        scope: `issue:${requestedKey}`,
+        uri: requestedKey.startsWith("UNKNOWN-") ? baseUrl : `${baseUrl}/browse/${requestedKey}`,
+        revision: null,
+        checked_at: nonEmptyString(entry.checked_at),
+        status: "unavailable",
+        issues: [],
+        pull_requests: [],
+      });
+      continue;
+    }
+
+    for (const node of nodes) {
+      const fields = node?.fields || {};
+      const requestedKey = validIssueKey(entry.requested_issue_key);
+      const returnedKey = validIssueKey(node?.key);
+      const identityMatches = returnedKey !== null && (!requestedKey || requestedKey === returnedKey);
+      const key = requestedKey || returnedKey;
+      const updated = nonEmptyString(fields.updated);
+      const id = nonEmptyString(node?.id);
+      snapshots.push({
+        name: "jira",
+        scope: key ? `issue:${key}` : `query:${index + 1}`,
+        uri: key ? `${baseUrl}/browse/${key}` : baseUrl,
+        revision: identityMatches && id && updated ? `jira-issue:${id}:updated:${updated}` : null,
+        checked_at: nonEmptyString(entry.checked_at),
+        status: identityMatches ? "available" : "unavailable",
+        // Explicit allowlist: omit assignee, reporter, email, description, and comments.
+        issues: identityMatches ? [{
+          key: returnedKey,
+          summary: nonEmptyString(fields.summary),
+          status: nonEmptyString(fields.status?.name),
+          parent_key: validIssueKey(fields.parent?.key),
+        }] : [],
+        pull_requests: [],
+      });
+    }
+  }
+  return snapshots;
+}
+
+function normalizeGithubResults(entries) {
+  if (!Array.isArray(entries)) return [];
+  return entries.map((entry, index) => {
+    const result = entry?.result;
+    const info = result?.structuredContent || {};
+    const requestedNumber = positiveInteger(entry?.requested_number);
+    const returnedNumber = positiveInteger(info.number);
+    const number = returnedNumber;
+    const url = nonEmptyString(info.url);
+    const repository = nonEmptyString(entry?.repository_full_name)
+      || repositoryFromPullRequestUrl(url)
+      || nonEmptyString(info.head_repo_full_name)
+      || null;
+    const identityMatches = returnedNumber !== null && (!requestedNumber || requestedNumber === returnedNumber);
+    const identityAvailable = !result?.isError && identityMatches && url !== null && repository !== null;
+    const rawHeadSha = nonEmptyString(info.head_sha);
+    const headSha = isGitSha(rawHeadSha) ? rawHeadSha.toLowerCase() : null;
+    const ciState = summarizeCiEvidence(entry, headSha, repository);
+    const reviewState = summarizeReviewEvidence(entry, headSha, { number, repository });
+    const titleKeys = [...new Set(extractIssueKeys(nonEmptyString(info.title) || ""))];
+    const primaryKey = extractPrimaryJiraKey(nonEmptyString(info.body) || "");
+    const jiraKeys = primaryKey ? [primaryKey] : titleKeys.length === 1 ? titleKeys : [];
+    const updatedAt = nonEmptyString(info.updated_at);
+
+    return {
+      name: "github",
+      scope: repository && number ? `${repository}#${number}` : `pull-request:${index + 1}`,
+      uri: url || "UNKNOWN",
+      revision: identityAvailable && headSha && updatedAt ? `github-head:${headSha}:updated:${updatedAt}` : null,
+      checked_at: nonEmptyString(entry?.checked_at),
+      status: identityAvailable ? "available" : "unavailable",
+      issues: [],
+      pull_requests: identityAvailable ? [{
+        repository,
+        number,
+        url,
+        state: nonEmptyString(info.state),
+        head_sha: headSha,
+        base_sha: nonEmptyString(info.base_sha),
+        ci_state: ciState,
+        review_state: reviewState,
+        merge_state: info.merged === true
+          ? "MERGED"
+          : info.draft === true
+            ? "DRAFT_OPEN_UNMERGED"
+            : info.state === "open" ? "OPEN_UNMERGED" : "UNKNOWN",
+        jira_keys: jiraKeys,
+      }] : [],
+    };
+  });
+}
+
+function normalizeConfluenceResults(entries) {
+  if (!Array.isArray(entries)) return [];
+  const snapshots = [];
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index] || {};
+    const result = entry.result;
+    const nodes = result?.structuredContent?.content?.nodes;
+    if (result?.isError || !Array.isArray(nodes) || nodes.length === 0) {
+      snapshots.push({
+        name: "confluence",
+        scope: `page:${nonEmptyString(entry.requested_page_id) || `UNKNOWN-${index + 1}`}`,
+        uri: "UNKNOWN",
+        revision: null,
+        checked_at: nonEmptyString(entry.checked_at),
+        status: "unavailable",
+        issues: [],
+        pull_requests: [],
+      });
+      continue;
+    }
+
+    for (const page of nodes) {
+      const requestedPageId = nonEmptyString(entry.requested_page_id);
+      const returnedPageId = nonEmptyString(page?.id);
+      const pageId = requestedPageId || returnedPageId;
+      const identityMatches = returnedPageId !== null && (!requestedPageId || requestedPageId === returnedPageId);
+      const body = typeof page?.body === "string" ? page.body : null;
+      snapshots.push({
+        name: "confluence",
+        scope: pageId ? `page:${pageId}` : `page:unknown-${index + 1}`,
+        uri: nonEmptyString(page?.webUrl) || "UNKNOWN",
+        // The connector does not always expose a numeric page version; hash only the retrieved body.
+        revision: body === null || !pageId || !identityMatches
+          ? null
+          : `content-sha256:${createHash("sha256").update(body, "utf8").digest("hex")}`,
+        checked_at: nonEmptyString(entry.checked_at),
+        status: body === null || !pageId || !identityMatches ? "unavailable" : "available",
+        issues: [],
+        pull_requests: [],
+      });
+    }
+  }
+  return snapshots;
+}
+
+function summarizeCheckStates(statuses) {
+  const states = statuses.map(status => nonEmptyString(status?.state)?.toLowerCase());
+  if (states.length === 0 || states.some(state => state === null)) return "UNKNOWN";
+  if (states.some(state => !["success", "failure", "error", "pending"].includes(state))) return "UNKNOWN";
+  if (states.every(state => state === "success")) return "SUCCESS";
+  if (states.some(state => state === "failure" || state === "error")) return "FAILURE";
+  return "PENDING_OR_MIXED";
+}
+
+function summarizeCiEvidence(entry, headSha, repository) {
+  if (!headSha || entry?.status_result?.isError || entry?.workflow_result?.isError) return "UNKNOWN";
+
+  const states = [];
+  const statusResult = entry?.status_result;
+  if (statusResult != null) {
+    const statusResponse = statusResult?.structuredContent;
+    const statuses = statusResponse?.statuses;
+    if (!Array.isArray(statuses)) return "UNKNOWN";
+    const statusForSha = nonEmptyString(entry?.status_for_sha);
+    const statusForRepository = nonEmptyString(entry?.status_for_repository);
+    if (statusForSha !== headSha || statusForRepository !== repository) return "UNKNOWN";
+    if (!optionalShaIsInScope(statusResponse, "sha", headSha)) return "UNKNOWN";
+    if (statuses.length > 0) {
+      if (statuses.some(status => {
+        return !isRecord(status)
+          || !positiveInteger(status?.id)
+          || !nonEmptyString(status?.state)
+          || !optionalShaIsInScope(status, "sha", headSha);
+      })) return "UNKNOWN";
+      const uniqueStatuses = deduplicateById(statuses, status => positiveInteger(status?.id), ["sha", "state", "context", "target_url"]);
+      if (!uniqueStatuses) return "UNKNOWN";
+      states.push(summarizeCheckStates(uniqueStatuses));
+    }
+  }
+
+  const workflowResult = entry?.workflow_result;
+  if (workflowResult != null) {
+    const runs = workflowResult?.structuredContent?.workflow_runs;
+    if (!Array.isArray(runs)) return "UNKNOWN";
+    if (nonEmptyString(entry?.workflow_for_sha) !== headSha
+      || nonEmptyString(entry?.workflow_for_repository) !== repository) return "UNKNOWN";
+    if (runs.length > 0) {
+      if (runs.some(run => !isRecord(run)
+        || positiveInteger(run?.id) === null
+        || !optionalShaIsInScope(run, "head_sha", headSha))) {
+        return "UNKNOWN";
+      }
+      const uniqueRuns = deduplicateById(runs, run => positiveInteger(run?.id), ["head_sha", "status", "conclusion", "workflow_id", "name", "event", "run_number"]);
+      if (!uniqueRuns) return "UNKNOWN";
+      states.push(summarizeWorkflowRuns(uniqueRuns));
+    }
+  }
+
+  if (states.length === 0) return "UNKNOWN";
+  if (states.includes("UNKNOWN")) return "UNKNOWN";
+  if (states.includes("FAILURE")) return "FAILURE";
+  if (states.includes("PENDING_OR_MIXED")) return "PENDING_OR_MIXED";
+  return "SUCCESS";
+}
+
+function summarizeReviewEvidence(entry, headSha, target) {
+  const result = entry?.review_result;
+  if (result?.isError) return "UNKNOWN";
+
+  const reviews = result?.structuredContent?.reviews;
+  if (!Array.isArray(reviews)) return "UNKNOWN";
+  if (!headSha
+    || nonEmptyString(entry?.review_for_repository) !== target.repository
+    || positiveInteger(entry?.review_for_pr_number) !== target.number
+    || nonEmptyString(entry?.review_for_head_sha) !== headSha) return "UNKNOWN";
+  if (reviews.length === 0) return "NOT_OBSERVED";
+  const allowedStates = new Set(["APPROVED", "CHANGES_REQUESTED", "COMMENTED", "DISMISSED", "PENDING"]);
+  if (reviews.some(review => !isRecord(review)
+    || !nonEmptyString(review?.id)
+    || nonEmptyString(review?.commit_id) !== headSha
+    || !allowedStates.has(nonEmptyString(review?.state)))) return "UNKNOWN";
+
+  const uniqueReviews = deduplicateById(reviews, review => nonEmptyString(review?.id), ["commit_id", "state", "submitted_at", "user"]);
+  if (!uniqueReviews) return "UNKNOWN";
+
+  return [...new Set(uniqueReviews.map(review => nonEmptyString(review?.state)))].sort().join(",");
+}
+
+function summarizeWorkflowRuns(runs) {
+  const states = runs.map(run => {
+    const status = nonEmptyString(run?.status)?.toLowerCase();
+    const conclusion = nonEmptyString(run?.conclusion)?.toLowerCase();
+    if (status !== "completed") {
+      return ["queued", "in_progress", "waiting", "requested", "pending"].includes(status)
+        ? "PENDING_OR_MIXED"
+        : "UNKNOWN";
+    }
+    if (conclusion === "success") return "SUCCESS";
+    if (["failure", "timed_out", "startup_failure", "action_required"].includes(conclusion)) return "FAILURE";
+    if (conclusion === "cancelled") return "PENDING_OR_MIXED";
+    return "UNKNOWN";
+  });
+  if (states.includes("UNKNOWN")) return "UNKNOWN";
+  if (states.includes("FAILURE")) return "FAILURE";
+  if (states.includes("PENDING_OR_MIXED")) return "PENDING_OR_MIXED";
+  return states.length > 0 && states.every(state => state === "SUCCESS") ? "SUCCESS" : "UNKNOWN";
+}
+
+function extractPrimaryJiraKey(body) {
+  for (const line of body.split(/\r?\n/)) {
+    const match = line.match(/^\s*(?:[-*]\s*)?(?:\*\*)?Primary Jira(?:\*\*)?\s*:\s*(?:\*\*)?\s*\[?(RPL-[1-9][0-9]*)\b/i);
+    if (match) return match[1].toUpperCase();
+  }
+  return null;
+}
+
+function extractIssueKeys(text) {
+  return [...text.matchAll(/\bRPL-[1-9][0-9]*\b/g)].map(match => match[0]);
+}
+
+function repositoryFromPullRequestUrl(value) {
+  if (!value) return null;
+  try {
+    const segments = new URL(value).pathname.split("/").filter(Boolean);
+    const pullIndex = segments.findIndex(segment => segment === "pull" || segment === "pulls");
+    if (pullIndex < 2) return null;
+    return `${segments[pullIndex - 2]}/${segments[pullIndex - 1]}`.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+function validIssueKey(value) {
+  const key = nonEmptyString(value)?.toUpperCase();
+  return key && /^[A-Z][A-Z0-9]*-[1-9][0-9]*$/.test(key) ? key : null;
+}
+
+function positiveInteger(value) {
+  return Number.isInteger(value) && value > 0 ? value : null;
+}
+
+function isGitSha(value) {
+  return typeof value === "string" && /^[a-f0-9]{40}$/i.test(value);
+}
+
+function isRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function optionalShaIsInScope(record, field, expectedSha) {
+  if (!isRecord(record) || !Object.hasOwn(record, field)) return true;
+  const value = record[field];
+  if (value === null) return true;
+  if (typeof value !== "string") return false;
+  const sha = value.trim();
+  return isGitSha(sha) && sha.toLowerCase() === expectedSha.toLowerCase();
+}
+
+function deduplicateById(records, getId, identityFields) {
+  const unique = [];
+  const seen = new Map();
+  for (const record of records) {
+    if (!isRecord(record)) return null;
+    const id = getId(record);
+    if (id === null) return null;
+    const signature = JSON.stringify(identityFields.map(field => {
+      if (!Object.hasOwn(record, field)) return [field, "absent"];
+      const value = record[field];
+      return [field, value === undefined ? "undefined" : value];
+    }));
+    if (seen.has(id)) {
+      if (seen.get(id) !== signature) return null;
+      continue;
+    }
+    seen.set(id, signature);
+    unique.push(record);
+  }
+  return unique;
+}
+
+function nonEmptyString(value) {
+  return typeof value === "string" && value.trim() !== "" ? value.trim() : null;
+}
+
+function trimTrailingSlash(value) {
+  return value.replace(/\/+$/, "");
+}
