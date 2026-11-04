@@ -117,23 +117,57 @@ function findClosingBacktickRun(lines, startLine, startColumn, runLength) {
   return null;
 }
 
+function findHtmlPreCloseOutsideComment(line, insideHtmlComment) {
+  let cursor = 0;
+  while (cursor < line.length) {
+    if (insideHtmlComment) {
+      const closeComment = line.indexOf("-->", cursor);
+      if (closeComment === -1) return { end: null, insideHtmlComment: true };
+      insideHtmlComment = false;
+      cursor = closeComment + 3;
+      continue;
+    }
+
+    if (line.startsWith("<!--", cursor) && !isEscapedAt(line, cursor)) {
+      insideHtmlComment = true;
+      cursor += 4;
+      continue;
+    }
+
+    const closePre = /^<\/pre\s*>/i.exec(line.slice(cursor));
+    if (closePre) return { end: cursor + closePre[0].length, insideHtmlComment: false };
+    cursor += 1;
+  }
+  return { end: null, insideHtmlComment };
+}
+
 function visibleMarkdownLines(markdown) {
   const sourceLines = String(markdown).split(/\r?\n/);
   const visibleLines = [];
   let openFence = null;
   let insideHtmlComment = false;
+  let insideHtmlPreBlock = false;
   let inlineCodeDelimiterLength = 0;
 
   for (let lineIndex = 0; lineIndex < sourceLines.length; lineIndex += 1) {
-    const line = sourceLines[lineIndex];
+    let line = sourceLines[lineIndex];
     if (openFence !== null) {
       if (isFenceClosing(line, openFence)) openFence = null;
       continue;
     }
 
-    if (inlineCodeDelimiterLength === 0 && !insideHtmlComment && isIndentedCodeLine(line)) continue;
+    if (insideHtmlPreBlock) {
+      const preClose = findHtmlPreCloseOutsideComment(line, insideHtmlComment);
+      insideHtmlComment = preClose.insideHtmlComment;
+      if (preClose.end === null) continue;
+      line = line.slice(preClose.end);
+      insideHtmlPreBlock = false;
+      insideHtmlComment = false;
+    }
 
-    if (inlineCodeDelimiterLength === 0 && !insideHtmlComment) {
+    if (inlineCodeDelimiterLength === 0 && !insideHtmlComment && !insideHtmlPreBlock && isIndentedCodeLine(line)) continue;
+
+    if (inlineCodeDelimiterLength === 0 && !insideHtmlComment && !insideHtmlPreBlock) {
       const fenceStart = parseFenceStart(line);
       if (fenceStart !== null) {
         openFence = fenceStart;
@@ -143,6 +177,7 @@ function visibleMarkdownLines(markdown) {
 
     const headingCandidate = inlineCodeDelimiterLength === 0
       && !insideHtmlComment
+      && !insideHtmlPreBlock
       && /^##\s+/.test(line);
     let visible = "";
     let statusVisible = "";
@@ -150,6 +185,19 @@ function visibleMarkdownLines(markdown) {
     const backtick = String.fromCharCode(96);
 
     while (cursor < line.length) {
+      if (insideHtmlPreBlock) {
+        const preClose = findHtmlPreCloseOutsideComment(line.slice(cursor), insideHtmlComment);
+        insideHtmlComment = preClose.insideHtmlComment;
+        if (preClose.end === null) {
+          cursor = line.length;
+          break;
+        }
+        cursor += preClose.end;
+        insideHtmlPreBlock = false;
+        insideHtmlComment = false;
+        continue;
+      }
+
       if (insideHtmlComment) {
         const close = line.indexOf("-->", cursor);
         if (close === -1) break;
@@ -183,21 +231,27 @@ function visibleMarkdownLines(markdown) {
             cursor = close.end;
           } else {
             visible += line.slice(cursor);
-            statusVisible += line.slice(cursor);
             cursor = line.length;
             inlineCodeDelimiterLength = runLength;
           }
           continue;
         }
 
-        visible += line.slice(cursor, cursor + runLength);
-        cursor += runLength;
+        visible += line.slice(cursor);
+        cursor = line.length;
         continue;
       }
 
       if (line.startsWith("<!--", cursor) && !isEscapedAt(line, cursor)) {
         insideHtmlComment = true;
         cursor += 4;
+        continue;
+      }
+
+      const preOpen = /^<pre\b[^>]*>/i.exec(line.slice(cursor));
+      if (preOpen && !isEscapedAt(line, cursor)) {
+        insideHtmlPreBlock = true;
+        cursor += preOpen[0].length;
         continue;
       }
 
