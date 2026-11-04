@@ -43,6 +43,33 @@ function expectInvalid(label, markdown, expectedMessage) {
 const ok = validateF1Report(validReport);
 assert.equal(ok.valid, true, ok.errors.join("; "));
 
+const inlineCommandEvidence = validReport.replace(
+  /- Native Test:[^\n]*/,
+  "- Native Test: PASS — `node scripts/test-f1-report-advisory.mjs`"
+);
+const inlineCommandResult = validateF1Report(inlineCommandEvidence);
+assert.equal(inlineCommandResult.valid, true, inlineCommandResult.errors.join("; "));
+
+const inlineFailCannotJoinPass = validReport.replace(
+  "CI: NOT_RUN — 이 로컬 실행에서는 CI를 호출하지 않았다.",
+  "CI: `FAIL`PASS — https://example.invalid/run"
+);
+expectInvalid(
+  "inline code status cannot be removed to synthesize PASS",
+  inlineFailCannotJoinPass,
+  "CI must have exactly one explicit status line"
+);
+
+const commentedFailCannotJoinPass = validReport.replace(
+  "CI: NOT_RUN — 이 로컬 실행에서는 CI를 호출하지 않았다.",
+  "CI: FAIL<!-- hidden -->PASS — https://example.invalid/run"
+);
+expectInvalid(
+  "HTML comment removal cannot join conflicting status words",
+  commentedFailCannotJoinPass,
+  "CI has unsupported status: FAILPASS"
+);
+
 const skill = fs.readFileSync(new URL("../skills/engineering-communication-ko/SKILL.md", import.meta.url), "utf8");
 assert.match(skill, /^name: engineering-communication-ko$/m);
 assert.match(skill, /^[ \t]+summary: 개발 결과를 사용자 관점과 검증 근거 중심으로 한국어 보고$/m);
@@ -257,7 +284,7 @@ expectInvalid(
 
 
 
-console.log("f1 report advisory fixtures passed: 36/36");
+console.log("f1 report advisory fixtures passed: 39/39");
 
 
 // F1 routing metadata regression fixtures.

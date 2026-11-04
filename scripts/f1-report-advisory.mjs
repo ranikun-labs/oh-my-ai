@@ -177,10 +177,13 @@ function visibleMarkdownLines(markdown) {
         const close = findClosingBacktickRun(sourceLines, lineIndex, cursor + runLength, runLength);
         if (close !== null) {
           if (close.lineIndex === lineIndex) {
-            visible += line.slice(cursor, close.end);
+            const inlineCode = line.slice(cursor, close.end);
+            visible += inlineCode;
+            statusVisible += inlineCode;
             cursor = close.end;
           } else {
             visible += line.slice(cursor);
+            statusVisible += line.slice(cursor);
             cursor = line.length;
             inlineCodeDelimiterLength = runLength;
           }
