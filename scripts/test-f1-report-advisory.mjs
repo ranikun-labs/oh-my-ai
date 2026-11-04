@@ -284,7 +284,60 @@ expectInvalid(
 
 
 
-console.log("f1 report advisory fixtures passed: 39/39");
+const htmlPreBacktick = String.fromCharCode(96);
+const ciLine = "- CI: NOT_RUN — 이 로컬 실행에서는 CI를 호출하지 않았다.";
+const unclosedBeforeStatus = validReport.replace(
+  ciLine,
+  "- CI: " + htmlPreBacktick + "PASS — https://example.invalid/fake-run"
+);
+expectInvalid(
+  "unclosed inline code cannot contribute a fake CI status",
+  unclosedBeforeStatus,
+  "CI must have exactly one explicit status line"
+);
+const unclosedStatusEvidence = validReport.replace(
+  ciLine,
+  "- CI: PASS — " + htmlPreBacktick + "https://example.invalid/fake-run"
+);
+expectInvalid(
+  "unclosed inline code cannot provide CI evidence",
+  unclosedStatusEvidence,
+  "CI PASS requires evidence or a reason after an em dash"
+);
+const fakePreStatus = validReport.replace(
+  ciLine,
+  "<pre>CI: PASS — https://example.invalid/fake-run</pre>"
+);
+expectInvalid(
+  "HTML pre status is not evidence",
+  fakePreStatus,
+  "CI must have exactly one explicit status line"
+);
+const multilinePreStatus = validReport.replace(
+  ciLine,
+  "<pre>\nCI: PASS — https://example.invalid/fake-run\n</pre>"
+);
+expectInvalid(
+  "multiline HTML pre status is not evidence",
+  multilinePreStatus,
+  "CI must have exactly one explicit status line"
+);
+const commentedPreCloseStatus = validReport.replace(
+  ciLine,
+  "<pre>\n<!-- </pre> -->\nCI: PASS — https://example.invalid/fake-run\n</pre>"
+);
+expectInvalid(
+  "HTML pre close inside a comment does not expose fake status",
+  commentedPreCloseStatus,
+  "CI must have exactly one explicit status line"
+);
+const visibleStatusAfterPre = validReport.replace(
+  ciLine,
+  "<pre>CI: PASS — https://example.invalid/fake-run</pre>\n- CI: PASS — https://example.invalid/actual-run"
+);
+const visibleStatusAfterPreResult = validateF1Report(visibleStatusAfterPre);
+assert.equal(visibleStatusAfterPreResult.valid, true, visibleStatusAfterPreResult.errors.join("; "));
+console.log("f1 report advisory fixtures passed: 45/45");
 
 
 // F1 routing metadata regression fixtures.
@@ -312,7 +365,7 @@ const positiveRoutingInputs = [
   "개발 결과 보고해줄래",
   "이번 작업 결과를 한국어로 요약해줘",
   "/핵심정리 이번 업무 결과 알려줘",
-  "어제는 개발 결과 보고했지만, 오늘 변경한 PR 결과 보고해줘",
+  "어제 개발 결과 보고하지 마. 오늘 PR 결과 보고해줘",
   "이전 결과는 보고했어. 이번 테스트 결과는 다시 정리해줘",
   "F1 기반으로 f4 적응형 골모드로 진행하고 결과도 제3자 직관적으로 정리해줘",
   "이번 작업 결과와 남은 문제를 정리해줘",
@@ -323,7 +376,7 @@ const negativeRoutingInputs = [
   "개발 결과 보고하지 마",
   "테스트 결과 보고 안 해",
   "구현 결과 정리하지 말아줘",
-  "개발 결과 보고했어",
+  "개발 결과 보고해줘. 아니, 보고하지 마",
   "어제 개발 결과 보고했었다",
   "PR 결과 보고가 뭐야?",
   "'개발 결과 보고해줘'라는 문장 분석해줘",
