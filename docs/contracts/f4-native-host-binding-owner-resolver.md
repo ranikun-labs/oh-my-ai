@@ -1,6 +1,6 @@
 # F4 Native Host Binding and Owner Resolver Contract Candidate
 
-Status: integration candidate. The approved MVP rule is automatic Resume only when the trusted Host confirms the same Repository, Worktree, and State Root tuple. Cross-worktree Resume and unapproved Scope Revision changes remain blocked.
+Status: integration candidate. Recommended MVP policy, pending Owner approval: automatic Resume only when the trusted Host confirms the same Repository, Worktree, and State Root tuple. Cross-worktree Resume and unapproved Scope Revision changes remain blocked.
 
 ## Host binding
 
@@ -26,7 +26,7 @@ F4 compares that fresh result with the durable Checkpoint projection before Clai
 - The trusted Host owns authenticated workspace identity and the independent binding record. F4 may verify a supplied contract; it must not implement a Runner, Cloud control plane, or replacement identity provider.
 - RPL-118 owns Capability decisions. A READY result does not authorize dispatch.
 - RPL-115 owns the real single-Task Actor execution evidence. Its status and actual Actor/Resume support must be checked before claiming Native E2E.
-- Same-tuple Resume is in scope. Cross-worktree Resume and Scope Revision transitions require a separate Owner decision.
+- Same-tuple automatic Resume is a recommended MVP behavior and remains unapproved until the Owner confirms it. Cross-worktree Resume and Scope Revision transitions require a separate Owner decision.
 
 ## Evidence boundary
 
