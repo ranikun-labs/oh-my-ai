@@ -2,7 +2,7 @@ name: RPL-121 F6 portfolio briefing
 
 on:
   pull_request:
-    branches: [master]
+    branches: [master, feat/rpl-121-read-only-portfolio-briefing]
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - '.github/workflows/rpl-121-f6.yml'
