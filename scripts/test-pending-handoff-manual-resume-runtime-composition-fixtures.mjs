@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import * as moduleNamespace from "./lib/pending-handoff-manual-resume-runtime-composition.mjs";
+import * as f4NativeCompositionNamespace from "./lib/f4-native-runtime-composition.mjs";
 import { PENDING_HANDOFF_SCHEMA_VERSION } from "./lib/pending-handoff-core.mjs";
 import { createPendingHandoffManualResumeService } from "./lib/pending-handoff-manual-resume.mjs";
 import {
@@ -88,6 +89,7 @@ function capabilityContextResult(candidateId, runtimeId, overrides = {}) {
   const scopeRef = overrides.scopeRef ?? candidateId;
   const environmentFingerprint = overrides.environmentFingerprint ?? "manual-resume-env-v1";
   const environmentRuntimeId = overrides.environmentRuntimeId ?? runtimeId;
+  const environmentProviderId = overrides.environmentProviderId ?? "synthetic-manual-resume";
   const testPlan = { id: "manual-resume-fixtures", digest: "a".repeat(64) };
   const sha = "b".repeat(40);
   const treeSha = "c".repeat(40);
@@ -103,7 +105,7 @@ function capabilityContextResult(candidateId, runtimeId, overrides = {}) {
     },
   };
   const environment = {
-    provider_id: "synthetic-manual-resume",
+    provider_id: environmentProviderId,
     fingerprint: environmentFingerprint,
     runtime_id: environmentRuntimeId,
     capabilities: {
@@ -112,7 +114,7 @@ function capabilityContextResult(candidateId, runtimeId, overrides = {}) {
         verified: true,
         evidence_ref: "synthetic-manual-resume-git-evidence",
         observed_at: new Date().toISOString(),
-        provider_id: "synthetic-manual-resume",
+        provider_id: environmentProviderId,
         runtime_id: environmentRuntimeId,
         environment_fingerprint: environmentFingerprint,
         capability: "git",
@@ -218,6 +220,202 @@ function capabilityContextResult(candidateId, runtimeId, overrides = {}) {
   };
 }
 
+function capabilityMvpContextResult(candidateId, runtimeId, overrides = {}) {
+  const taskId = "RPL-120-f4-native-runtime";
+  const providerId = overrides.providerId ?? "synthetic-rpl118-runtime";
+  const environmentFingerprint = "synthetic-rpl118-environment-v1";
+  const now = new Date().toISOString();
+  const source = {
+    source_id: "code-execution",
+    capability: "e2e",
+    tool_id: "synthetic-runtime:execute",
+    permission: {
+      kind: "CODE_EXECUTION",
+      scope: "candidate:" + candidateId,
+    },
+    operation: "run",
+    resource: "environment:codex",
+    source_revision: "runtime-attestation:1",
+  };
+  const scopeRef = overrides.scopeRef ?? candidateId;
+  const runtimeEvidenceRuntimeId = overrides.runtimeEvidenceRuntimeId ?? runtimeId;
+  const environmentRuntimeId = overrides.environmentRuntimeId ?? runtimeId;
+  const fingerprint = overrides.environmentFingerprint ?? environmentFingerprint;
+  const task = {
+    task_id: taskId,
+    scope_ref: scopeRef,
+    task_kind: "CODE_EXECUTION",
+    sources: [source],
+    policy_evidence: {
+      decision: "allow",
+      task_kind: "CODE_EXECUTION",
+      scope_ref: scopeRef,
+      approval_required: false,
+      evidence_ref: "synthetic-policy:" + taskId,
+    },
+    runtime_evidence: {
+      verified: true,
+      provider_id: providerId,
+      runtime_id: runtimeEvidenceRuntimeId,
+      environment_fingerprint: fingerprint,
+      observed_at: now,
+      evidence_ref: "synthetic-runtime:" + taskId,
+    },
+    source_scope_evidence: {
+      scope_ref: scopeRef,
+      evidence_ref: "synthetic-source-scope:" + taskId,
+      source_ids: [source.source_id],
+    },
+  };
+  const observation = {
+    status: overrides.capabilityStatus ?? "available",
+    verified: true,
+    evidence_ref: "synthetic-capability:code-execution",
+    observed_at: overrides.staleObservation === true
+      ? new Date(Date.now() - 10 * 60 * 1000).toISOString()
+      : now,
+    provider_id: providerId,
+    runtime_id: environmentRuntimeId,
+    environment_fingerprint: fingerprint,
+    capability: source.capability,
+    task_id: taskId,
+    scope_ref: scopeRef,
+    operation: source.operation,
+    resource: source.resource,
+    tool_id: source.tool_id,
+    permission: { ...source.permission },
+    source_revision: source.source_revision,
+    reason: overrides.capabilityStatus === "unavailable" ? "synthetic unavailable" : "",
+  };
+  const environment = {
+    provider_id: providerId,
+    runtime_id: environmentRuntimeId,
+    fingerprint,
+    capabilities: { e2e: observation },
+  };
+
+  if (overrides.handoff === true) {
+    task.handoff_destination = {
+      connected: true,
+      verified: true,
+      destination_id: "synthetic-same-runtime",
+      provider_id: providerId,
+      runtime_id: runtimeEvidenceRuntimeId,
+      environment_fingerprint: fingerprint,
+      tool_id: source.tool_id,
+      operation: source.operation,
+      resource_scope: source.resource,
+      permission_scope: source.permission.scope,
+      scope_ref: scopeRef,
+      evidence_ref: "synthetic-handoff:" + taskId,
+      observed_at: now,
+    };
+  }
+
+  const trustedVerifiers = {
+    verifyPolicyEvidence(evidence, context) {
+      return evidence.evidence_ref === "synthetic-policy:" + context.task_id
+        && evidence.task_kind === context.task_kind
+        && evidence.scope_ref === context.scope_ref;
+    },
+    verifySourceScopeEvidence(evidence, context) {
+      return evidence.evidence_ref === "synthetic-source-scope:" + context.task_id
+        && evidence.scope_ref === context.scope_ref
+        && JSON.stringify(evidence.source_ids)
+          === JSON.stringify(context.required_sources.map(item => item.source_id));
+    },
+    verifyCurrentRuntimeEvidence(evidence, context) {
+      return evidence.evidence_ref === "synthetic-runtime:" + context.task_id
+        && evidence.runtime_id === context.current_runtime_id
+        && evidence.provider_id === providerId
+        && evidence.environment_fingerprint === fingerprint;
+    },
+    verifyCapabilityEvidence(evidence, context) {
+      return evidence.evidence_ref === "synthetic-capability:code-execution"
+        && evidence.runtime_id === context.runtime_id
+        && evidence.provider_id === context.provider_id
+        && evidence.environment_fingerprint === context.environment_fingerprint
+        && evidence.capability === context.capability
+        && evidence.task_id === context.task_id
+        && evidence.scope_ref === context.scope_ref
+        && evidence.operation === context.operation
+        && evidence.resource === context.resource
+        && evidence.source_revision === context.source_revision;
+    },
+    verifySourceEvidence(evidence, context) {
+      return evidence.tool_id === context.tool_id
+        && evidence.permission.kind === context.permission.kind
+        && evidence.permission.scope === context.permission.scope
+        && evidence.operation === context.operation
+        && evidence.resource === context.resource
+        && evidence.source_revision === context.source_revision;
+    },
+    verifyHandoffDestination(evidence, context) {
+      return evidence.evidence_ref === "synthetic-handoff:" + context.task_id
+        && evidence.scope_ref === context.scope_ref
+        && evidence.connected === true
+        && evidence.runtime_id === context.current_runtime.runtime_id
+        && evidence.provider_id === context.current_runtime.provider_id
+        && evidence.environment_fingerprint === context.current_runtime.environment_fingerprint
+        && evidence.tool_id === source.tool_id
+        && evidence.operation === source.operation
+        && evidence.resource_scope === source.resource
+        && evidence.permission_scope === source.permission.scope;
+    },
+  };
+  return { task, environment, trustedVerifiers };
+}
+
+function userLocalStateFixture(records = new Map()) {
+  const stats = { locations: [], reads: 0, publishes: 0, locks: 0, asyncLockCallbacks: 0 };
+  let publishDurabilityUnknown = false;
+  const api = Object.freeze({
+    resolveUserLocalStateLocation(cwd, relativePath, options) {
+      const key = JSON.stringify([cwd, options?.stateRootOverride ?? null, relativePath]);
+      stats.locations.push(relativePath);
+      return Object.freeze({
+        cwd,
+        relativePath,
+        key,
+        rootPath: options?.stateRootOverride ?? "/synthetic-user/.local/state/oh-my-ai",
+        repositoryRoot: cwd,
+        repositoryId: "a".repeat(64),
+        worktreeId: "b".repeat(64),
+      });
+    },
+    readUserLocalState(location) {
+      stats.reads += 1;
+      return records.get(location.key) ?? null;
+    },
+    publishUserLocalStateAtomically(location, contents) {
+      stats.publishes += 1;
+      records.set(location.key, contents);
+      if (publishDurabilityUnknown) {
+        publishDurabilityUnknown = false;
+        const error = new Error(PRIVATE_MARKER);
+        error.code = "state_publish_durability_unknown";
+        throw error;
+      }
+      return Object.freeze({ published: true, byteLength: contents.length });
+    },
+    withPhysicalStateLock(_location, operation) {
+      stats.locks += 1;
+      const result = operation();
+      if (result && typeof result.then === "function") {
+        stats.asyncLockCallbacks += 1;
+        throw new Error("physical state lock callback returned a Promise");
+      }
+      return result;
+    },
+  });
+  return {
+    api,
+    records,
+    stats,
+    setNextPublishDurabilityUnknown() { publishDurabilityUnknown = true; },
+  };
+}
+
 function build(options = {}) {
   const calls = [];
   let serviceFactoryCalls = 0;
@@ -281,6 +479,12 @@ function build(options = {}) {
       }
       return capabilityContextResult(input.candidate_id, input.runtime_id, {
         persistedCandidate: input.persisted_candidate,
+        ...(options.nativeComposition === true
+          ? {
+            environmentFingerprint: options.nativeEnvironmentFingerprint ?? "synthetic-rpl118-environment-v1",
+            environmentProviderId: options.nativeEnvironmentProviderId ?? "synthetic-rpl118-runtime",
+          }
+          : {}),
       });
     },
   };
@@ -295,7 +499,30 @@ function build(options = {}) {
     manualResumeServiceFactory,
   };
   if (options.omitCapabilityContext !== true) dependencies.capabilityContext = capabilityContext;
-  const built = moduleNamespace.createPendingHandoffManualResumeRuntimeComposition(dependencies);
+  let built;
+  let userLocalState;
+  if (options.nativeComposition === true) {
+    userLocalState = options.userLocalState ?? userLocalStateFixture();
+    built = f4NativeCompositionNamespace.createPendingHandoffF4NativeRuntimeComposition({
+      store,
+      claimLease,
+      runtimeEntries: dependencies.runtimeEntries,
+      capabilityContext,
+      userLocalState: userLocalState.api,
+      repositoryCwd: options.repositoryCwd ?? "/repo",
+      ...(options.omitWorktreeStateBindingVerifier === true ? {} : {
+        verifyWorktreeStateBinding: options.verifyWorktreeStateBinding ?? (() => true),
+      }),
+      resolveCapabilityMvpContext: options.resolveCapabilityMvpContext ?? (input => {
+        calls.push(["resolveCapabilityMvpContext", input]);
+        if (options.capabilityMvpFailure === true) throw new Error(PRIVATE_MARKER);
+        return capabilityMvpContextResult(input.candidate_id, input.runtime_id, options.capabilityMvpOverrides);
+      }),
+      ...(options.stateRootOptions === undefined ? {} : { stateRootOptions: options.stateRootOptions }),
+    });
+  } else {
+    built = moduleNamespace.createPendingHandoffManualResumeRuntimeComposition(dependencies);
+  }
   if (options.omitCapabilityContext === true) {
     assert.equal(built.ok, false);
     return {
@@ -306,6 +533,7 @@ function build(options = {}) {
       claimLease,
       attemptOutcomeStore,
       attemptOutcomeRecords: defaultAttemptOutcome.records,
+      userLocalState,
       get serviceFactoryCalls() { return serviceFactoryCalls; },
     };
   }
@@ -318,6 +546,7 @@ function build(options = {}) {
     claimLease,
     attemptOutcomeStore,
     attemptOutcomeRecords: defaultAttemptOutcome.records,
+    userLocalState,
     get serviceFactoryCalls() { return serviceFactoryCalls; },
   };
 }
@@ -1184,11 +1413,349 @@ await group("dependency and lifecycle boundaries", async () => {
   });
 });
 
+await group("native RPL-95 and RPL-118 composition", async () => {
+  await test("READY flows through fresh RPL-118 preflight and the RPL-95 Attempt storage contract", async () => {
+    const built = build({ nativeComposition: true });
+    const result = await built.composition.executeManualResume(request());
+
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(result.value.outcome, "resume_accepted");
+    assert.equal(built.calls.some(([name]) => name === "resolveCapabilityMvpContext"), true);
+    assert.ok(built.calls.findIndex(([name]) => name === "resolveCapabilityMvpContext")
+      < built.calls.findIndex(([name]) => name === "acquireClaim"));
+    assert.ok(built.calls.findIndex(([name]) => name === "acquireClaim")
+      < built.calls.findIndex(([name]) => name === "codex.resolveAndResume"));
+    assert.ok(built.userLocalState.stats.publishes >= 4);
+    assert.equal(built.userLocalState.stats.asyncLockCallbacks, 0);
+    assert.ok(built.userLocalState.stats.locations.every(relativePath => (
+      /^f4\/manual-resume-attempts\/attempt-[a-f0-9]{64}\.json$/.test(relativePath)
+      && !relativePath.includes("composition-candidate-001")
+    )));
+    const persisted = [...built.userLocalState.records.values()].map(contents => JSON.parse(contents));
+    assert.equal(persisted.length, 1);
+    assert.equal(persisted[0].value.status, "accepted");
+    assert.equal(persisted[0].value.attempt_id, ATTEMPT);
+  });
+
+  await test("BLOCKED and UNKNOWN capability evidence fail before Claim or executor", async () => {
+    for (const overrides of [
+      { capabilityStatus: "unavailable" },
+      { staleObservation: true },
+    ]) {
+      const built = build({ nativeComposition: true, capabilityMvpOverrides: overrides });
+      const result = await built.composition.executeManualResume(request());
+      assert.deepEqual(result, { ok: false, reason: "manual_resume_capability_preflight_blocked" });
+      assert.equal(built.calls.some(([name]) => name === "acquireClaim"), false);
+      assert.equal(built.calls.some(([name]) => name === "codex.resolveAndResume"), false);
+      assert.equal(built.userLocalState.stats.publishes, 0);
+    }
+  });
+
+  await test("HANDOFF is not treated as READY or dispatch approval", async () => {
+    const built = build({ nativeComposition: true, capabilityMvpOverrides: { capabilityStatus: "unavailable", handoff: true } });
+    const result = await built.composition.executeManualResume(request());
+    assert.deepEqual(result, { ok: false, reason: "manual_resume_capability_preflight_blocked" });
+    assert.equal(built.calls.some(([name]) => name === "acquireClaim"), false);
+    assert.equal(built.calls.some(([name]) => name === "codex.resolveAndResume"), false);
+  });
+
+  await test("Host repository/worktree mismatch blocks before Attempt read and Claim", async () => {
+    let observedBinding;
+    const built = build({
+      nativeComposition: true,
+      verifyWorktreeStateBinding: binding => {
+        observedBinding = binding;
+        return false;
+      },
+    });
+    const result = await built.composition.executeManualResume(request());
+    assert.deepEqual(result, { ok: false, reason: "manual_resume_capability_preflight_blocked" });
+    assert.equal(observedBinding.repository_cwd, "/repo");
+    assert.equal(observedBinding.candidate_id, "composition-candidate-001");
+    assert.equal(observedBinding.repository_identity, REPOSITORY);
+    assert.equal(observedBinding.worktree_identity, WORKTREE);
+    assert.match(observedBinding.physical_state.state_root_identity, /^[a-f0-9]{64}$/);
+    assert.equal(observedBinding.physical_state.repository_instance_id, "a".repeat(64));
+    assert.equal(observedBinding.physical_state.physical_worktree_id, "b".repeat(64));
+    assert.equal(built.userLocalState.stats.reads, 0);
+    assert.equal(built.calls.some(([name]) => name === "resolveManualResumeContext"), false);
+    assert.equal(built.calls.some(([name]) => name === "acquireClaim"), false);
+    assert.equal(built.calls.some(([name]) => name === "codex.resolveAndResume"), false);
+  });
+
+  await test("missing trusted Host worktree verifier blocks before Claim", async () => {
+    const built = build({ nativeComposition: true, omitWorktreeStateBindingVerifier: true });
+    const result = await built.composition.executeManualResume(request());
+    assert.deepEqual(result, { ok: false, reason: "manual_resume_capability_preflight_blocked" });
+    assert.equal(built.calls.some(([name]) => name === "resolveManualResumeContext"), false);
+    assert.equal(built.calls.some(([name]) => name === "acquireClaim"), false);
+    assert.equal(built.calls.some(([name]) => name === "codex.resolveAndResume"), false);
+  });
+
+  await test("changed RPL-95 state root cannot hide prior UNKNOWN and redispatch", async () => {
+    const userLocalState = userLocalStateFixture();
+    let dispatches = 0;
+    let approvedStateRootIdentity;
+    const verifyWorktreeStateBinding = binding => {
+      const observed = binding.physical_state.state_root_identity;
+      if (approvedStateRootIdentity === undefined) approvedStateRootIdentity = observed;
+      return observed === approvedStateRootIdentity;
+    };
+    const first = build({
+      nativeComposition: true,
+      userLocalState,
+      verifyWorktreeStateBinding,
+      executor: { resolveAndResume: async () => {
+        dispatches += 1;
+        throw new Error(PRIVATE_MARKER);
+      } },
+    });
+    const firstResult = await first.composition.executeManualResume(request());
+    assert.deepEqual(firstResult, { ok: false, reason: "manual_resume_action_outcome_unknown" });
+    assert.equal(dispatches, 1);
+
+    const readsBeforeChangedRoot = userLocalState.stats.reads;
+    const afterRootChange = build({
+      nativeComposition: true,
+      userLocalState,
+      verifyWorktreeStateBinding,
+      stateRootOptions: { stateRootOverride: "/synthetic-user/alternate-state-root" },
+    });
+    const replay = await afterRootChange.composition.executeManualResume(request({
+      claim_attempt_id: "123e4567-e89b-42d3-a456-426614174001",
+    }));
+    assert.deepEqual(replay, { ok: false, reason: "manual_resume_capability_preflight_blocked" });
+    assert.equal(afterRootChange.calls.some(([name]) => name === "acquireClaim"), false);
+    assert.equal(afterRootChange.calls.some(([name]) => name === "codex.resolveAndResume"), false);
+    assert.equal(userLocalState.stats.reads, readsBeforeChangedRoot);
+    assert.equal(dispatches, 1);
+  });
+
+  await test("mutating stateRootOptions after Host verification cannot redirect Attempt lookup", async () => {
+    const userLocalState = userLocalStateFixture();
+    const rootA = "/synthetic-user/pinned-attempt-root";
+    const rootB = "/synthetic-user/mutated-attempt-root";
+    const initialOptions = { stateRootOverride: rootA };
+    let dispatches = 0;
+    const first = build({
+      nativeComposition: true,
+      userLocalState,
+      stateRootOptions: initialOptions,
+      executor: { resolveAndResume: async () => {
+        dispatches += 1;
+        throw new Error(PRIVATE_MARKER);
+      } },
+    });
+    const firstResult = await first.composition.executeManualResume(request());
+    assert.deepEqual(firstResult, { ok: false, reason: "manual_resume_action_outcome_unknown" });
+    assert.equal(dispatches, 1);
+
+    const mutableOptions = { stateRootOverride: rootA };
+    const afterRestart = build({
+      nativeComposition: true,
+      userLocalState,
+      stateRootOptions: mutableOptions,
+      resolveCapabilityMvpContext: input => {
+        mutableOptions.stateRootOverride = rootB;
+        return capabilityMvpContextResult(input.candidate_id, input.runtime_id);
+      },
+    });
+    const replay = await afterRestart.composition.executeManualResume(request({
+      claim_attempt_id: "123e4567-e89b-42d3-a456-426614174001",
+    }));
+    assert.deepEqual(replay, { ok: false, reason: "manual_resume_attempt_recovery_required" });
+    assert.equal(mutableOptions.stateRootOverride, rootB);
+    assert.equal(afterRestart.calls.some(([name]) => name === "acquireClaim"), false);
+    assert.equal(afterRestart.calls.some(([name]) => name === "codex.resolveAndResume"), false);
+    assert.equal([...userLocalState.records.keys()].every(key => JSON.parse(key)[1] === rootA), true);
+    assert.equal(dispatches, 1);
+  });
+
+  await test("physical root drift between Host check and Attempt read fails closed", async () => {
+    const backing = userLocalStateFixture();
+    const api = backing.api;
+    let locationCalls = 0;
+    const driftingApi = Object.freeze({
+      resolveUserLocalStateLocation(cwd, relativePath, options) {
+        locationCalls += 1;
+        const location = api.resolveUserLocalStateLocation(cwd, relativePath, options);
+        return locationCalls === 3
+          ? Object.freeze({ ...location, rootPath: "/synthetic-user/drifted-root" })
+          : location;
+      },
+      readUserLocalState: api.readUserLocalState,
+      publishUserLocalStateAtomically: api.publishUserLocalStateAtomically,
+      withPhysicalStateLock: api.withPhysicalStateLock,
+    });
+    const userLocalState = { ...backing, api: driftingApi };
+    const built = build({ nativeComposition: true, userLocalState });
+    const result = await built.composition.executeManualResume(request());
+
+    assert.deepEqual(result, { ok: false, reason: "manual_resume_attempt_store_unavailable" });
+    assert.equal(locationCalls, 3);
+    assert.equal(backing.stats.reads, 0);
+    assert.equal(built.calls.some(([name]) => name === "acquireClaim"), false);
+    assert.equal(built.calls.some(([name]) => name === "codex.resolveAndResume"), false);
+  });
+
+  await test("scope and runtime mismatch fail before Claim", async () => {
+    for (const overrides of [
+      { scopeRef: "different-candidate-scope" },
+      { runtimeEvidenceRuntimeId: "claude" },
+      { environmentRuntimeId: "claude" },
+      { providerId: "different-runtime-provider" },
+    ]) {
+      const built = build({ nativeComposition: true, capabilityMvpOverrides: overrides });
+      const result = await built.composition.executeManualResume(request());
+      assert.deepEqual(result, { ok: false, reason: "manual_resume_capability_preflight_blocked" });
+      assert.equal(built.calls.some(([name]) => name === "acquireClaim"), false);
+      assert.equal(built.calls.some(([name]) => name === "codex.resolveAndResume"), false);
+    }
+  });
+
+  await test("post-Claim response loss persists UNKNOWN and blocks same or new Attempt after restart", async () => {
+    const userLocalState = userLocalStateFixture();
+    let dispatches = 0;
+    const first = build({
+      nativeComposition: true,
+      userLocalState,
+      executor: { resolveAndResume: async () => {
+        dispatches += 1;
+        throw new Error(PRIVATE_MARKER);
+      } },
+    });
+    const firstResult = await first.composition.executeManualResume(request());
+    assert.deepEqual(firstResult, { ok: false, reason: "manual_resume_action_outcome_unknown" });
+    assert.equal(dispatches, 1);
+    const unknownRecord = [...userLocalState.records.values()].map(contents => JSON.parse(contents).value)[0];
+    assert.equal(unknownRecord.status, "dispatch_unknown");
+
+    const afterRestart = build({ nativeComposition: true, userLocalState });
+    const replay = await afterRestart.composition.executeManualResume(request());
+    assert.deepEqual(replay, { ok: false, reason: "manual_resume_attempt_replay_blocked" });
+    const freshAttempt = await afterRestart.composition.executeManualResume(request({
+      claim_attempt_id: "123e4567-e89b-42d3-a456-426614174001",
+    }));
+    assert.deepEqual(freshAttempt, { ok: false, reason: "manual_resume_attempt_recovery_required" });
+    assert.equal(afterRestart.calls.some(([name]) => name === "acquireClaim"), false);
+    assert.equal(afterRestart.calls.some(([name]) => name === "codex.resolveAndResume"), false);
+    assert.equal(dispatches, 1);
+  });
+});
+
 await group("Makefile composition wiring", async () => {
   await test("declares the composition target after Claude resolution", () => {
     assert.match(MAKEFILE_SOURCE, /^test-pending-handoff-manual-resume-runtime-composition-fixtures:\n\tnode \.\/scripts\/test-pending-handoff-manual-resume-runtime-composition-fixtures\.mjs$/m);
     assert.equal((MAKEFILE_SOURCE.match(/test-pending-handoff-manual-resume-runtime-composition-fixtures/g) ?? []).length, 4);
     assert.ok(MAKEFILE_SOURCE.indexOf("test-pending-handoff-claude-runtime-adapter-fixtures") < MAKEFILE_SOURCE.indexOf("test-pending-handoff-manual-resume-runtime-composition-fixtures"));
+  });
+});
+
+await group("F4 scope checkpoint composition", async () => {
+  await test("persists and restores a revision-CAS scope checkpoint through RPL-95 primitives", () => {
+    const built = build({ nativeComposition: true });
+    assert.deepEqual(Reflect.ownKeys(built.composition), [
+      "executeManualResume",
+      "readScopeCheckpoint",
+      "reconcileScopeCheckpoint",
+    ]);
+
+    const approvedScope = {
+      objectiveId: "RPL-112",
+      scopeRevision: "RPL-112/comment/10729",
+      source: {
+        uri: "https://ranikunlabs.atlassian.net/browse/RPL-112",
+        revision: "RPL-112/comment/10729",
+        coverage: "COMPLETE",
+      },
+      requiredSources: [{ uri: "https://ranikunlabs.atlassian.net/rest/api/3/search" }],
+      items: [{ id: "F4", primaryJira: "RPL-120", owner: "F4" }],
+    };
+    const first = built.composition.reconcileScopeCheckpoint({
+      approvedScope,
+      expectedCheckpointRevision: null,
+      refresh: {
+        sourceUri: "https://ranikunlabs.atlassian.net/rest/api/3/search",
+        sourceRevision: "jira-snapshot/first",
+        expectedPriorRevision: null,
+        refreshScope: "FULL_SOURCE",
+        coverage: "COMPLETE",
+        partialReasons: [],
+        observations: [{ id: "F4", status: "READY" }],
+      },
+      recentExecution: { primaryJira: "RPL-120", writer: "f4-writer", prHead: null },
+      nextReadyId: "F4",
+      stopReason: null,
+    });
+    assert.equal(first.ok, true);
+    assert.equal(first.checkpoint.checkpointRevision, 1);
+    assert.equal(built.userLocalState.stats.asyncLockCallbacks, 0);
+
+    const resumed = built.composition.readScopeCheckpoint({ objectiveId: "RPL-112" });
+    assert.equal(resumed.ok, true);
+    assert.equal(resumed.value.scopeRevision, "RPL-112/comment/10729");
+    assert.equal(resumed.value.nextReadyId, "F4");
+
+    const blocked = built.composition.reconcileScopeCheckpoint({
+      approvedScope,
+      expectedCheckpointRevision: 1,
+      refresh: {
+        sourceUri: "https://ranikunlabs.atlassian.net/rest/api/3/search",
+        sourceRevision: "jira-snapshot/next",
+        expectedPriorRevision: "jira-snapshot/first",
+        refreshScope: "INCREMENTAL_DELTA",
+        coverage: "COMPLETE",
+        partialReasons: [],
+        observations: [{ id: "F4", status: "BLOCKED" }],
+      },
+      recentExecution: null,
+      nextReadyId: null,
+      stopReason: "NO_VERIFIED_READY",
+    });
+    assert.equal(blocked.ok, true);
+    assert.equal(blocked.checkpoint.checkpointRevision, 2);
+    assert.equal(blocked.checkpoint.statusSummary.BLOCKED, 1);
+    assert.equal(blocked.checkpoint.goalDoneEligible, false);
+    assert.ok(built.userLocalState.stats.locations.some(relativePath => (
+      /^f4\/scope-preservation-checkpoints\/checkpoint-[a-f0-9]{64}\.json$/.test(relativePath)
+    )));
+
+    const staleResume = built.composition.reconcileScopeCheckpoint({
+      approvedScope,
+      expectedCheckpointRevision: 1,
+      refresh: null,
+      recentExecution: null,
+      nextReadyId: null,
+      stopReason: "PARTIAL_DISCOVERY",
+    });
+    assert.equal(staleResume.ok, false);
+    assert.equal(staleResume.reason, "STALE_CHECKPOINT_REVISION");
+    assert.equal(built.userLocalState.stats.asyncLockCallbacks, 0);
+
+    built.userLocalState.setNextPublishDurabilityUnknown();
+    const unknownPublication = built.composition.reconcileScopeCheckpoint({
+      approvedScope,
+      expectedCheckpointRevision: 2,
+      refresh: {
+        sourceUri: "https://ranikunlabs.atlassian.net/rest/api/3/search",
+        sourceRevision: "jira-snapshot/unknown-publication",
+        expectedPriorRevision: "jira-snapshot/next",
+        refreshScope: "INCREMENTAL_DELTA",
+        coverage: "COMPLETE",
+        partialReasons: [],
+        observations: [{ id: "F4", status: "DONE" }],
+      },
+      recentExecution: null,
+      nextReadyId: null,
+      stopReason: null,
+    });
+    assert.equal(unknownPublication.ok, false);
+    assert.equal(unknownPublication.reason, "scope_checkpoint_publication_unknown");
+    assert.equal(unknownPublication.checkpoint, null);
+    const reconciledAfterUnknown = built.composition.readScopeCheckpoint({ objectiveId: "RPL-112" });
+    assert.equal(reconciledAfterUnknown.ok, true);
+    assert.equal(reconciledAfterUnknown.value.checkpointRevision, 3);
+    assert.equal(reconciledAfterUnknown.value.statusSummary.DONE, 1);
   });
 });
 
