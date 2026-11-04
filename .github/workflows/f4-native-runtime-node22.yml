@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - ".github/workflows/f4-native-runtime-node22.yml"
+      - "docs/contracts/f4-execution-capability.md"
       - "docs/contracts/f4-native-host-binding-owner-resolver.md"
       - "scripts/lib/f4-native-runtime-composition.mjs"
       - "scripts/lib/f4-physical-state-binding.mjs"
@@ -26,6 +27,7 @@ on:
       - feat/rpl-118-capability-preflight-mvp-20261102
     paths:
       - ".github/workflows/f4-native-runtime-node22.yml"
+      - "docs/contracts/f4-execution-capability.md"
       - "docs/contracts/f4-native-host-binding-owner-resolver.md"
       - "scripts/lib/f4-native-runtime-composition.mjs"
       - "scripts/lib/f4-physical-state-binding.mjs"
