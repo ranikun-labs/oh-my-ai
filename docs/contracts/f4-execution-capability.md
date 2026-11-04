@@ -386,9 +386,14 @@ simulated legacy Claim release plus a Candidate revision change, and an
 accepted Attempt with simulated Result success followed by Checkpoint CAS
 failure and process restart. They verify only that the current Attempt gate
 refuses a second Claim/Runtime call. They do not exercise a Result or
-Checkpoint Port, checkpoint-only retry, physical persistence, or production
-recovery. The separate process-contention fixtures use a test provider and do
-not establish cross-process production durability.
+Checkpoint Port, checkpoint-only retry, or production recovery. The separate
+Attempt service contention fixtures use a test provider. The dedicated
+`test-f4-rpl95-attempt-store-integration.mjs` additionally checks the
+RPL-120-specific provider against the exact RPL-95 PR #92 source and races two
+OS processes after both observed an absent record. It proves that one Attempt
+reaches `dispatch_unknown` and that a later Attempt is blocked after the writer
+process exits. This is cross-process Attempt-store evidence, not a real Host,
+Actor, Runtime dispatch, Result/Checkpoint, or Resume E2E.
 
 ### Owner Decision required — Result and Checkpoint contract
 
@@ -412,12 +417,20 @@ durability evidence; a failed or ambiguous write remains blocked.
 `resume_accepted` cannot be promoted into a completed Result or used to infer a
 Checkpoint.
 
-No concrete RPL-95 physical-state provider, RPL-94 Association API, RPL-93 M5
-Task Context/Fresh Observation/Resume entrypoint, or supported Runtime Result
-provider is available on this PR's public base. RPL-120 must consume those
-published contracts when available; it must not write parallel RPL-95 state
-or redefine RPL-94 Association lifecycle. The RPL-120 provider adapter is
-implemented and fixture-tested, but has no approved physical provider
-connection; M1 remains OPEN. Cross-process production Claim arbitration, safe
-UNKNOWN recovery, result/checkpoint persistence, and product Manual Resume E2E
-remain separate, unverified gates.
+The RPL-95 physical-state source is available on PR #92 and the RPL-120
+Attempt provider consumes its published resolver, atomic publisher, and
+physical lock through an exact-source integration test. PR #92 is still a
+separate Draft and is not part of this branch's base. The RPL-94 Association
+API, RPL-93 M5 Task Context/Fresh Observation/Resume entrypoint, and supported
+Runtime Result provider are not available to this integration. RPL-120 must
+consume those published contracts; it must not write parallel RPL-95 state or
+redefine RPL-94 Association lifecycle.
+
+M1's durable Attempt-store slice now has exact-source, cross-process evidence:
+after the two-process CAS race, one Attempt remains `dispatch_unknown` and a
+new Attempt for the same Candidate/action is rejected. Full M1/Native closure
+remains unverified until a trusted Host verifier and supported product caller
+are wired and exercised; the integration fixture's out-of-root Host record is
+synthetic. Cross-process production Claim arbitration, authoritative UNKNOWN
+reconciliation, Result/Checkpoint persistence, and product Manual Resume E2E
+remain separate gates.

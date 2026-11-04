@@ -16,7 +16,7 @@ metadata:
 2. **흐름이 안정**됐는가. 아직 바뀌는 중이면 보류 — 만들고 곧 4번 고칠 거면 이르다.
 3. **ROI > 유지비**인가.
 
-미달이면 `.oh-my-ai/state/automation-candidates.log` 같은 local-only state에 후보로 캡처하고 흘려보낸다. `automation-backlog.md`는 사용자가 확인한 항목만 수동 승격하는 tracked backlog로 둔다.
+미달이면 현재 대화에서 일반화 가능한 아이디어만 요약한다. Prompt-routing hook은 원문 대신 SHA-256 digest만 Harness clone/worktree별 user-local state의 `automation/candidates.json`에 남기므로, digest에서 원래 요청을 복원하거나 후보 설명으로 취급하지 않는다. `automation-backlog.md`는 사용자가 확인한 항목만 수동 승격하는 tracked backlog로 둔다.
 
 ## 형태 선택 — 하나만 추천 (survey 금지)
 | 형태 | 언제 |
@@ -41,5 +41,5 @@ metadata:
 - **형태 오선택** → 이 스킬의 **형태 선택 표**에 분별 기준 보강.
 
 규칙:
-- 미스는 즉석 수정 말고 `.oh-my-ai/state/automation-candidates.log`에 한 줄 회고로 캡처하고, 사용자 확인 후 `automation-backlog.md`로 수동 승격한다.
+- 미스는 즉석 수정 말고 민감 정보와 원문을 제외한 한 줄 회고로 정리한다. Prompt-routing state에는 prompt digest만 저장되며, 회고는 사용자 확인 후 `automation-backlog.md`로 수동 승격한다.
 - **비대화 금지.** 새 규칙을 넣으면 낡거나 겹치는 줄을 지워 분량을 일정하게 유지한다.
