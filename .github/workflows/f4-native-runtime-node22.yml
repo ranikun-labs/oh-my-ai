@@ -5,6 +5,7 @@ on:
     paths:
       - ".github/workflows/f4-native-runtime-node22.yml"
       - "scripts/lib/f4-native-runtime-composition.mjs"
+      - "scripts/lib/f4-physical-state-binding.mjs"
       - "scripts/lib/pending-handoff-manual-resume-attempt-outcome-user-local-provider.mjs"
       - "scripts/lib/f4-scope-preservation-checkpoint.mjs"
       - "scripts/lib/f4-scope-preservation-checkpoint-user-local-store.mjs"
@@ -24,6 +25,7 @@ on:
     paths:
       - ".github/workflows/f4-native-runtime-node22.yml"
       - "scripts/lib/f4-native-runtime-composition.mjs"
+      - "scripts/lib/f4-physical-state-binding.mjs"
       - "scripts/lib/pending-handoff-manual-resume-attempt-outcome-user-local-provider.mjs"
       - "scripts/lib/f4-scope-preservation-checkpoint.mjs"
       - "scripts/lib/f4-scope-preservation-checkpoint-user-local-store.mjs"
@@ -57,6 +59,7 @@ jobs:
       - name: Verify source syntax
         run: |
           node --check scripts/lib/f4-native-runtime-composition.mjs
+          node --check scripts/lib/f4-physical-state-binding.mjs
           node --check scripts/lib/pending-handoff-manual-resume-attempt-outcome-user-local-provider.mjs
           node --check scripts/lib/f4-scope-preservation-checkpoint.mjs
           node --check scripts/lib/f4-scope-preservation-checkpoint-user-local-store.mjs

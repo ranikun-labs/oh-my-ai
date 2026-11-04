@@ -1,7 +1,10 @@
-import { createHash } from "node:crypto";
-import os from "node:os";
 import path from "node:path";
 import { types as utilTypes } from "node:util";
+import {
+  f4PhysicalStateBindingFromLocation,
+  sameF4PhysicalStateBinding,
+  snapshotF4StateRootOptions,
+} from "./f4-physical-state-binding.mjs";
 import {
   RPL120_MANUAL_RESUME_ATTEMPT_STORE_NAMESPACE,
 } from "./pending-handoff-manual-resume-attempt-outcome-store-adapter.mjs";
@@ -22,13 +25,6 @@ const CAS_REQUEST_KEYS = Object.freeze([
 const ENVELOPE_KEYS = Object.freeze(["schema_version", "namespace", "record_key", "value"]);
 const RECORD_KEY_PATTERN = /^attempt-[a-f0-9]{64}$/;
 const ATTEMPT_RELATIVE_ROOT = "f4/manual-resume-attempts";
-const STATE_ROOT_OPTION_KEYS = Object.freeze([
-  "stateRootOverride",
-  "env",
-  "homeDirectory",
-  "protectedRepositoryCwds",
-]);
-const STATE_ROOT_ENV_KEYS = Object.freeze(["OH_MY_AI_STATE_ROOT", "XDG_STATE_HOME"]);
 
 /**
  * Adapt RPL-120 Attempt/Outcome records to RPL-95's physical user-local state
@@ -56,7 +52,7 @@ export function createPendingHandoffManualResumeAttemptOutcomeUserLocalRecordPro
   if (userLocalState === null) return failure("manual_resume_attempt_store_invalid");
 
   const cwd = input.values.cwd;
-  const stateRootOptions = snapshotStateRootOptions(input.values.stateRootOptions);
+  const stateRootOptions = snapshotF4StateRootOptions(input.values.stateRootOptions);
   if (stateRootOptions === null) return failure("manual_resume_attempt_store_invalid");
   const initialBinding = readPhysicalStateBinding(userLocalState, cwd, stateRootOptions);
   if (!initialBinding.ok) return failure("manual_resume_worktree_binding_unverified");
@@ -80,73 +76,6 @@ export function createPendingHandoffManualResumeAttemptOutcomeUserLocalRecordPro
   }));
 }
 
-function snapshotStateRootOptions(value) {
-  const source = value === undefined ? Object.create(null) : value;
-  const inspected = inspectExactDataObject(source, [], STATE_ROOT_OPTION_KEYS);
-  if (!inspected.ok) return null;
-
-  const options = inspected.values;
-  const stateRootOverride = Object.hasOwn(options, "stateRootOverride")
-    ? options.stateRootOverride
-    : undefined;
-  if (stateRootOverride !== undefined && stateRootOverride !== null
-    && (typeof stateRootOverride !== "string" || stateRootOverride.includes("\0")
-      || (stateRootOverride !== "" && !path.isAbsolute(stateRootOverride)))) return null;
-
-  const environment = snapshotStateRootEnvironment(options.env ?? process.env);
-  if (environment === null) return null;
-
-  const homeDirectory = options.homeDirectory === undefined ? os.homedir() : options.homeDirectory;
-  if (typeof homeDirectory !== "string" || !path.isAbsolute(homeDirectory) || homeDirectory.includes("\0")) {
-    return null;
-  }
-
-  const protectedRepositoryCwds = snapshotProtectedRepositoryCwds(options.protectedRepositoryCwds ?? []);
-  if (protectedRepositoryCwds === null) return null;
-
-  return Object.freeze({
-    stateRootOverride,
-    env: environment,
-    homeDirectory,
-    protectedRepositoryCwds,
-  });
-}
-
-function snapshotStateRootEnvironment(value) {
-  if (utilTypes.isProxy(value) || (value !== process.env && !isPlainObject(value))) return null;
-  const snapshot = Object.create(null);
-  for (const key of STATE_ROOT_ENV_KEYS) {
-    const descriptor = Object.getOwnPropertyDescriptor(value, key);
-    if (descriptor === undefined) continue;
-    if (!isEnumerableDataDescriptor(descriptor)) return null;
-    const item = descriptor.value;
-    if (item !== undefined && item !== null
-      && !["string", "number", "boolean"].includes(typeof item)) return null;
-    snapshot[key] = item;
-  }
-  return Object.freeze(snapshot);
-}
-
-function snapshotProtectedRepositoryCwds(value) {
-  if (!Array.isArray(value) || utilTypes.isProxy(value)) return null;
-  const length = value.length;
-  if (!Number.isSafeInteger(length) || length > 1024) return null;
-  const keys = Reflect.ownKeys(value);
-  if (keys.length !== length + 1
-    || keys.some(key => key !== "length"
-      && (typeof key !== "string" || !/^(0|[1-9]\d*)$/.test(key) || Number(key) >= length))) return null;
-
-  const result = [];
-  for (let index = 0; index < length; index += 1) {
-    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
-    if (!isEnumerableDataDescriptor(descriptor)
-      || typeof descriptor.value !== "string"
-      || descriptor.value.includes("\0")) return null;
-    result.push(descriptor.value);
-  }
-  return Object.freeze(result);
-}
-
 function readPhysicalStateBinding(userLocalState, cwd, stateRootOptions) {
   let location;
   try {
@@ -156,35 +85,18 @@ function readPhysicalStateBinding(userLocalState, cwd, stateRootOptions) {
     return failure(stateFailureReason(error));
   }
 
-  return physicalStateBindingFromLocation(location);
-}
-
-function physicalStateBindingFromLocation(location) {
-  const rootPath = ownData(location, "rootPath");
-  const repositoryRoot = ownData(location, "repositoryRoot");
-  const repositoryId = ownData(location, "repositoryId");
-  const worktreeId = ownData(location, "worktreeId");
-  if (typeof rootPath !== "string" || !path.isAbsolute(rootPath) || rootPath.includes("\0")
-    || typeof repositoryRoot !== "string" || !path.isAbsolute(repositoryRoot) || repositoryRoot.includes("\0")
-    || !isPhysicalIdentity(repositoryId)
-    || !isPhysicalIdentity(worktreeId)) {
-    return failure("manual_resume_worktree_binding_unverified");
+  try {
+    withSynchronousPhysicalLock(userLocalState, location, () => true);
+  } catch (error) {
+    return failure(stateFailureReason(error));
   }
-
-  const stateRootIdentity = createHash("sha256")
-    .update(`rpl95-state-root-v1\0${rootPath}`, "utf8")
-    .digest("hex");
-  return success(Object.freeze({
-    contract: "rpl95-worktree-state-v1",
-    state_root_identity: stateRootIdentity,
-    repository_instance_id: repositoryId,
-    physical_worktree_id: worktreeId,
-  }));
+  const binding = f4PhysicalStateBindingFromLocation(location);
+  return binding.ok ? binding : failure("manual_resume_worktree_binding_unverified");
 }
 
 function readBoundPhysicalStateBinding(userLocalState, cwd, stateRootOptions, expectedBinding) {
   const current = readPhysicalStateBinding(userLocalState, cwd, stateRootOptions);
-  if (!current.ok || !samePhysicalStateBinding(current.value, expectedBinding)) {
+  if (!current.ok || !sameF4PhysicalStateBinding(current.value, expectedBinding)) {
     return failure("manual_resume_worktree_binding_unverified");
   }
   return current;
@@ -200,6 +112,9 @@ function readRecord(userLocalState, cwd, stateRootOptions, expectedBinding, requ
       return failure("manual_resume_worktree_binding_unverified");
     }
     return withSynchronousPhysicalLock(userLocalState, location, () => {
+      if (!matchesPhysicalStateBinding(location, expectedBinding)) {
+        return failure("manual_resume_worktree_binding_unverified");
+      }
       const contents = userLocalState.readUserLocalState(location);
       if (contents === null) return success(null);
       if (typeof contents !== "string") return success(Object.freeze({}));
@@ -240,6 +155,9 @@ function compareAndSetRecord(userLocalState, cwd, stateRootOptions, expectedBind
       return failure("manual_resume_worktree_binding_unverified");
     }
     return withSynchronousPhysicalLock(userLocalState, location, () => {
+      if (!matchesPhysicalStateBinding(location, expectedBinding)) {
+        return failure("manual_resume_worktree_binding_unverified");
+      }
       const contents = userLocalState.readUserLocalState(location);
       if (contents !== null && typeof contents !== "string") return failure("record_invalid");
 
@@ -378,20 +296,8 @@ function ownData(value, key) {
 }
 
 function matchesPhysicalStateBinding(location, expectedBinding) {
-  const actual = physicalStateBindingFromLocation(location);
-  return actual.ok && samePhysicalStateBinding(actual.value, expectedBinding);
-}
-
-function samePhysicalStateBinding(left, right) {
-  return isPlainObject(left) && isPlainObject(right)
-    && left.contract === right.contract
-    && left.state_root_identity === right.state_root_identity
-    && left.repository_instance_id === right.repository_instance_id
-    && left.physical_worktree_id === right.physical_worktree_id;
-}
-
-function isPhysicalIdentity(value) {
-  return typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
+  const actual = f4PhysicalStateBindingFromLocation(location);
+  return actual.ok && sameF4PhysicalStateBinding(actual.value, expectedBinding);
 }
 
 function isEnumerableDataDescriptor(descriptor) {

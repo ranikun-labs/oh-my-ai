@@ -23,6 +23,7 @@ const REQUIRED_KEYS = Object.freeze([
   "userLocalState",
   "repositoryCwd",
   "resolveCapabilityMvpContext",
+  "resolveApprovedWorkstreamForManualResume",
 ]);
 const OPTIONAL_KEYS = Object.freeze([
   "manualResumeServiceFactory",
@@ -44,7 +45,11 @@ const MANUAL_RESUME_TASK_KIND = "CODE_EXECUTION";
  * cross-worktree Resume unless its trusted source confirms the same binding.
  * The expected state-root identity must come from an independently retained
  * Host record; deriving both expected and observed values from this call is
- * insufficient. Missing or inconclusive Host evidence fails closed.
+ * insufficient. A trusted Owner/Inventory resolver must also return the
+ * approved Objective/Scope Revision, selected workstream, and fresh complete
+ * READY observation; this composition checks that evidence against the durable
+ * checkpoint before the existing Attempt/Claim path. Missing or inconclusive
+ * Host evidence fails closed.
  */
 export function createPendingHandoffF4NativeRuntimeComposition(options) {
   const input = inspectExactDataObject(options, REQUIRED_KEYS, OPTIONAL_KEYS);
@@ -53,6 +58,8 @@ export function createPendingHandoffF4NativeRuntimeComposition(options) {
     || !isAbsolutePath(input.values.repositoryCwd)
     || typeof input.values.resolveCapabilityMvpContext !== "function"
     || utilTypes.isProxy(input.values.resolveCapabilityMvpContext)
+    || typeof input.values.resolveApprovedWorkstreamForManualResume !== "function"
+    || utilTypes.isProxy(input.values.resolveApprovedWorkstreamForManualResume)
     || (Object.hasOwn(input.values, "verifyWorktreeStateBinding")
       && (typeof input.values.verifyWorktreeStateBinding !== "function"
         || utilTypes.isProxy(input.values.verifyWorktreeStateBinding)))) {
@@ -81,12 +88,33 @@ export function createPendingHandoffF4NativeRuntimeComposition(options) {
   });
   if (!attemptStoreResult.ok) return failure("manual_resume_runtime_dependency_invalid");
 
+  const initialPhysicalBinding = recordProvider.readPhysicalStateBinding();
+  if (!initialPhysicalBinding.ok) return failure("manual_resume_worktree_binding_unverified");
+  const checkpointStore = createF4ScopePreservationCheckpointUserLocalStore({
+    cwd: input.values.repositoryCwd,
+    userLocalState: input.values.userLocalState,
+    stateRootOptions: recordProvider.stateRootOptions,
+    expectedPhysicalStateBinding: initialPhysicalBinding.value,
+    verifyStateRootBinding: binding => {
+      if (typeof input.values.verifyWorktreeStateBinding !== "function") return false;
+      return input.values.verifyWorktreeStateBinding(Object.freeze({
+        binding_kind: binding.binding_kind,
+        repository_cwd: binding.repository_cwd,
+        objective_id: binding.objective_id,
+        physical_state: binding.physical_state,
+      }));
+    },
+  });
+  if (!checkpointStore.ok) return failure("scope_checkpoint_store_unavailable");
+
   const capabilityContext = createCapabilityContextBridge(
     baseCapabilityContext,
     input.values.resolveCapabilityMvpContext,
     input.values.verifyWorktreeStateBinding ?? null,
+    input.values.resolveApprovedWorkstreamForManualResume,
     input.values.repositoryCwd,
     recordProvider.readPhysicalStateBinding,
+    checkpointStore.value,
   );
   const compositionOptions = {
     store: input.values.store,
@@ -101,14 +129,6 @@ export function createPendingHandoffF4NativeRuntimeComposition(options) {
   const manualResume = createPendingHandoffManualResumeRuntimeComposition(compositionOptions);
   if (!manualResume.ok) return manualResume;
 
-  const checkpointStoreOptions = {
-    cwd: input.values.repositoryCwd,
-    userLocalState: input.values.userLocalState,
-    stateRootOptions: recordProvider.stateRootOptions,
-  };
-  const checkpointStore = createF4ScopePreservationCheckpointUserLocalStore(checkpointStoreOptions);
-  if (!checkpointStore.ok) return failure("scope_checkpoint_store_unavailable");
-
   return success(Object.freeze({
     executeManualResume: manualResume.value.executeManualResume,
     readScopeCheckpoint: request => readScopeCheckpoint(checkpointStore.value, request),
@@ -116,7 +136,7 @@ export function createPendingHandoffF4NativeRuntimeComposition(options) {
   }));
 }
 
-function readScopeCheckpoint(checkpointStore, request) {
+async function readScopeCheckpoint(checkpointStore, request) {
   const input = inspectExactDataObject(request, ["objectiveId"]);
   if (!input.ok || !isSafeObjectiveId(input.values.objectiveId)) {
     return failure("scope_checkpoint_input_invalid");
@@ -124,7 +144,7 @@ function readScopeCheckpoint(checkpointStore, request) {
   return checkpointStore.readCheckpoint({ objectiveId: input.values.objectiveId });
 }
 
-function reconcileScopeCheckpoint(checkpointStore, request) {
+async function reconcileScopeCheckpoint(checkpointStore, request) {
   const input = inspectExactDataObject(request, [
     "approvedScope",
     "expectedCheckpointRevision",
@@ -137,7 +157,7 @@ function reconcileScopeCheckpoint(checkpointStore, request) {
   const objectiveId = ownData(input.values.approvedScope, "objectiveId");
   if (!isSafeObjectiveId(objectiveId)) return failure("scope_checkpoint_input_invalid");
 
-  const current = checkpointStore.readCheckpoint({ objectiveId });
+  const current = await checkpointStore.readCheckpoint({ objectiveId });
   if (!current.ok) return failure(current.reason);
   const projection = createF4ScopePreservingCheckpoint({
     ...input.values,
@@ -145,7 +165,7 @@ function reconcileScopeCheckpoint(checkpointStore, request) {
   });
   if (!projection.ok) return projection;
 
-  const persisted = checkpointStore.compareAndSetCheckpoint({
+  const persisted = await checkpointStore.compareAndSetCheckpoint({
     objectiveId,
     expectedRevision: current.value?.checkpointRevision ?? null,
     checkpoint: projection.checkpoint,
@@ -168,8 +188,10 @@ function createCapabilityContextBridge(
   baseCapabilityContext,
   resolveCapabilityMvpContext,
   verifyWorktreeStateBinding,
+  resolveApprovedWorkstreamForManualResume,
   repositoryCwd,
   readPhysicalStateBinding,
+  checkpointStore,
 ) {
   return Object.freeze({
     resolveManualResumeContext: async request => {
@@ -235,12 +257,98 @@ function createCapabilityContextBridge(
         return failure("manual_resume_capability_preflight_blocked");
       }
 
+      const scopeVerified = await verifyApprovedReadyWorkstream(
+        resolveApprovedWorkstreamForManualResume,
+        checkpointStore,
+        request,
+        baseContext,
+        context.values,
+        decision,
+      );
+      if (!scopeVerified) return failure("manual_resume_scope_coverage_unverified");
+
       // READY only passes this preflight gate. The existing RPL-120
       // composition still validates the Actor binding, Attempt, Claim,
       // Runtime action, and its separate accepted/unknown result.
       return baseContext;
     },
   });
+}
+
+async function verifyApprovedReadyWorkstream(
+  resolver,
+  checkpointStore,
+  request,
+  baseContext,
+  capabilityContext,
+  decision,
+) {
+  let resolved;
+  try {
+    resolved = await resolver(Object.freeze({
+      request,
+      f4Context: baseContext,
+      task: capabilityContext.task,
+      environment: capabilityContext.environment,
+      capabilityDecision: decision,
+    }));
+  } catch {
+    return false;
+  }
+  const approved = inspectExactDataObject(resolved, [
+    "objectiveId",
+    "scopeRevision",
+    "workstreamId",
+    "observedStatus",
+    "inventoryCoverage",
+    "inventorySourceUri",
+    "inventorySourceRevision",
+  ]);
+  if (!approved.ok || !isSafeObjectiveId(approved.values.objectiveId)
+    || !isNonEmptyString(approved.values.scopeRevision)
+    || !isNonEmptyString(approved.values.workstreamId)
+    || ownData(resolved, "observedStatus") !== "READY"
+    || ownData(resolved, "inventoryCoverage") !== "COMPLETE"
+    || !isNonEmptyString(ownData(resolved, "inventorySourceUri"))
+    || !isNonEmptyString(ownData(resolved, "inventorySourceRevision"))) return false;
+
+  let stored;
+  try {
+    stored = await checkpointStore.readCheckpoint({ objectiveId: approved.values.objectiveId });
+  } catch {
+    return false;
+  }
+  const result = inspectExactDataObject(stored, ["ok"], ["value", "reason"]);
+  if (!result.ok || result.values.ok !== true || !isPlainObject(result.values.value)) return false;
+  const checkpoint = result.values.value;
+  const inventory = ownData(checkpoint, "inventory");
+  const requiredSources = ownData(checkpoint, "requiredSources");
+  const scopeSource = ownData(checkpoint, "scopeSource");
+  const sourceCoverage = ownData(checkpoint, "sourceCoverage");
+  if (ownData(checkpoint, "objectiveId") !== approved.values.objectiveId
+    || ownData(checkpoint, "scopeRevision") !== approved.values.scopeRevision
+    || ownData(checkpoint, "scopeCoverage") !== "COMPLETE"
+    || ownData(checkpoint, "nextReadyId") !== approved.values.workstreamId
+    || !Array.isArray(inventory)
+    || !Array.isArray(requiredSources)
+    || !Array.isArray(sourceCoverage)
+    || (ownData(scopeSource, "uri") !== ownData(resolved, "inventorySourceUri")
+      && !requiredSources.some(source => ownData(source, "uri") === ownData(resolved, "inventorySourceUri")))) {
+    return false;
+  }
+
+  const item = inventory.find(entry => ownData(entry, "id") === approved.values.workstreamId);
+  const source = sourceCoverage.find(entry => ownData(entry, "uri") === ownData(resolved, "inventorySourceUri"));
+  const statusSummary = ownData(checkpoint, "statusSummary");
+  const readyCount = ownData(statusSummary, "READY");
+  return ownData(item, "scopeMember") === true
+    && ownData(item, "status") === "READY"
+    && ownData(item, "sourceUri") === ownData(resolved, "inventorySourceUri")
+    && ownData(item, "sourceRevision") === ownData(resolved, "inventorySourceRevision")
+    && ownData(source, "coverage") === "COMPLETE"
+    && ownData(source, "revision") === ownData(resolved, "inventorySourceRevision")
+    && Number.isSafeInteger(readyCount)
+    && readyCount > 0;
 }
 
 function isReadyForManualResume(decision, mvpContext, baseContext, request) {
@@ -326,6 +434,10 @@ function isAbsolutePath(value) {
 
 function isSafeObjectiveId(value) {
   return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,127}$/.test(value);
+}
+
+function isNonEmptyString(value) {
+  return typeof value === "string" && value.length > 0;
 }
 
 function isPlainObject(value) {

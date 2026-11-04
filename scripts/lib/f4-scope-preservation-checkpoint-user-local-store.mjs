@@ -1,6 +1,11 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { types as utilTypes } from "node:util";
+import {
+  f4PhysicalStateBindingFromLocation,
+  sameF4PhysicalStateBinding,
+  snapshotF4StateRootOptions,
+} from "./f4-physical-state-binding.mjs";
 import { isF4ScopePreservationCheckpoint } from "./f4-scope-preservation-checkpoint.mjs";
 
 const USER_LOCAL_STATE_KEYS = Object.freeze([
@@ -20,10 +25,18 @@ const CHECKPOINT_RELATIVE_ROOT = "f4/scope-preservation-checkpoints";
  * general provider. No async work runs inside the physical lock.
  */
 export function createF4ScopePreservationCheckpointUserLocalStore(options) {
-  const input = inspectExactDataObject(options, ["cwd", "userLocalState"], ["stateRootOptions"]);
+  const input = inspectExactDataObject(options, [
+    "cwd",
+    "userLocalState",
+    "verifyStateRootBinding",
+    "expectedPhysicalStateBinding",
+  ], ["stateRootOptions"]);
   if (!input.ok
     || typeof input.values.cwd !== "string"
     || !path.isAbsolute(input.values.cwd)
+    || typeof input.values.verifyStateRootBinding !== "function"
+    || utilTypes.isProxy(input.values.verifyStateRootBinding)
+    || !isPhysicalStateBinding(input.values.expectedPhysicalStateBinding)
     || (Object.hasOwn(input.values, "stateRootOptions")
       && input.values.stateRootOptions !== undefined
       && !isPlainObject(input.values.stateRootOptions))) {
@@ -33,25 +46,64 @@ export function createF4ScopePreservationCheckpointUserLocalStore(options) {
   if (userLocalState === null) return failure("scope_checkpoint_store_invalid");
 
   const cwd = input.values.cwd;
-  const stateRootOptions = input.values.stateRootOptions;
+  const stateRootOptions = snapshotF4StateRootOptions(input.values.stateRootOptions);
+  if (stateRootOptions === null) return failure("scope_checkpoint_store_invalid");
+  const expectedPhysicalStateBinding = input.values.expectedPhysicalStateBinding;
+  const verifyStateRootBinding = input.values.verifyStateRootBinding;
   return success(Object.freeze({
-    readCheckpoint: request => readCheckpoint(userLocalState, cwd, stateRootOptions, request),
-    compareAndSetCheckpoint: request => compareAndSetCheckpoint(userLocalState, cwd, stateRootOptions, request),
+    readCheckpoint: request => readCheckpoint(
+      userLocalState,
+      cwd,
+      stateRootOptions,
+      expectedPhysicalStateBinding,
+      verifyStateRootBinding,
+      request,
+    ),
+    compareAndSetCheckpoint: request => compareAndSetCheckpoint(
+      userLocalState,
+      cwd,
+      stateRootOptions,
+      expectedPhysicalStateBinding,
+      verifyStateRootBinding,
+      request,
+    ),
   }));
 }
 
-function readCheckpoint(userLocalState, cwd, stateRootOptions, request) {
+async function readCheckpoint(
+  userLocalState,
+  cwd,
+  stateRootOptions,
+  expectedPhysicalStateBinding,
+  verifyStateRootBinding,
+  request,
+) {
   const inspected = inspectExactDataObject(request, ["objectiveId"]);
   if (!inspected.ok || !isObjectiveId(inspected.values.objectiveId)) {
     return failure("scope_checkpoint_input_invalid");
   }
-  return withLockedLocation(userLocalState, cwd, stateRootOptions, inspected.values.objectiveId, location => {
+  return withLockedLocation(
+    userLocalState,
+    cwd,
+    stateRootOptions,
+    expectedPhysicalStateBinding,
+    verifyStateRootBinding,
+    inspected.values.objectiveId,
+    location => {
     const stored = readStoredCheckpoint(userLocalState, location, inspected.values.objectiveId);
     return stored.ok ? success(stored.value) : stored;
-  });
+    },
+  );
 }
 
-function compareAndSetCheckpoint(userLocalState, cwd, stateRootOptions, request) {
+async function compareAndSetCheckpoint(
+  userLocalState,
+  cwd,
+  stateRootOptions,
+  expectedPhysicalStateBinding,
+  verifyStateRootBinding,
+  request,
+) {
   const inspected = inspectExactDataObject(request, CHECKPOINT_KEYS);
   if (!inspected.ok
     || !isObjectiveId(inspected.values.objectiveId)
@@ -66,7 +118,14 @@ function compareAndSetCheckpoint(userLocalState, cwd, stateRootOptions, request)
     return failure("scope_checkpoint_revision_invalid");
   }
 
-  return withLockedLocation(userLocalState, cwd, stateRootOptions, objectiveId, location => {
+  return withLockedLocation(
+    userLocalState,
+    cwd,
+    stateRootOptions,
+    expectedPhysicalStateBinding,
+    verifyStateRootBinding,
+    objectiveId,
+    location => {
     const stored = readStoredCheckpoint(userLocalState, location, objectiveId);
     if (!stored.ok) return stored;
     const current = stored.value;
@@ -86,21 +145,74 @@ function compareAndSetCheckpoint(userLocalState, cwd, stateRootOptions, request)
       return failure("scope_checkpoint_publish_failed");
     }
     return success(checkpoint);
-  });
+    },
+  );
 }
 
-function withLockedLocation(userLocalState, cwd, stateRootOptions, objectiveId, callback) {
+async function withLockedLocation(
+  userLocalState,
+  cwd,
+  stateRootOptions,
+  expectedPhysicalStateBinding,
+  verifyStateRootBinding,
+  objectiveId,
+  callback,
+) {
   try {
     const relativePath = `${CHECKPOINT_RELATIVE_ROOT}/checkpoint-${hashObjectiveId(objectiveId)}.json`;
     const location = stateRootOptions === undefined
       ? userLocalState.resolveUserLocalStateLocation(cwd, relativePath)
       : userLocalState.resolveUserLocalStateLocation(cwd, relativePath, stateRootOptions);
-    const result = userLocalState.withPhysicalStateLock(location, () => callback(location));
+    const observedBinding = f4PhysicalStateBindingFromLocation(location);
+    if (!observedBinding.ok
+      || !sameF4PhysicalStateBinding(observedBinding.value, expectedPhysicalStateBinding)) {
+      return failure("scope_checkpoint_state_root_binding_unverified");
+    }
+    let verified;
+    try {
+      verified = await verifyStateRootBinding(Object.freeze({
+        binding_kind: "scope_checkpoint",
+        objective_id: objectiveId,
+        repository_cwd: cwd,
+        physical_state: observedBinding.value,
+      }));
+    } catch {
+      return failure("scope_checkpoint_state_root_binding_unverified");
+    }
+    if (verified !== true) return failure("scope_checkpoint_state_root_binding_unverified");
+
+    let lockedBinding;
+    const result = userLocalState.withPhysicalStateLock(location, () => {
+      lockedBinding = f4PhysicalStateBindingFromLocation(location);
+      if (!lockedBinding.ok
+        || !sameF4PhysicalStateBinding(lockedBinding.value, observedBinding.value)
+        || !sameF4PhysicalStateBinding(lockedBinding.value, expectedPhysicalStateBinding)) {
+        return failure("scope_checkpoint_state_root_binding_unverified");
+      }
+      return callback(location);
+    });
     if (isThenable(result)) return failure("scope_checkpoint_lock_contract_invalid");
     return isStoreResult(result) ? result : failure("scope_checkpoint_store_unavailable");
   } catch (error) {
     return failure(normalizeStorageFailure(error));
   }
+}
+
+function isPhysicalStateBinding(value) {
+  const inspected = inspectExactDataObject(value, [
+    "contract",
+    "state_root_identity",
+    "repository_instance_id",
+    "physical_worktree_id",
+  ]);
+  return inspected.ok
+    && inspected.values.contract === "rpl95-worktree-state-v2"
+    && typeof inspected.values.state_root_identity === "string"
+    && /^[a-f0-9]{64}$/.test(inspected.values.state_root_identity)
+    && typeof inspected.values.repository_instance_id === "string"
+    && /^[a-f0-9]{64}$/.test(inspected.values.repository_instance_id)
+    && typeof inspected.values.physical_worktree_id === "string"
+    && /^[a-f0-9]{64}$/.test(inspected.values.physical_worktree_id);
 }
 
 function readStoredCheckpoint(userLocalState, location, objectiveId) {
