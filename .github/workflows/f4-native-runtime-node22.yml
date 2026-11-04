@@ -20,6 +20,19 @@ on:
       - "scripts/test-pending-handoff-manual-resume-attempt-outcome-fixtures.mjs"
       - "scripts/test-pending-handoff-manual-resume-attempt-outcome-store-adapter-fixtures.mjs"
       - "scripts/test-pending-handoff-delivery-consumption-fixtures.mjs"
+      - "Makefile"
+      - ".github/workflows/rpl95-user-local-state.yml"
+      - "docs/harness/repo-audit-baseline.md"
+      - "docs/harness/user-local-state.md"
+      - "scripts/lib/hook-failure-state.mjs"
+      - "scripts/lib/user-local-state.mjs"
+      - "scripts/lib/work-start-execution-state.mjs"
+      - "scripts/oh-my-ai.mjs"
+      - "scripts/prompt-routing-hook.mjs"
+      - "scripts/test-install-fixtures.sh"
+      - "scripts/test-user-local-state-fixtures.mjs"
+      - "scripts/test-work-start-fixtures.sh"
+      - "skills/harness-automation/SKILL.md"
   pull_request:
     branches:
       - master
@@ -43,6 +56,19 @@ on:
       - "scripts/test-pending-handoff-manual-resume-attempt-outcome-fixtures.mjs"
       - "scripts/test-pending-handoff-manual-resume-attempt-outcome-store-adapter-fixtures.mjs"
       - "scripts/test-pending-handoff-delivery-consumption-fixtures.mjs"
+      - "Makefile"
+      - ".github/workflows/rpl95-user-local-state.yml"
+      - "docs/harness/repo-audit-baseline.md"
+      - "docs/harness/user-local-state.md"
+      - "scripts/lib/hook-failure-state.mjs"
+      - "scripts/lib/user-local-state.mjs"
+      - "scripts/lib/work-start-execution-state.mjs"
+      - "scripts/oh-my-ai.mjs"
+      - "scripts/prompt-routing-hook.mjs"
+      - "scripts/test-install-fixtures.sh"
+      - "scripts/test-user-local-state-fixtures.mjs"
+      - "scripts/test-work-start-fixtures.sh"
+      - "skills/harness-automation/SKILL.md"
 
 permissions:
   contents: read
@@ -63,6 +89,7 @@ jobs:
         with:
           node-version: 22
       - name: Check out pinned RPL-95 physical storage source
+        if: hashFiles('scripts/lib/user-local-state.mjs') == ''
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: ranikun-labs/oh-my-ai
@@ -70,6 +97,16 @@ jobs:
           path: rpl95-source
           sparse-checkout: scripts/lib/user-local-state.mjs
           sparse-checkout-cone-mode: false
+      - name: Select RPL-95 physical storage source
+        shell: bash
+        run: |
+          if [ -f "$GITHUB_WORKSPACE/scripts/lib/user-local-state.mjs" ]; then
+            module_path="$GITHUB_WORKSPACE/scripts/lib/user-local-state.mjs"
+          else
+            module_path="$GITHUB_WORKSPACE/rpl95-source/scripts/lib/user-local-state.mjs"
+          fi
+          test -f "$module_path"
+          printf '%s\n' "F4_RPL95_USER_LOCAL_STATE_MODULE=$module_path" >> "$GITHUB_ENV"
       - name: Verify source syntax
         run: |
           node --check scripts/lib/f4-native-runtime-composition.mjs
@@ -77,6 +114,9 @@ jobs:
           node --check scripts/lib/pending-handoff-manual-resume-attempt-outcome-user-local-provider.mjs
           node --check scripts/lib/f4-scope-preservation-checkpoint.mjs
           node --check scripts/lib/f4-scope-preservation-checkpoint-user-local-store.mjs
+          for source in scripts/lib/user-local-state.mjs scripts/lib/work-start-execution-state.mjs scripts/lib/hook-failure-state.mjs scripts/test-user-local-state-fixtures.mjs; do
+            if [ -f "$source" ]; then node --check "$source"; fi
+          done
           node --check scripts/lib/pending-handoff-manual-resume-runtime-composition.mjs
           node --check scripts/lib/pending-handoff-manual-resume-attempt-outcome.mjs
           node --check scripts/lib/pending-handoff-manual-resume-attempt-outcome-store-adapter.mjs
@@ -94,7 +134,8 @@ jobs:
           node scripts/test-pending-handoff-delivery-consumption-fixtures.mjs
           node scripts/test-f4-scope-preservation-checkpoint-fixtures.mjs
           node scripts/test-f4-scope-preservation-checkpoint-user-local-store-fixtures.mjs
-      - name: Verify Attempt adapter against exact RPL-95 source
-        env:
-          F4_RPL95_USER_LOCAL_STATE_MODULE: ${{ github.workspace }}/rpl95-source/scripts/lib/user-local-state.mjs
+      - name: Run RPL-95 source fixture when integrated
+        if: hashFiles('scripts/test-user-local-state-fixtures.mjs') != ''
+        run: node scripts/test-user-local-state-fixtures.mjs
+      - name: Verify Attempt adapter against selected RPL-95 source
         run: node scripts/test-f4-rpl95-attempt-store-integration.mjs
