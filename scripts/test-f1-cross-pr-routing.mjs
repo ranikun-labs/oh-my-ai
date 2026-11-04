@@ -37,8 +37,8 @@ function loadCases(name) {
 
 const positives = loadCases("positiveRoutingInputs");
 const negatives = loadCases("negativeRoutingInputs");
-assert.equal(positives.length, 22, "unexpected positive fixture count");
-assert.equal(negatives.length, 21, "unexpected negative fixture count");
+assert.equal(positives.length, 26, "unexpected positive fixture count");
+assert.equal(negatives.length, 23, "unexpected negative fixture count");
 
 const env = { ...process.env, OH_MY_AI_SKILL_INDEX: indexFile };
 function runConsumer(relativePath, format, prompt) {
@@ -73,5 +73,5 @@ for (const prompt of negatives) verifyPrompt(prompt, false, "negative");
 verifyPrompt("로그인 오류 수정해줘", false, "unrelated-development");
 verifyPrompt("일일보고 작성해줘", false, "daily-report");
 
-console.log("F1 cross-PR native consumers passed: 43/43 F1 routes, 2/2 other intents");
+console.log("F1 cross-PR native consumers passed: 49/49 F1 routes, 2/2 other intents");
 console.log("Isolation only: no installed runtime, independent review, or Source Merge.");
