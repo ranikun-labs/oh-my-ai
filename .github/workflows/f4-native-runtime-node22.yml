@@ -4,6 +4,12 @@ on:
   push:
     paths:
       - ".github/workflows/f4-native-runtime-node22.yml"
+      - "scripts/lib/f4-*.mjs"
+      - "scripts/lib/pending-handoff-*.mjs"
+      - "scripts/lib/rpl-118-capability-preflight-mvp.mjs"
+      - "scripts/test-f4-*.mjs"
+      - "scripts/test-pending-handoff-*.mjs"
+      - "scripts/test-rpl-118-capability-preflight-mvp.mjs"
       - "docs/contracts/f4-execution-capability.md"
       - "docs/contracts/f4-native-host-binding-owner-resolver.md"
       - "scripts/lib/f4-native-runtime-composition.mjs"
@@ -40,6 +46,12 @@ on:
       - feat/rpl-118-capability-preflight-mvp-20261102
     paths:
       - ".github/workflows/f4-native-runtime-node22.yml"
+      - "scripts/lib/f4-*.mjs"
+      - "scripts/lib/pending-handoff-*.mjs"
+      - "scripts/lib/rpl-118-capability-preflight-mvp.mjs"
+      - "scripts/test-f4-*.mjs"
+      - "scripts/test-pending-handoff-*.mjs"
+      - "scripts/test-rpl-118-capability-preflight-mvp.mjs"
       - "docs/contracts/f4-execution-capability.md"
       - "docs/contracts/f4-native-host-binding-owner-resolver.md"
       - "scripts/lib/f4-native-runtime-composition.mjs"
