@@ -91,18 +91,40 @@ const created = createF4ScopePreservingCheckpoint({
 });
 assert.equal(created.ok, true);
 
+const trustedBinding = bindingFor("/repo/worktree").value;
+const bindingRequests = [];
+const verifyTrustedCheckpointBinding = request => {
+  bindingRequests.push(request);
+  return Reflect.ownKeys(request).length === 4
+    && request.binding_kind === "scope_checkpoint"
+    && typeof request.objective_id === "string"
+    && request.repository_cwd === "/repo/worktree"
+    && request.physical_state.state_root_identity === trustedBinding.state_root_identity
+    && request.physical_state.repository_instance_id === trustedBinding.repository_instance_id
+    && request.physical_state.physical_worktree_id === trustedBinding.physical_worktree_id;
+};
 const storeResult = createF4ScopePreservationCheckpointUserLocalStore({
   cwd: "/repo/worktree",
   userLocalState,
-  expectedPhysicalStateBinding: bindingFor("/repo/worktree").value,
-  verifyStateRootBinding: () => true,
+  expectedPhysicalStateBinding: trustedBinding,
+  verifyStateRootBinding: verifyTrustedCheckpointBinding,
 });
 assert.equal(storeResult.ok, true);
 const store = storeResult.value;
 
 const missing = await store.readCheckpoint({ objectiveId: "RPL-112" });
 assert.deepEqual(missing, { ok: true, value: null });
+assert.deepEqual(Object.keys(bindingRequests[0]), [
+  "binding_kind",
+  "objective_id",
+  "repository_cwd",
+  "physical_state",
+]);
+assert.equal(bindingRequests[0].binding_kind, "scope_checkpoint");
+assert.equal("repository_identity" in bindingRequests[0], false);
+assert.equal("worktree_identity" in bindingRequests[0], false);
 
+const requestsBeforePublish = bindingRequests.length;
 const published = await store.compareAndSetCheckpoint({
   objectiveId: "RPL-112",
   expectedRevision: null,
@@ -110,12 +132,14 @@ const published = await store.compareAndSetCheckpoint({
 });
 assert.equal(published.ok, true);
 assert.equal(published.value.checkpointRevision, 1);
+assert.equal(bindingRequests.length, requestsBeforePublish + 1);
+assert.equal(bindingRequests.at(-1).binding_kind, "scope_checkpoint");
 
 const restoredStore = createF4ScopePreservationCheckpointUserLocalStore({
   cwd: "/repo/worktree",
   userLocalState,
-  expectedPhysicalStateBinding: bindingFor("/repo/worktree").value,
-  verifyStateRootBinding: () => true,
+  expectedPhysicalStateBinding: trustedBinding,
+  verifyStateRootBinding: verifyTrustedCheckpointBinding,
 });
 const restored = await restoredStore.value.readCheckpoint({ objectiveId: "RPL-112" });
 assert.equal(restored.ok, true);
@@ -127,19 +151,24 @@ const otherWorktreeStore = createF4ScopePreservationCheckpointUserLocalStore({
   cwd: "/repo/other-worktree",
   userLocalState,
   expectedPhysicalStateBinding: bindingFor("/repo/other-worktree").value,
-  verifyStateRootBinding: () => true,
+  verifyStateRootBinding: verifyTrustedCheckpointBinding,
 });
+const readsBeforeWorktreeSubstitution = stats.reads;
 assert.deepEqual(await otherWorktreeStore.value.readCheckpoint({ objectiveId: "RPL-112" }), {
-  ok: true,
-  value: null,
+  ok: false,
+  reason: "scope_checkpoint_state_root_binding_unverified",
 });
+assert.equal(stats.reads, readsBeforeWorktreeSubstitution);
 
+const publishesBeforeStaleWrite = stats.publishes;
 const staleWrite = await store.compareAndSetCheckpoint({
   objectiveId: "RPL-112",
   expectedRevision: 0,
   checkpoint: created.checkpoint,
 });
 assert.deepEqual(staleWrite, { ok: false, reason: "scope_checkpoint_revision_conflict" });
+assert.equal(stats.publishes, publishesBeforeStaleWrite);
+assert.equal((await store.readCheckpoint({ objectiveId: "RPL-112" })).value.checkpointRevision, 1);
 
 const nextProjection = createF4ScopePreservingCheckpoint({
   approvedScope: scope,
@@ -188,14 +217,11 @@ assert.deepEqual(await store.readCheckpoint({ objectiveId: "RPL-112" }), {
   reason: "scope_checkpoint_record_invalid",
 });
 
-const trustedBinding = bindingFor("/repo/worktree").value;
 const stateRootBoundStore = createF4ScopePreservationCheckpointUserLocalStore({
   cwd: "/repo/worktree",
   userLocalState,
   expectedPhysicalStateBinding: trustedBinding,
-  verifyStateRootBinding: request => (
-    request.physical_state.state_root_identity === trustedBinding.state_root_identity
-  ),
+  verifyStateRootBinding: verifyTrustedCheckpointBinding,
 });
 fs.rmSync(rootPath, { recursive: true, force: true });
 fs.mkdirSync(rootPath, { recursive: true, mode: 0o700 });
@@ -205,5 +231,27 @@ assert.deepEqual(await stateRootBoundStore.value.readCheckpoint({ objectiveId: "
   reason: "scope_checkpoint_state_root_binding_unverified",
 });
 assert.equal(stats.reads, readsBeforeRootReplacement);
+
+let staleHostRequest;
+const replacementBinding = bindingFor("/repo/worktree").value;
+const staleHostRecordStore = createF4ScopePreservationCheckpointUserLocalStore({
+  cwd: "/repo/worktree",
+  userLocalState,
+  expectedPhysicalStateBinding: replacementBinding,
+  verifyStateRootBinding: request => {
+    staleHostRequest = request;
+    return request.physical_state.state_root_identity === trustedBinding.state_root_identity;
+  },
+});
+const readsBeforeStaleHostRecord = stats.reads;
+assert.deepEqual(await staleHostRecordStore.value.readCheckpoint({ objectiveId: "RPL-112" }), {
+  ok: false,
+  reason: "scope_checkpoint_state_root_binding_unverified",
+});
+assert.notEqual(
+  staleHostRequest.physical_state.state_root_identity,
+  trustedBinding.state_root_identity,
+);
+assert.equal(stats.reads, readsBeforeStaleHostRecord);
 
 process.stdout.write("F4 scope checkpoint user-local store fixture passed.\n");

@@ -29,6 +29,7 @@ const OPTIONAL_KEYS = Object.freeze([
   "manualResumeServiceFactory",
   "stateRootOptions",
   "verifyWorktreeStateBinding",
+  "verifyScopeCheckpointStateRootBinding",
 ]);
 const CAPABILITY_CONTEXT_KEYS = Object.freeze(["resolveManualResumeContext"]);
 const MVP_CONTEXT_KEYS = Object.freeze(["task", "environment", "trustedVerifiers"]);
@@ -43,6 +44,8 @@ const MANUAL_RESUME_TASK_KIND = "CODE_EXECUTION";
  * opaque F4 repository/worktree identities to RPL-95's physical repository,
  * worktree, and state-root identities. It must reject root changes and
  * cross-worktree Resume unless its trusted source confirms the same binding.
+ * Manual Resume and checkpoint access use separate Host verifier ports;
+ * the checkpoint port cannot authorize a Manual Resume binding or vice versa.
  * The expected state-root identity must come from an independently retained
  * Host record; deriving both expected and observed values from this call is
  * insufficient. A trusted Owner/Inventory resolver must also return the
@@ -62,7 +65,10 @@ export function createPendingHandoffF4NativeRuntimeComposition(options) {
     || utilTypes.isProxy(input.values.resolveApprovedWorkstreamForManualResume)
     || (Object.hasOwn(input.values, "verifyWorktreeStateBinding")
       && (typeof input.values.verifyWorktreeStateBinding !== "function"
-        || utilTypes.isProxy(input.values.verifyWorktreeStateBinding)))) {
+        || utilTypes.isProxy(input.values.verifyWorktreeStateBinding)))
+    || (Object.hasOwn(input.values, "verifyScopeCheckpointStateRootBinding")
+      && (typeof input.values.verifyScopeCheckpointStateRootBinding !== "function"
+        || utilTypes.isProxy(input.values.verifyScopeCheckpointStateRootBinding)))) {
     return failure("manual_resume_runtime_dependency_invalid");
   }
 
@@ -95,15 +101,8 @@ export function createPendingHandoffF4NativeRuntimeComposition(options) {
     userLocalState: input.values.userLocalState,
     stateRootOptions: recordProvider.stateRootOptions,
     expectedPhysicalStateBinding: initialPhysicalBinding.value,
-    verifyStateRootBinding: binding => {
-      if (typeof input.values.verifyWorktreeStateBinding !== "function") return false;
-      return input.values.verifyWorktreeStateBinding(Object.freeze({
-        binding_kind: binding.binding_kind,
-        repository_cwd: binding.repository_cwd,
-        objective_id: binding.objective_id,
-        physical_state: binding.physical_state,
-      }));
-    },
+    verifyStateRootBinding: input.values.verifyScopeCheckpointStateRootBinding
+      ?? (() => false),
   });
   if (!checkpointStore.ok) return failure("scope_checkpoint_store_unavailable");
 

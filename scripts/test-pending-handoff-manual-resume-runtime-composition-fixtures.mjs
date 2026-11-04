@@ -596,6 +596,10 @@ function build(options = {}) {
       ...(options.omitWorktreeStateBindingVerifier === true ? {} : {
         verifyWorktreeStateBinding: options.verifyWorktreeStateBinding ?? (() => true),
       }),
+      ...(options.omitScopeCheckpointStateRootBindingVerifier === true ? {} : {
+        verifyScopeCheckpointStateRootBinding:
+          options.verifyScopeCheckpointStateRootBinding ?? (() => true),
+      }),
       resolveCapabilityMvpContext: options.resolveCapabilityMvpContext ?? (input => {
         calls.push(["resolveCapabilityMvpContext", input]);
         if (options.capabilityMvpFailure === true) throw new Error(PRIVATE_MARKER);
@@ -1530,6 +1534,73 @@ await group("native RPL-95 and RPL-118 composition", async () => {
     assert.ok(persisted.some(record => record.checkpoint?.scopeRevision === FIXTURE_SCOPE.scopeRevision));
   });
 
+  await test("Manual Resume and checkpoint access use separate Host verifier contracts", async () => {
+    const manualRequests = [];
+    const checkpointRequests = [];
+    const built = build({
+      nativeComposition: true,
+      verifyWorktreeStateBinding: binding => {
+        manualRequests.push(binding);
+        return binding.repository_cwd === "/repo"
+          && binding.candidate_id === "composition-candidate-001"
+          && binding.repository_identity === REPOSITORY
+          && binding.worktree_identity === WORKTREE;
+      },
+      verifyScopeCheckpointStateRootBinding: binding => {
+        checkpointRequests.push(binding);
+        return binding.binding_kind === "scope_checkpoint"
+          && binding.objective_id === FIXTURE_SCOPE.objectiveId
+          && binding.repository_cwd === "/repo"
+          && manualRequests.length === 1
+          && binding.physical_state.state_root_identity
+            === manualRequests[0].physical_state.state_root_identity
+          && binding.physical_state.repository_instance_id === "a".repeat(64)
+          && binding.physical_state.physical_worktree_id === "b".repeat(64);
+      },
+    });
+    const result = await built.composition.executeManualResume(request());
+
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(manualRequests.length, 1);
+    assert.equal(checkpointRequests.length, 1);
+    assert.deepEqual(Object.keys(manualRequests[0]), [
+      "repository_cwd",
+      "candidate_id",
+      "repository_identity",
+      "worktree_identity",
+      "physical_state",
+    ]);
+    assert.deepEqual(Object.keys(checkpointRequests[0]), [
+      "binding_kind",
+      "objective_id",
+      "repository_cwd",
+      "physical_state",
+    ]);
+    assert.equal("objective_id" in manualRequests[0], false);
+    assert.equal("candidate_id" in checkpointRequests[0], false);
+    assert.equal("repository_identity" in checkpointRequests[0], false);
+    assert.equal("worktree_identity" in checkpointRequests[0], false);
+    const checkpoint = await built.composition.readScopeCheckpoint({
+      objectiveId: FIXTURE_SCOPE.objectiveId,
+    });
+    assert.equal(checkpoint.ok, true);
+    assert.equal(checkpoint.value.objectiveId, FIXTURE_SCOPE.objectiveId);
+    assert.deepEqual(Object.keys(checkpointRequests[0].physical_state), [
+      "contract",
+      "state_root_identity",
+      "repository_instance_id",
+      "physical_worktree_id",
+    ]);
+    assert.deepEqual({
+      ok: checkpoint.ok,
+      objectiveId: checkpoint.value?.objectiveId,
+    }, {
+      ok: true,
+      objectiveId: FIXTURE_SCOPE.objectiveId,
+    });
+    assert.equal(checkpointRequests.length, 2);
+  });
+
   await test("BLOCKED and UNKNOWN capability evidence fail before Claim or executor", async () => {
     for (const overrides of [
       { capabilityStatus: "unavailable" },
@@ -1576,11 +1647,86 @@ await group("native RPL-95 and RPL-118 composition", async () => {
     assert.equal(built.calls.some(([name]) => name === "codex.resolveAndResume"), false);
   });
 
+  await test("altered persisted repository identity fails against the Host record", async () => {
+    const alteredCandidate = Object.freeze({
+      ...candidate(),
+      repository_identity: `phr1.repository.key_A-1.${"X".repeat(43)}`,
+    });
+    let verifierCalls = 0;
+    const built = build({
+      nativeComposition: true,
+      stateReads: [{ candidate: alteredCandidate, state_revision: 1, claim: null }],
+      verifyWorktreeStateBinding: binding => {
+        verifierCalls += 1;
+        return binding.repository_identity === REPOSITORY
+          && binding.worktree_identity === WORKTREE;
+      },
+    });
+    const result = await built.composition.executeManualResume(request());
+
+    assert.deepEqual(result, {
+      ok: false,
+      reason: "manual_resume_capability_preflight_blocked",
+    });
+    assert.equal(verifierCalls, 1);
+    assert.equal(built.userLocalState.stats.reads, 0);
+    assert.equal(built.calls.some(([name]) => name === "acquireClaim"), false);
+    assert.equal(built.calls.some(([name]) => name === "codex.resolveAndResume"), false);
+  });
+
+  await test("missing persisted worktree identity fails closed before Host approval", async () => {
+    const incompleteCandidate = candidate();
+    delete incompleteCandidate.worktree_identity;
+    let verifierCalls = 0;
+    const built = build({
+      nativeComposition: true,
+      stateReads: [{
+        candidate: Object.freeze(incompleteCandidate),
+        state_revision: 1,
+        claim: null,
+      }],
+      verifyWorktreeStateBinding: () => {
+        verifierCalls += 1;
+        return true;
+      },
+    });
+    const result = await built.composition.executeManualResume(request());
+
+    assert.equal(result.ok, false);
+    assert.equal(verifierCalls, 0);
+    assert.equal(built.calls.some(([name]) => name === "acquireClaim"), false);
+    assert.equal(built.calls.some(([name]) => name === "codex.resolveAndResume"), false);
+  });
+
   await test("missing trusted Host worktree verifier blocks before Claim", async () => {
     const built = build({ nativeComposition: true, omitWorktreeStateBindingVerifier: true });
     const result = await built.composition.executeManualResume(request());
     assert.deepEqual(result, { ok: false, reason: "manual_resume_capability_preflight_blocked" });
     assert.equal(built.calls.some(([name]) => name === "resolveManualResumeContext"), false);
+    assert.equal(built.calls.some(([name]) => name === "acquireClaim"), false);
+    assert.equal(built.calls.some(([name]) => name === "codex.resolveAndResume"), false);
+  });
+
+  await test("missing checkpoint Host verifier fails before checkpoint reads and Claim", async () => {
+    let manualVerifierCalls = 0;
+    const built = build({
+      nativeComposition: true,
+      omitScopeCheckpointStateRootBindingVerifier: true,
+      verifyWorktreeStateBinding: () => {
+        manualVerifierCalls += 1;
+        return true;
+      },
+    });
+    const result = await built.composition.executeManualResume(request());
+
+    assert.deepEqual(result, {
+      ok: false,
+      reason: "manual_resume_capability_preflight_blocked",
+    });
+    assert.equal(manualVerifierCalls, 1);
+    assert.equal(built.userLocalState.stats.readPaths.some(path => (
+      path.startsWith("f4/scope-preservation-checkpoints/")
+    )), false);
     assert.equal(built.calls.some(([name]) => name === "acquireClaim"), false);
     assert.equal(built.calls.some(([name]) => name === "codex.resolveAndResume"), false);
   });
@@ -1598,6 +1744,7 @@ await group("native RPL-95 and RPL-118 composition", async () => {
       nativeComposition: true,
       userLocalState,
       verifyWorktreeStateBinding,
+      verifyScopeCheckpointStateRootBinding: verifyWorktreeStateBinding,
       executor: { resolveAndResume: async () => {
         dispatches += 1;
         throw new Error(PRIVATE_MARKER);
@@ -1613,6 +1760,7 @@ await group("native RPL-95 and RPL-118 composition", async () => {
       nativeComposition: true,
       userLocalState,
       verifyWorktreeStateBinding,
+      verifyScopeCheckpointStateRootBinding: verifyWorktreeStateBinding,
     });
     const replay = await afterRootChange.composition.executeManualResume(request({
       claim_attempt_id: "123e4567-e89b-42d3-a456-426614174001",
