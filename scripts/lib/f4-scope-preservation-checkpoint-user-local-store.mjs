@@ -168,14 +168,18 @@ async function withLockedLocation(
       || !sameF4PhysicalStateBinding(observedBinding.value, expectedPhysicalStateBinding)) {
       return failure("scope_checkpoint_state_root_binding_unverified");
     }
+    // This port verifies only the checkpoint location against Host-owned
+    // identity. objective_id selects the checkpoint record; it is not trust
+    // evidence for the repository, worktree, or State Root.
     let verified;
     try {
-      verified = await verifyStateRootBinding(Object.freeze({
+      const bindingRequest = Object.freeze({
         binding_kind: "scope_checkpoint",
         objective_id: objectiveId,
         repository_cwd: cwd,
         physical_state: observedBinding.value,
-      }));
+      });
+      verified = await verifyStateRootBinding(bindingRequest);
     } catch {
       return failure("scope_checkpoint_state_root_binding_unverified");
     }
