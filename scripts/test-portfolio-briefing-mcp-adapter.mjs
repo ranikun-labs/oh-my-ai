@@ -4,6 +4,10 @@ import { buildPortfolioBriefingFromMcpResults } from "./lib/portfolio-briefing-m
 const capturedAt = "2026-10-30T10:40:00.000Z";
 let passed = 0;
 
+function headShaFor(number) {
+  return Number(number).toString(16).padStart(40, "0");
+}
+
 function test(name, fn) {
   fn();
   passed += 1;
@@ -44,7 +48,7 @@ function githubResult(number, overrides = {}) {
         number,
         url: `https://github.com/ranikun-labs/oh-my-ai/pull/${number}`,
         head_repo_full_name: "ranikun-labs/oh-my-ai",
-        head_sha: `head-${number}`,
+        head_sha: headShaFor(number),
         base_sha: "base-sha",
         state: "open",
         draft: true,
@@ -55,14 +59,14 @@ function githubResult(number, overrides = {}) {
         ...overrides,
       },
     },
-    status_for_sha: `head-${number}`,
+    status_for_sha: headShaFor(number),
     status_for_repository: "ranikun-labs/oh-my-ai",
-    status_result: { structuredContent: { sha: `head-${number}`, statuses: [] } },
-    workflow_for_sha: `head-${number}`,
+    status_result: { structuredContent: { sha: headShaFor(number), statuses: [] } },
+    workflow_for_sha: headShaFor(number),
     workflow_for_repository: "ranikun-labs/oh-my-ai",
     review_for_pr_number: number,
     review_for_repository: "ranikun-labs/oh-my-ai",
-    review_for_head_sha: `head-${number}`,
+    review_for_head_sha: headShaFor(number),
     review_result: { structuredContent: { reviews: [] } },
   };
 }
@@ -94,9 +98,9 @@ test("normalizes real MCP envelope shapes and keeps Jira status separate from ex
     ],
     github_results: [{
       ...githubResult(88, { body: "Primary Jira: RPL-119; see RPL-115 for a dependency." }),
-      status_for_sha: "head-88",
-      status_result: { structuredContent: { sha: "head-88", statuses: [{ id: 881, sha: "head-88", state: "success" }] } },
-      review_result: { structuredContent: { reviews: [{ id: "PRR_88", commit_id: "head-88", state: "COMMENTED" }] } },
+      status_for_sha: headShaFor(88),
+      status_result: { structuredContent: { sha: headShaFor(88), statuses: [{ id: 881, sha: headShaFor(88), state: "success" }] } },
+      review_result: { structuredContent: { reviews: [{ id: "PRR_88", commit_id: headShaFor(88), state: "COMMENTED" }] } },
     }],
     confluence_results: [confluenceResult()],
   });
@@ -164,10 +168,10 @@ test("does not trust success statuses returned alongside a CI connector error", 
 
 test("uses completed Actions runs only when they are bound to the returned PR head", () => {
   const entry = githubResult(90);
-  entry.workflow_for_sha = "head-90";
+  entry.workflow_for_sha = headShaFor(90);
   entry.workflow_result = {
     isError: false,
-    structuredContent: { workflow_runs: [{ id: 9001, head_sha: "head-90", status: "completed", conclusion: "success" }] },
+    structuredContent: { workflow_runs: [{ id: 9001, head_sha: headShaFor(90), status: "completed", conclusion: "success" }] },
   };
   const result = buildPortfolioBriefingFromMcpResults({
     captured_at: capturedAt,
@@ -196,12 +200,12 @@ test("does not reuse Actions runs fetched for a different PR head", () => {
 
 test("does not trust Actions success when the workflow lookup errored", () => {
   const entry = githubResult(90);
-  entry.workflow_for_sha = "head-90";
-  entry.status_for_sha = "head-90";
-  entry.status_result = { structuredContent: { sha: "head-90", statuses: [{ id: 9002, sha: "head-90", state: "success" }] } };
+  entry.workflow_for_sha = headShaFor(90);
+  entry.status_for_sha = headShaFor(90);
+  entry.status_result = { structuredContent: { sha: headShaFor(90), statuses: [{ id: 9002, sha: headShaFor(90), state: "success" }] } };
   entry.workflow_result = {
     isError: true,
-    structuredContent: { workflow_runs: [{ id: 9003, head_sha: "head-90", status: "completed", conclusion: "success" }] },
+    structuredContent: { workflow_runs: [{ id: 9003, head_sha: headShaFor(90), status: "completed", conclusion: "success" }] },
   };
   const result = buildPortfolioBriefingFromMcpResults({
     captured_at: capturedAt,
@@ -214,10 +218,10 @@ test("does not trust Actions success when the workflow lookup errored", () => {
 
 test("reports an in-progress Actions run as pending", () => {
   const entry = githubResult(90);
-  entry.workflow_for_sha = "head-90";
+  entry.workflow_for_sha = headShaFor(90);
   entry.workflow_result = {
     isError: false,
-    structuredContent: { workflow_runs: [{ id: 9004, head_sha: "head-90", status: "in_progress", conclusion: null }] },
+    structuredContent: { workflow_runs: [{ id: 9004, head_sha: headShaFor(90), status: "in_progress", conclusion: null }] },
   };
   const result = buildPortfolioBriefingFromMcpResults({
     captured_at: capturedAt,
@@ -407,7 +411,7 @@ function portfolioPullRequestFor(entry) {
   return result.pull_requests[0];
 }
 
-const evidenceHead = "head-90";
+const evidenceHead = headShaFor(90);
 
 function statusResult({ responseSha, statuses, isError = false, includeResponseSha = true, includeStatuses = true } = {}) {
   const structuredContent = {};
@@ -474,6 +478,21 @@ const statusEvidenceCases = [
     expected: "UNKNOWN",
   },
   {
+    name: "rejects an explicitly empty top-level status response SHA",
+    entry: statusEvidence(evidenceHead, statusResult({ responseSha: "", statuses: [{ id: 61, state: "success" }] })),
+    expected: "UNKNOWN",
+  },
+  {
+    name: "rejects a non-string top-level status response SHA",
+    entry: statusEvidence(evidenceHead, statusResult({ responseSha: 123, statuses: [{ id: 62, state: "success" }] })),
+    expected: "UNKNOWN",
+  },
+  {
+    name: "accepts an explicitly null status response SHA only with exact query scope",
+    entry: statusEvidence(evidenceHead, statusResult({ responseSha: null, statuses: [{ id: 63, state: "success" }] })),
+    expected: "SUCCESS",
+  },
+  {
     name: "rejects an individual status bound to an older SHA",
     entry: statusEvidence(evidenceHead, statusResult({
       responseSha: undefined,
@@ -481,6 +500,21 @@ const statusEvidenceCases = [
       statuses: [{ id: 7, sha: "old-head", state: "success" }],
     })),
     expected: "UNKNOWN",
+  },
+  {
+    name: "rejects an explicitly empty status row SHA",
+    entry: statusEvidence(evidenceHead, statusResult({ responseSha: undefined, includeResponseSha: false, statuses: [{ id: 71, sha: "", state: "success" }] })),
+    expected: "UNKNOWN",
+  },
+  {
+    name: "rejects a non-string status row SHA",
+    entry: statusEvidence(evidenceHead, statusResult({ responseSha: undefined, includeResponseSha: false, statuses: [{ id: 72, sha: 123, state: "success" }] })),
+    expected: "UNKNOWN",
+  },
+  {
+    name: "accepts a null status row SHA only with exact query scope",
+    entry: statusEvidence(evidenceHead, statusResult({ responseSha: undefined, includeResponseSha: false, statuses: [{ id: 73, sha: null, state: "success" }] })),
+    expected: "SUCCESS",
   },
   {
     name: "rejects conflicting response and individual status SHAs",
@@ -538,6 +572,22 @@ const statusEvidenceCases = [
     name: "reports a current-head pending status after verifying its ID and SHA",
     entry: statusEvidence(evidenceHead, statusResult({ responseSha: evidenceHead, statuses: [{ id: 14, sha: evidenceHead, state: "pending" }] })),
     expected: "PENDING_OR_MIXED",
+  },
+  {
+    name: "deduplicates identical status records with the same ID",
+    entry: statusEvidence(evidenceHead, statusResult({ responseSha: evidenceHead, statuses: [
+      { id: 74, sha: evidenceHead, state: "success", context: "ci/test" },
+      { id: 74, sha: evidenceHead, state: "success", context: "ci/test" },
+    ] })),
+    expected: "SUCCESS",
+  },
+  {
+    name: "rejects conflicting status states for the same evidence ID",
+    entry: statusEvidence(evidenceHead, statusResult({ responseSha: evidenceHead, statuses: [
+      { id: 75, sha: evidenceHead, state: "success" },
+      { id: 75, sha: evidenceHead, state: "failure" },
+    ] })),
+    expected: "UNKNOWN",
   },
 ];
 
@@ -599,6 +649,26 @@ const workflowEvidenceCases = [
     expected: "SUCCESS",
   },
   {
+    name: "accepts an explicitly null Actions head_sha only with exact query scope",
+    entry: workflowEvidence({ workflowForSha: evidenceHead, runHeadSha: null }),
+    expected: "SUCCESS",
+  },
+  {
+    name: "rejects an explicitly empty Actions head_sha",
+    entry: workflowEvidence({ workflowForSha: evidenceHead, runHeadSha: "" }),
+    expected: "UNKNOWN",
+  },
+  {
+    name: "rejects a non-string Actions head_sha",
+    entry: workflowEvidence({ workflowForSha: evidenceHead, runHeadSha: 123 }),
+    expected: "UNKNOWN",
+  },
+  {
+    name: "rejects a malformed non-empty Actions head_sha",
+    entry: workflowEvidence({ workflowForSha: evidenceHead, runHeadSha: "not-a-git-sha" }),
+    expected: "UNKNOWN",
+  },
+  {
     name: "rejects an Actions run from an older PR head",
     entry: workflowEvidence({ workflowForSha: evidenceHead, runHeadSha: "old-head" }),
     expected: "UNKNOWN",
@@ -616,6 +686,22 @@ const workflowEvidenceCases = [
   {
     name: "does not infer Actions success from an actual empty run list",
     entry: { ...githubResult(90), workflow_for_sha: evidenceHead, workflow_result: { structuredContent: { workflow_runs: [] } } },
+    expected: "UNKNOWN",
+  },
+  {
+    name: "deduplicates identical workflow runs with the same ID",
+    entry: { ...githubResult(90), workflow_for_sha: evidenceHead, workflow_result: { structuredContent: { workflow_runs: [
+      { id: 22, head_sha: evidenceHead, status: "completed", conclusion: "success" },
+      { id: 22, head_sha: evidenceHead, status: "completed", conclusion: "success" },
+    ] } } },
+    expected: "SUCCESS",
+  },
+  {
+    name: "rejects conflicting conclusions for the same workflow run ID",
+    entry: { ...githubResult(90), workflow_for_sha: evidenceHead, workflow_result: { structuredContent: { workflow_runs: [
+      { id: 23, head_sha: evidenceHead, status: "completed", conclusion: "success" },
+      { id: 23, head_sha: evidenceHead, status: "completed", conclusion: "failure" },
+    ] } } },
     expected: "UNKNOWN",
   },
 ];
@@ -759,6 +845,22 @@ const reviewEvidenceCases = [
   {
     name: "keeps review evidence UNKNOWN when the current head binding is missing",
     entry: { ...githubResult(90), review_for_head_sha: undefined, review_result: { structuredContent: { reviews: [] } } },
+    expected: "UNKNOWN",
+  },
+  {
+    name: "deduplicates identical reviews with the same ID",
+    entry: { ...githubResult(90), review_result: { structuredContent: { reviews: [
+      { id: "PRR_DUPLICATE", commit_id: evidenceHead, state: "COMMENTED" },
+      { id: "PRR_DUPLICATE", commit_id: evidenceHead, state: "COMMENTED" },
+    ] } } },
+    expected: "COMMENTED",
+  },
+  {
+    name: "rejects conflicting review states for the same review ID",
+    entry: { ...githubResult(90), review_result: { structuredContent: { reviews: [
+      { id: "PRR_CONFLICT", commit_id: evidenceHead, state: "APPROVED" },
+      { id: "PRR_CONFLICT", commit_id: evidenceHead, state: "CHANGES_REQUESTED" },
+    ] } } },
     expected: "UNKNOWN",
   },
 ];

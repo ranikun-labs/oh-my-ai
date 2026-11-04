@@ -97,7 +97,8 @@ function normalizeGithubResults(entries) {
       || null;
     const identityMatches = returnedNumber !== null && (!requestedNumber || requestedNumber === returnedNumber);
     const identityAvailable = !result?.isError && identityMatches && url !== null && repository !== null;
-    const headSha = nonEmptyString(info.head_sha);
+    const rawHeadSha = nonEmptyString(info.head_sha);
+    const headSha = isGitSha(rawHeadSha) ? rawHeadSha.toLowerCase() : null;
     const ciState = summarizeCiEvidence(entry, headSha, repository);
     const reviewState = summarizeReviewEvidence(entry, headSha, { number, repository });
     const titleKeys = [...new Set(extractIssueKeys(nonEmptyString(info.title) || ""))];
@@ -198,17 +199,18 @@ function summarizeCiEvidence(entry, headSha, repository) {
     if (!Array.isArray(statuses)) return "UNKNOWN";
     const statusForSha = nonEmptyString(entry?.status_for_sha);
     const statusForRepository = nonEmptyString(entry?.status_for_repository);
-    const responseSha = nonEmptyString(statusResponse?.sha);
     if (statusForSha !== headSha || statusForRepository !== repository) return "UNKNOWN";
-    if (responseSha && responseSha !== headSha) return "UNKNOWN";
+    if (!optionalShaIsInScope(statusResponse, "sha", headSha)) return "UNKNOWN";
     if (statuses.length > 0) {
       if (statuses.some(status => {
-        const statusSha = nonEmptyString(status?.sha);
-        return !positiveInteger(status?.id)
+        return !isRecord(status)
+          || !positiveInteger(status?.id)
           || !nonEmptyString(status?.state)
-          || (statusSha !== null && statusSha !== headSha);
+          || !optionalShaIsInScope(status, "sha", headSha);
       })) return "UNKNOWN";
-      states.push(summarizeCheckStates(statuses));
+      const uniqueStatuses = deduplicateById(statuses, status => positiveInteger(status?.id), ["sha", "state", "context", "target_url"]);
+      if (!uniqueStatuses) return "UNKNOWN";
+      states.push(summarizeCheckStates(uniqueStatuses));
     }
   }
 
@@ -219,11 +221,14 @@ function summarizeCiEvidence(entry, headSha, repository) {
     if (nonEmptyString(entry?.workflow_for_sha) !== headSha
       || nonEmptyString(entry?.workflow_for_repository) !== repository) return "UNKNOWN";
     if (runs.length > 0) {
-      if (runs.some(run => positiveInteger(run?.id) === null
-        || (nonEmptyString(run?.head_sha) !== null && nonEmptyString(run?.head_sha) !== headSha))) {
+      if (runs.some(run => !isRecord(run)
+        || positiveInteger(run?.id) === null
+        || !optionalShaIsInScope(run, "head_sha", headSha))) {
         return "UNKNOWN";
       }
-      states.push(summarizeWorkflowRuns(runs));
+      const uniqueRuns = deduplicateById(runs, run => positiveInteger(run?.id), ["head_sha", "status", "conclusion", "workflow_id", "name", "event", "run_number"]);
+      if (!uniqueRuns) return "UNKNOWN";
+      states.push(summarizeWorkflowRuns(uniqueRuns));
     }
   }
 
@@ -246,11 +251,15 @@ function summarizeReviewEvidence(entry, headSha, target) {
     || nonEmptyString(entry?.review_for_head_sha) !== headSha) return "UNKNOWN";
   if (reviews.length === 0) return "NOT_OBSERVED";
   const allowedStates = new Set(["APPROVED", "CHANGES_REQUESTED", "COMMENTED", "DISMISSED", "PENDING"]);
-  if (reviews.some(review => !nonEmptyString(review?.id)
+  if (reviews.some(review => !isRecord(review)
+    || !nonEmptyString(review?.id)
     || nonEmptyString(review?.commit_id) !== headSha
     || !allowedStates.has(nonEmptyString(review?.state)))) return "UNKNOWN";
 
-  return [...new Set(reviews.map(review => nonEmptyString(review?.state)))].sort().join(",");
+  const uniqueReviews = deduplicateById(reviews, review => nonEmptyString(review?.id), ["commit_id", "state", "submitted_at", "user"]);
+  if (!uniqueReviews) return "UNKNOWN";
+
+  return [...new Set(uniqueReviews.map(review => nonEmptyString(review?.state)))].sort().join(",");
 }
 
 function summarizeWorkflowRuns(runs) {
@@ -304,6 +313,45 @@ function validIssueKey(value) {
 
 function positiveInteger(value) {
   return Number.isInteger(value) && value > 0 ? value : null;
+}
+
+function isGitSha(value) {
+  return typeof value === "string" && /^[a-f0-9]{40}$/i.test(value);
+}
+
+function isRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function optionalShaIsInScope(record, field, expectedSha) {
+  if (!isRecord(record) || !Object.hasOwn(record, field)) return true;
+  const value = record[field];
+  if (value === null) return true;
+  if (typeof value !== "string") return false;
+  const sha = value.trim();
+  return isGitSha(sha) && sha.toLowerCase() === expectedSha.toLowerCase();
+}
+
+function deduplicateById(records, getId, identityFields) {
+  const unique = [];
+  const seen = new Map();
+  for (const record of records) {
+    if (!isRecord(record)) return null;
+    const id = getId(record);
+    if (id === null) return null;
+    const signature = JSON.stringify(identityFields.map(field => {
+      if (!Object.hasOwn(record, field)) return [field, "absent"];
+      const value = record[field];
+      return [field, value === undefined ? "undefined" : value];
+    }));
+    if (seen.has(id)) {
+      if (seen.get(id) !== signature) return null;
+      continue;
+    }
+    seen.set(id, signature);
+    unique.push(record);
+  }
+  return unique;
 }
 
 function nonEmptyString(value) {
