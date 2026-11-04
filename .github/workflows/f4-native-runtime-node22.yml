@@ -4,12 +4,14 @@ on:
   push:
     paths:
       - ".github/workflows/f4-native-runtime-node22.yml"
+      - "docs/contracts/f4-native-host-binding-owner-resolver.md"
       - "scripts/lib/f4-native-runtime-composition.mjs"
       - "scripts/lib/f4-physical-state-binding.mjs"
       - "scripts/lib/pending-handoff-manual-resume-attempt-outcome-user-local-provider.mjs"
       - "scripts/lib/f4-scope-preservation-checkpoint.mjs"
       - "scripts/lib/f4-scope-preservation-checkpoint-user-local-store.mjs"
       - "scripts/test-pending-handoff-manual-resume-runtime-composition-fixtures.mjs"
+      - "scripts/test-f4-rpl95-attempt-store-integration.mjs"
       - "scripts/test-f4-scope-preservation-checkpoint-fixtures.mjs"
       - "scripts/test-f4-scope-preservation-checkpoint-user-local-store-fixtures.mjs"
       - "scripts/test-pending-handoff-store-fixtures.mjs"
@@ -24,12 +26,14 @@ on:
       - feat/rpl-118-capability-preflight-mvp-20261102
     paths:
       - ".github/workflows/f4-native-runtime-node22.yml"
+      - "docs/contracts/f4-native-host-binding-owner-resolver.md"
       - "scripts/lib/f4-native-runtime-composition.mjs"
       - "scripts/lib/f4-physical-state-binding.mjs"
       - "scripts/lib/pending-handoff-manual-resume-attempt-outcome-user-local-provider.mjs"
       - "scripts/lib/f4-scope-preservation-checkpoint.mjs"
       - "scripts/lib/f4-scope-preservation-checkpoint-user-local-store.mjs"
       - "scripts/test-pending-handoff-manual-resume-runtime-composition-fixtures.mjs"
+      - "scripts/test-f4-rpl95-attempt-store-integration.mjs"
       - "scripts/test-f4-scope-preservation-checkpoint-fixtures.mjs"
       - "scripts/test-f4-scope-preservation-checkpoint-user-local-store-fixtures.mjs"
       - "scripts/test-pending-handoff-store-fixtures.mjs"
@@ -56,6 +60,14 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22
+      - name: Check out pinned RPL-95 physical storage source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: ranikun-labs/oh-my-ai
+          ref: be1bd8fca212aecbea6f16be2157d20916df0d3a
+          path: rpl95-source
+          sparse-checkout: scripts/lib/user-local-state.mjs
+          sparse-checkout-cone-mode: false
       - name: Verify source syntax
         run: |
           node --check scripts/lib/f4-native-runtime-composition.mjs
@@ -67,6 +79,7 @@ jobs:
           node --check scripts/lib/pending-handoff-manual-resume-attempt-outcome.mjs
           node --check scripts/lib/pending-handoff-manual-resume-attempt-outcome-store-adapter.mjs
           node --check scripts/test-pending-handoff-manual-resume-runtime-composition-fixtures.mjs
+          node --check scripts/test-f4-rpl95-attempt-store-integration.mjs
           node --check scripts/test-f4-scope-preservation-checkpoint-fixtures.mjs
           node --check scripts/test-f4-scope-preservation-checkpoint-user-local-store-fixtures.mjs
       - name: Run F4 and storage regression fixtures
@@ -79,3 +92,7 @@ jobs:
           node scripts/test-pending-handoff-delivery-consumption-fixtures.mjs
           node scripts/test-f4-scope-preservation-checkpoint-fixtures.mjs
           node scripts/test-f4-scope-preservation-checkpoint-user-local-store-fixtures.mjs
+      - name: Verify Attempt adapter against exact RPL-95 source
+        env:
+          F4_RPL95_USER_LOCAL_STATE_MODULE: ${{ github.workspace }}/rpl95-source/scripts/lib/user-local-state.mjs
+        run: node scripts/test-f4-rpl95-attempt-store-integration.mjs
