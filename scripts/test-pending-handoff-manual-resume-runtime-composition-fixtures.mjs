@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import * as moduleNamespace from "./lib/pending-handoff-manual-resume-runtime-composition.mjs";
+import * as f4NativeCompositionNamespace from "./lib/f4-native-runtime-composition.mjs";
+import { createF4ScopePreservingCheckpoint } from "./lib/f4-scope-preservation-checkpoint.mjs";
 import { PENDING_HANDOFF_SCHEMA_VERSION } from "./lib/pending-handoff-core.mjs";
 import { createPendingHandoffManualResumeService } from "./lib/pending-handoff-manual-resume.mjs";
 import {
@@ -14,6 +19,20 @@ const WORKTREE = `phr1.worktree.key_A-1.${"W".repeat(43)}`;
 const ATTEMPT = "123e4567-e89b-42d3-a456-426614174000";
 const PRIVATE_MARKER = "composition-private-marker";
 const MAKEFILE_SOURCE = fs.readFileSync(new URL("../Makefile", import.meta.url), "utf8");
+const FIXTURE_SCOPE = Object.freeze({
+  objectiveId: "F4-TEST-OBJECTIVE",
+  scopeRevision: "owner-approved-test-scope-1",
+  source: {
+    uri: "https://ranikunlabs.atlassian.net/browse/RPL-120",
+    revision: "owner-approved-test-scope-1",
+    coverage: "COMPLETE",
+  },
+  requiredSources: [{ uri: "https://ranikunlabs.atlassian.net/rest/api/3/search" }],
+  items: [
+    { id: "RPL-120", primaryJira: "RPL-120", owner: "F4" },
+    { id: "BLOCKED-OTHER", primaryJira: "RPL-999", owner: "F9" },
+  ],
+});
 
 let groups = 0;
 let tests = 0;
@@ -88,6 +107,7 @@ function capabilityContextResult(candidateId, runtimeId, overrides = {}) {
   const scopeRef = overrides.scopeRef ?? candidateId;
   const environmentFingerprint = overrides.environmentFingerprint ?? "manual-resume-env-v1";
   const environmentRuntimeId = overrides.environmentRuntimeId ?? runtimeId;
+  const environmentProviderId = overrides.environmentProviderId ?? "synthetic-manual-resume";
   const testPlan = { id: "manual-resume-fixtures", digest: "a".repeat(64) };
   const sha = "b".repeat(40);
   const treeSha = "c".repeat(40);
@@ -103,7 +123,7 @@ function capabilityContextResult(candidateId, runtimeId, overrides = {}) {
     },
   };
   const environment = {
-    provider_id: "synthetic-manual-resume",
+    provider_id: environmentProviderId,
     fingerprint: environmentFingerprint,
     runtime_id: environmentRuntimeId,
     capabilities: {
@@ -112,7 +132,7 @@ function capabilityContextResult(candidateId, runtimeId, overrides = {}) {
         verified: true,
         evidence_ref: "synthetic-manual-resume-git-evidence",
         observed_at: new Date().toISOString(),
-        provider_id: "synthetic-manual-resume",
+        provider_id: environmentProviderId,
         runtime_id: environmentRuntimeId,
         environment_fingerprint: environmentFingerprint,
         capability: "git",
@@ -218,6 +238,264 @@ function capabilityContextResult(candidateId, runtimeId, overrides = {}) {
   };
 }
 
+function capabilityMvpContextResult(candidateId, runtimeId, overrides = {}) {
+  const taskId = "RPL-120-f4-native-runtime";
+  const providerId = overrides.providerId ?? "synthetic-rpl118-runtime";
+  const environmentFingerprint = "synthetic-rpl118-environment-v1";
+  const now = new Date().toISOString();
+  const source = {
+    source_id: "code-execution",
+    capability: "e2e",
+    tool_id: "synthetic-runtime:execute",
+    permission: {
+      kind: "CODE_EXECUTION",
+      scope: "candidate:" + candidateId,
+    },
+    operation: "run",
+    resource: "environment:codex",
+    source_revision: "runtime-attestation:1",
+  };
+  const scopeRef = overrides.scopeRef ?? candidateId;
+  const runtimeEvidenceRuntimeId = overrides.runtimeEvidenceRuntimeId ?? runtimeId;
+  const environmentRuntimeId = overrides.environmentRuntimeId ?? runtimeId;
+  const fingerprint = overrides.environmentFingerprint ?? environmentFingerprint;
+  const task = {
+    task_id: taskId,
+    scope_ref: scopeRef,
+    task_kind: "CODE_EXECUTION",
+    sources: [source],
+    policy_evidence: {
+      decision: "allow",
+      task_kind: "CODE_EXECUTION",
+      scope_ref: scopeRef,
+      approval_required: false,
+      evidence_ref: "synthetic-policy:" + taskId,
+    },
+    runtime_evidence: {
+      verified: true,
+      provider_id: providerId,
+      runtime_id: runtimeEvidenceRuntimeId,
+      environment_fingerprint: fingerprint,
+      observed_at: now,
+      evidence_ref: "synthetic-runtime:" + taskId,
+    },
+    source_scope_evidence: {
+      scope_ref: scopeRef,
+      evidence_ref: "synthetic-source-scope:" + taskId,
+      source_ids: [source.source_id],
+    },
+  };
+  const observation = {
+    status: overrides.capabilityStatus ?? "available",
+    verified: true,
+    evidence_ref: "synthetic-capability:code-execution",
+    observed_at: overrides.staleObservation === true
+      ? new Date(Date.now() - 10 * 60 * 1000).toISOString()
+      : now,
+    provider_id: providerId,
+    runtime_id: environmentRuntimeId,
+    environment_fingerprint: fingerprint,
+    capability: source.capability,
+    task_id: taskId,
+    scope_ref: scopeRef,
+    operation: source.operation,
+    resource: source.resource,
+    tool_id: source.tool_id,
+    permission: { ...source.permission },
+    source_revision: source.source_revision,
+    reason: overrides.capabilityStatus === "unavailable" ? "synthetic unavailable" : "",
+  };
+  const environment = {
+    provider_id: providerId,
+    runtime_id: environmentRuntimeId,
+    fingerprint,
+    capabilities: { e2e: observation },
+  };
+
+  if (overrides.handoff === true) {
+    task.handoff_destination = {
+      connected: true,
+      verified: true,
+      destination_id: "synthetic-same-runtime",
+      provider_id: providerId,
+      runtime_id: runtimeEvidenceRuntimeId,
+      environment_fingerprint: fingerprint,
+      tool_id: source.tool_id,
+      operation: source.operation,
+      resource_scope: source.resource,
+      permission_scope: source.permission.scope,
+      scope_ref: scopeRef,
+      evidence_ref: "synthetic-handoff:" + taskId,
+      observed_at: now,
+    };
+  }
+
+  const trustedVerifiers = {
+    verifyPolicyEvidence(evidence, context) {
+      return evidence.evidence_ref === "synthetic-policy:" + context.task_id
+        && evidence.task_kind === context.task_kind
+        && evidence.scope_ref === context.scope_ref;
+    },
+    verifySourceScopeEvidence(evidence, context) {
+      return evidence.evidence_ref === "synthetic-source-scope:" + context.task_id
+        && evidence.scope_ref === context.scope_ref
+        && JSON.stringify(evidence.source_ids)
+          === JSON.stringify(context.required_sources.map(item => item.source_id));
+    },
+    verifyCurrentRuntimeEvidence(evidence, context) {
+      return evidence.evidence_ref === "synthetic-runtime:" + context.task_id
+        && evidence.runtime_id === context.current_runtime_id
+        && evidence.provider_id === providerId
+        && evidence.environment_fingerprint === fingerprint;
+    },
+    verifyCapabilityEvidence(evidence, context) {
+      return evidence.evidence_ref === "synthetic-capability:code-execution"
+        && evidence.runtime_id === context.runtime_id
+        && evidence.provider_id === context.provider_id
+        && evidence.environment_fingerprint === context.environment_fingerprint
+        && evidence.capability === context.capability
+        && evidence.task_id === context.task_id
+        && evidence.scope_ref === context.scope_ref
+        && evidence.operation === context.operation
+        && evidence.resource === context.resource
+        && evidence.source_revision === context.source_revision;
+    },
+    verifySourceEvidence(evidence, context) {
+      return evidence.tool_id === context.tool_id
+        && evidence.permission.kind === context.permission.kind
+        && evidence.permission.scope === context.permission.scope
+        && evidence.operation === context.operation
+        && evidence.resource === context.resource
+        && evidence.source_revision === context.source_revision;
+    },
+    verifyHandoffDestination(evidence, context) {
+      return evidence.evidence_ref === "synthetic-handoff:" + context.task_id
+        && evidence.scope_ref === context.scope_ref
+        && evidence.connected === true
+        && evidence.runtime_id === context.current_runtime.runtime_id
+        && evidence.provider_id === context.current_runtime.provider_id
+        && evidence.environment_fingerprint === context.current_runtime.environment_fingerprint
+        && evidence.tool_id === source.tool_id
+        && evidence.operation === source.operation
+        && evidence.resource_scope === source.resource
+        && evidence.permission_scope === source.permission.scope;
+    },
+  };
+  return { task, environment, trustedVerifiers };
+}
+
+function userLocalStateFixture(records = new Map()) {
+  const stats = { locations: [], readPaths: [], reads: 0, publishes: 0, locks: 0, asyncLockCallbacks: 0 };
+  let publishDurabilityUnknown = false;
+  const defaultRootPath = fs.mkdtempSync(path.join(os.tmpdir(), "f4-user-state-"));
+  const overrideRootPaths = new Map();
+  function rootPathFor(override) {
+    if (override === undefined || override === null || override === "") return defaultRootPath;
+    if (!overrideRootPaths.has(override)) {
+      overrideRootPaths.set(override, fs.mkdtempSync(path.join(os.tmpdir(), "f4-user-state-override-")));
+    }
+    return overrideRootPaths.get(override);
+  }
+  const api = Object.freeze({
+    resolveUserLocalStateLocation(cwd, relativePath, options) {
+      const key = JSON.stringify([cwd, options?.stateRootOverride ?? null, relativePath]);
+      stats.locations.push(relativePath);
+      return Object.freeze({
+        cwd,
+        relativePath,
+        key,
+        rootPath: rootPathFor(options?.stateRootOverride),
+        repositoryRoot: cwd,
+        repositoryId: "a".repeat(64),
+        worktreeId: "b".repeat(64),
+      });
+    },
+    readUserLocalState(location) {
+      stats.reads += 1;
+      stats.readPaths.push(location.relativePath);
+      return records.get(location.key) ?? null;
+    },
+    publishUserLocalStateAtomically(location, contents) {
+      stats.publishes += 1;
+      records.set(location.key, contents);
+      if (publishDurabilityUnknown) {
+        publishDurabilityUnknown = false;
+        const error = new Error(PRIVATE_MARKER);
+        error.code = "state_publish_durability_unknown";
+        throw error;
+      }
+      return Object.freeze({ published: true, byteLength: contents.length });
+    },
+    withPhysicalStateLock(_location, operation) {
+      stats.locks += 1;
+      const result = operation();
+      if (result && typeof result.then === "function") {
+        stats.asyncLockCallbacks += 1;
+        throw new Error("physical state lock callback returned a Promise");
+      }
+      return result;
+    },
+  });
+  return {
+    api,
+    records,
+    stats,
+    setNextPublishDurabilityUnknown() { publishDurabilityUnknown = true; },
+    replaceDefaultRoot() {
+      fs.rmSync(defaultRootPath, { recursive: true, force: true });
+      fs.mkdirSync(defaultRootPath, { recursive: true, mode: 0o700 });
+      records.clear();
+    },
+  };
+}
+
+function seedDefaultScopeCheckpoint(userLocalState, cwd, stateRootOptions) {
+  const projection = createF4ScopePreservingCheckpoint({
+    approvedScope: FIXTURE_SCOPE,
+    currentCheckpoint: null,
+    expectedCheckpointRevision: null,
+    refresh: {
+      sourceUri: "https://ranikunlabs.atlassian.net/rest/api/3/search",
+      sourceRevision: "jira-snapshot/f4-fixture-1",
+      expectedPriorRevision: null,
+      refreshScope: "FULL_SOURCE",
+      coverage: "COMPLETE",
+      partialReasons: [],
+      observations: [
+        { id: "RPL-120", status: "READY" },
+        { id: "BLOCKED-OTHER", status: "BLOCKED" },
+      ],
+    },
+    recentExecution: null,
+    nextReadyId: "RPL-120",
+    stopReason: null,
+  });
+  assert.equal(projection.ok, true, JSON.stringify(projection));
+  const key = createHash("sha256").update(FIXTURE_SCOPE.objectiveId, "utf8").digest("hex");
+  const location = userLocalState.api.resolveUserLocalStateLocation(
+    cwd,
+    `f4/scope-preservation-checkpoints/checkpoint-${key}.json`,
+    stateRootOptions,
+  );
+  userLocalState.records.set(location.key, JSON.stringify({
+    schema_version: 1,
+    objective_id: FIXTURE_SCOPE.objectiveId,
+    checkpoint: projection.checkpoint,
+  }));
+}
+
+function fixtureApprovedWorkstream(workstreamId = "RPL-120", scopeRevision = FIXTURE_SCOPE.scopeRevision) {
+  return {
+    objectiveId: FIXTURE_SCOPE.objectiveId,
+    scopeRevision,
+    workstreamId,
+    observedStatus: workstreamId === "RPL-120" ? "READY" : "BLOCKED",
+    inventoryCoverage: "COMPLETE",
+    inventorySourceUri: FIXTURE_SCOPE.requiredSources[0].uri,
+    inventorySourceRevision: "jira-snapshot/f4-fixture-1",
+  };
+}
+
 function build(options = {}) {
   const calls = [];
   let serviceFactoryCalls = 0;
@@ -281,6 +559,12 @@ function build(options = {}) {
       }
       return capabilityContextResult(input.candidate_id, input.runtime_id, {
         persistedCandidate: input.persisted_candidate,
+        ...(options.nativeComposition === true
+          ? {
+            environmentFingerprint: options.nativeEnvironmentFingerprint ?? "synthetic-rpl118-environment-v1",
+            environmentProviderId: options.nativeEnvironmentProviderId ?? "synthetic-rpl118-runtime",
+          }
+          : {}),
       });
     },
   };
@@ -295,8 +579,42 @@ function build(options = {}) {
     manualResumeServiceFactory,
   };
   if (options.omitCapabilityContext !== true) dependencies.capabilityContext = capabilityContext;
-  const built = moduleNamespace.createPendingHandoffManualResumeRuntimeComposition(dependencies);
-  if (options.omitCapabilityContext === true) {
+  let built;
+  let userLocalState;
+  if (options.nativeComposition === true) {
+    userLocalState = options.userLocalState ?? userLocalStateFixture();
+    if (options.seedScopeCheckpoint !== false) {
+      seedDefaultScopeCheckpoint(userLocalState, options.repositoryCwd ?? "/repo", options.stateRootOptions);
+    }
+    built = f4NativeCompositionNamespace.createPendingHandoffF4NativeRuntimeComposition({
+      store,
+      claimLease,
+      runtimeEntries: dependencies.runtimeEntries,
+      capabilityContext,
+      userLocalState: userLocalState.api,
+      repositoryCwd: options.repositoryCwd ?? "/repo",
+      ...(options.omitWorktreeStateBindingVerifier === true ? {} : {
+        verifyWorktreeStateBinding: options.verifyWorktreeStateBinding ?? (() => true),
+      }),
+      ...(options.omitScopeCheckpointStateRootBindingVerifier === true ? {} : {
+        verifyScopeCheckpointStateRootBinding:
+          options.verifyScopeCheckpointStateRootBinding ?? (() => true),
+      }),
+      resolveCapabilityMvpContext: options.resolveCapabilityMvpContext ?? (input => {
+        calls.push(["resolveCapabilityMvpContext", input]);
+        if (options.capabilityMvpFailure === true) throw new Error(PRIVATE_MARKER);
+        return capabilityMvpContextResult(input.candidate_id, input.runtime_id, options.capabilityMvpOverrides);
+      }),
+      ...(options.omitScopeResolver === true ? {} : {
+        resolveApprovedWorkstreamForManualResume: options.resolveApprovedWorkstreamForManualResume
+          ?? (() => fixtureApprovedWorkstream()),
+      }),
+      ...(options.stateRootOptions === undefined ? {} : { stateRootOptions: options.stateRootOptions }),
+    });
+  } else {
+    built = moduleNamespace.createPendingHandoffManualResumeRuntimeComposition(dependencies);
+  }
+  if (options.omitCapabilityContext === true || options.omitScopeResolver === true) {
     assert.equal(built.ok, false);
     return {
       built,
@@ -306,6 +624,7 @@ function build(options = {}) {
       claimLease,
       attemptOutcomeStore,
       attemptOutcomeRecords: defaultAttemptOutcome.records,
+      userLocalState,
       get serviceFactoryCalls() { return serviceFactoryCalls; },
     };
   }
@@ -318,6 +637,7 @@ function build(options = {}) {
     claimLease,
     attemptOutcomeStore,
     attemptOutcomeRecords: defaultAttemptOutcome.records,
+    userLocalState,
     get serviceFactoryCalls() { return serviceFactoryCalls; },
   };
 }
@@ -1184,11 +1504,535 @@ await group("dependency and lifecycle boundaries", async () => {
   });
 });
 
+await group("native RPL-95 and RPL-118 composition", async () => {
+  await test("READY flows through fresh RPL-118 preflight and the RPL-95 Attempt storage contract", async () => {
+    const built = build({ nativeComposition: true });
+    const result = await built.composition.executeManualResume(request());
+
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(result.value.outcome, "resume_accepted");
+    assert.equal(built.calls.some(([name]) => name === "resolveCapabilityMvpContext"), true);
+    assert.ok(built.calls.findIndex(([name]) => name === "resolveCapabilityMvpContext")
+      < built.calls.findIndex(([name]) => name === "acquireClaim"));
+    assert.ok(built.calls.findIndex(([name]) => name === "acquireClaim")
+      < built.calls.findIndex(([name]) => name === "codex.resolveAndResume"));
+    assert.ok(built.userLocalState.stats.publishes >= 4);
+    assert.equal(built.userLocalState.stats.asyncLockCallbacks, 0);
+    assert.ok(built.userLocalState.stats.locations.some(relativePath => (
+      /^f4\/manual-resume-attempts\/attempt-[a-f0-9]{64}\.json$/.test(relativePath)
+    )));
+    assert.ok(built.userLocalState.stats.locations.some(relativePath => (
+      /^f4\/scope-preservation-checkpoints\/checkpoint-[a-f0-9]{64}\.json$/.test(relativePath)
+    )));
+    assert.equal(built.userLocalState.stats.locations.some(relativePath => (
+      relativePath.includes("composition-candidate-001")
+    )), false);
+    const persisted = [...built.userLocalState.records.values()].map(contents => JSON.parse(contents));
+    const acceptedAttempt = persisted.find(record => record.value?.status === "accepted");
+    assert.equal(acceptedAttempt.value.status, "accepted");
+    assert.equal(acceptedAttempt.value.attempt_id, ATTEMPT);
+    assert.ok(persisted.some(record => record.checkpoint?.scopeRevision === FIXTURE_SCOPE.scopeRevision));
+  });
+
+  await test("Manual Resume and checkpoint access use separate Host verifier contracts", async () => {
+    const manualRequests = [];
+    const checkpointRequests = [];
+    const built = build({
+      nativeComposition: true,
+      verifyWorktreeStateBinding: binding => {
+        manualRequests.push(binding);
+        return binding.repository_cwd === "/repo"
+          && binding.candidate_id === "composition-candidate-001"
+          && binding.repository_identity === REPOSITORY
+          && binding.worktree_identity === WORKTREE;
+      },
+      verifyScopeCheckpointStateRootBinding: binding => {
+        checkpointRequests.push(binding);
+        return binding.binding_kind === "scope_checkpoint"
+          && binding.objective_id === FIXTURE_SCOPE.objectiveId
+          && binding.repository_cwd === "/repo"
+          && manualRequests.length === 1
+          && binding.physical_state.state_root_identity
+            === manualRequests[0].physical_state.state_root_identity
+          && binding.physical_state.repository_instance_id === "a".repeat(64)
+          && binding.physical_state.physical_worktree_id === "b".repeat(64);
+      },
+    });
+    const result = await built.composition.executeManualResume(request());
+
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(manualRequests.length, 1);
+    assert.equal(checkpointRequests.length, 1);
+    assert.deepEqual(Object.keys(manualRequests[0]), [
+      "repository_cwd",
+      "candidate_id",
+      "repository_identity",
+      "worktree_identity",
+      "physical_state",
+    ]);
+    assert.deepEqual(Object.keys(checkpointRequests[0]), [
+      "binding_kind",
+      "objective_id",
+      "repository_cwd",
+      "physical_state",
+    ]);
+    assert.equal("objective_id" in manualRequests[0], false);
+    assert.equal("candidate_id" in checkpointRequests[0], false);
+    assert.equal("repository_identity" in checkpointRequests[0], false);
+    assert.equal("worktree_identity" in checkpointRequests[0], false);
+    const checkpoint = await built.composition.readScopeCheckpoint({
+      objectiveId: FIXTURE_SCOPE.objectiveId,
+    });
+    assert.equal(checkpoint.ok, true);
+    assert.equal(checkpoint.value.objectiveId, FIXTURE_SCOPE.objectiveId);
+    assert.deepEqual(Object.keys(checkpointRequests[0].physical_state), [
+      "contract",
+      "state_root_identity",
+      "repository_instance_id",
+      "physical_worktree_id",
+    ]);
+    assert.deepEqual({
+      ok: checkpoint.ok,
+      objectiveId: checkpoint.value?.objectiveId,
+    }, {
+      ok: true,
+      objectiveId: FIXTURE_SCOPE.objectiveId,
+    });
+    assert.equal(checkpointRequests.length, 2);
+  });
+
+  await test("BLOCKED and UNKNOWN capability evidence fail before Claim or executor", async () => {
+    for (const overrides of [
+      { capabilityStatus: "unavailable" },
+      { staleObservation: true },
+    ]) {
+      const built = build({ nativeComposition: true, capabilityMvpOverrides: overrides });
+      const result = await built.composition.executeManualResume(request());
+      assert.deepEqual(result, { ok: false, reason: "manual_resume_capability_preflight_blocked" });
+      assert.equal(built.calls.some(([name]) => name === "acquireClaim"), false);
+      assert.equal(built.calls.some(([name]) => name === "codex.resolveAndResume"), false);
+      assert.equal(built.userLocalState.stats.publishes, 0);
+    }
+  });
+
+  await test("HANDOFF is not treated as READY or dispatch approval", async () => {
+    const built = build({ nativeComposition: true, capabilityMvpOverrides: { capabilityStatus: "unavailable", handoff: true } });
+    const result = await built.composition.executeManualResume(request());
+    assert.deepEqual(result, { ok: false, reason: "manual_resume_capability_preflight_blocked" });
+    assert.equal(built.calls.some(([name]) => name === "acquireClaim"), false);
+    assert.equal(built.calls.some(([name]) => name === "codex.resolveAndResume"), false);
+  });
+
+  await test("Host repository/worktree mismatch blocks before Attempt read and Claim", async () => {
+    let observedBinding;
+    const built = build({
+      nativeComposition: true,
+      verifyWorktreeStateBinding: binding => {
+        observedBinding = binding;
+        return false;
+      },
+    });
+    const result = await built.composition.executeManualResume(request());
+    assert.deepEqual(result, { ok: false, reason: "manual_resume_capability_preflight_blocked" });
+    assert.equal(observedBinding.repository_cwd, "/repo");
+    assert.equal(observedBinding.candidate_id, "composition-candidate-001");
+    assert.equal(observedBinding.repository_identity, REPOSITORY);
+    assert.equal(observedBinding.worktree_identity, WORKTREE);
+    assert.match(observedBinding.physical_state.state_root_identity, /^[a-f0-9]{64}$/);
+    assert.equal(observedBinding.physical_state.repository_instance_id, "a".repeat(64));
+    assert.equal(observedBinding.physical_state.physical_worktree_id, "b".repeat(64));
+    assert.equal(built.userLocalState.stats.reads, 0);
+    assert.equal(built.calls.some(([name]) => name === "resolveManualResumeContext"), false);
+    assert.equal(built.calls.some(([name]) => name === "acquireClaim"), false);
+    assert.equal(built.calls.some(([name]) => name === "codex.resolveAndResume"), false);
+  });
+
+  await test("altered persisted repository identity fails against the Host record", async () => {
+    const alteredCandidate = Object.freeze({
+      ...candidate(),
+      repository_identity: `phr1.repository.key_A-1.${"X".repeat(43)}`,
+    });
+    let verifierCalls = 0;
+    const built = build({
+      nativeComposition: true,
+      stateReads: [{ candidate: alteredCandidate, state_revision: 1, claim: null }],
+      verifyWorktreeStateBinding: binding => {
+        verifierCalls += 1;
+        return binding.repository_identity === REPOSITORY
+          && binding.worktree_identity === WORKTREE;
+      },
+    });
+    const result = await built.composition.executeManualResume(request());
+
+    assert.deepEqual(result, {
+      ok: false,
+      reason: "manual_resume_capability_preflight_blocked",
+    });
+    assert.equal(verifierCalls, 1);
+    assert.equal(built.userLocalState.stats.reads, 0);
+    assert.equal(built.calls.some(([name]) => name === "acquireClaim"), false);
+    assert.equal(built.calls.some(([name]) => name === "codex.resolveAndResume"), false);
+  });
+
+  await test("missing persisted worktree identity fails closed before Host approval", async () => {
+    const incompleteCandidate = candidate();
+    delete incompleteCandidate.worktree_identity;
+    let verifierCalls = 0;
+    const built = build({
+      nativeComposition: true,
+      stateReads: [{
+        candidate: Object.freeze(incompleteCandidate),
+        state_revision: 1,
+        claim: null,
+      }],
+      verifyWorktreeStateBinding: () => {
+        verifierCalls += 1;
+        return true;
+      },
+    });
+    const result = await built.composition.executeManualResume(request());
+
+    assert.equal(result.ok, false);
+    assert.equal(verifierCalls, 0);
+    assert.equal(built.calls.some(([name]) => name === "acquireClaim"), false);
+    assert.equal(built.calls.some(([name]) => name === "codex.resolveAndResume"), false);
+  });
+
+  await test("missing trusted Host worktree verifier blocks before Claim", async () => {
+    const built = build({ nativeComposition: true, omitWorktreeStateBindingVerifier: true });
+    const result = await built.composition.executeManualResume(request());
+    assert.deepEqual(result, { ok: false, reason: "manual_resume_capability_preflight_blocked" });
+    assert.equal(built.calls.some(([name]) => name === "resolveManualResumeContext"), false);
+    assert.equal(built.calls.some(([name]) => name === "acquireClaim"), false);
+    assert.equal(built.calls.some(([name]) => name === "codex.resolveAndResume"), false);
+  });
+
+  await test("missing checkpoint Host verifier fails before checkpoint reads and Claim", async () => {
+    let manualVerifierCalls = 0;
+    const built = build({
+      nativeComposition: true,
+      omitScopeCheckpointStateRootBindingVerifier: true,
+      verifyWorktreeStateBinding: () => {
+        manualVerifierCalls += 1;
+        return true;
+      },
+    });
+    const result = await built.composition.executeManualResume(request());
+
+    assert.deepEqual(result, {
+      ok: false,
+      reason: "manual_resume_capability_preflight_blocked",
+    });
+    assert.equal(manualVerifierCalls, 1);
+    assert.equal(built.userLocalState.stats.readPaths.some(path => (
+      path.startsWith("f4/scope-preservation-checkpoints/")
+    )), false);
+    assert.equal(built.calls.some(([name]) => name === "acquireClaim"), false);
+    assert.equal(built.calls.some(([name]) => name === "codex.resolveAndResume"), false);
+  });
+
+  await test("replaced State Root directory cannot hide prior UNKNOWN and redispatch", async () => {
+    const userLocalState = userLocalStateFixture();
+    let dispatches = 0;
+    let approvedStateRootIdentity;
+    const verifyWorktreeStateBinding = binding => {
+      const observed = binding.physical_state.state_root_identity;
+      if (approvedStateRootIdentity === undefined) approvedStateRootIdentity = observed;
+      return observed === approvedStateRootIdentity;
+    };
+    const first = build({
+      nativeComposition: true,
+      userLocalState,
+      verifyWorktreeStateBinding,
+      verifyScopeCheckpointStateRootBinding: verifyWorktreeStateBinding,
+      executor: { resolveAndResume: async () => {
+        dispatches += 1;
+        throw new Error(PRIVATE_MARKER);
+      } },
+    });
+    const firstResult = await first.composition.executeManualResume(request());
+    assert.deepEqual(firstResult, { ok: false, reason: "manual_resume_action_outcome_unknown" });
+    assert.equal(dispatches, 1);
+
+    const readsBeforeChangedRoot = userLocalState.stats.reads;
+    userLocalState.replaceDefaultRoot();
+    const afterRootChange = build({
+      nativeComposition: true,
+      userLocalState,
+      verifyWorktreeStateBinding,
+      verifyScopeCheckpointStateRootBinding: verifyWorktreeStateBinding,
+    });
+    const replay = await afterRootChange.composition.executeManualResume(request({
+      claim_attempt_id: "123e4567-e89b-42d3-a456-426614174001",
+    }));
+    assert.deepEqual(replay, { ok: false, reason: "manual_resume_capability_preflight_blocked" });
+    assert.equal(afterRootChange.calls.some(([name]) => name === "acquireClaim"), false);
+    assert.equal(afterRootChange.calls.some(([name]) => name === "codex.resolveAndResume"), false);
+    assert.equal(userLocalState.stats.reads, readsBeforeChangedRoot);
+    assert.equal(dispatches, 1);
+  });
+
+  await test("mutating stateRootOptions after Host verification cannot redirect Attempt lookup", async () => {
+    const userLocalState = userLocalStateFixture();
+    const rootA = "/synthetic-user/pinned-attempt-root";
+    const rootB = "/synthetic-user/mutated-attempt-root";
+    const initialOptions = { stateRootOverride: rootA };
+    let dispatches = 0;
+    const first = build({
+      nativeComposition: true,
+      userLocalState,
+      stateRootOptions: initialOptions,
+      executor: { resolveAndResume: async () => {
+        dispatches += 1;
+        throw new Error(PRIVATE_MARKER);
+      } },
+    });
+    const firstResult = await first.composition.executeManualResume(request());
+    assert.deepEqual(firstResult, { ok: false, reason: "manual_resume_action_outcome_unknown" });
+    assert.equal(dispatches, 1);
+
+    const mutableOptions = { stateRootOverride: rootA };
+    const afterRestart = build({
+      nativeComposition: true,
+      userLocalState,
+      stateRootOptions: mutableOptions,
+      resolveCapabilityMvpContext: input => {
+        mutableOptions.stateRootOverride = rootB;
+        return capabilityMvpContextResult(input.candidate_id, input.runtime_id);
+      },
+    });
+    const replay = await afterRestart.composition.executeManualResume(request({
+      claim_attempt_id: "123e4567-e89b-42d3-a456-426614174001",
+    }));
+    assert.deepEqual(replay, { ok: false, reason: "manual_resume_attempt_recovery_required" });
+    assert.equal(mutableOptions.stateRootOverride, rootB);
+    assert.equal(afterRestart.calls.some(([name]) => name === "acquireClaim"), false);
+    assert.equal(afterRestart.calls.some(([name]) => name === "codex.resolveAndResume"), false);
+    assert.equal([...userLocalState.records.keys()].every(key => JSON.parse(key)[1] === rootA), true);
+    assert.equal(dispatches, 1);
+  });
+
+  await test("physical root drift between Host check and Attempt read fails closed", async () => {
+    const backing = userLocalStateFixture();
+    const api = backing.api;
+    let locationCalls = 0;
+    const driftingApi = Object.freeze({
+      resolveUserLocalStateLocation(cwd, relativePath, options) {
+        locationCalls += 1;
+        const location = api.resolveUserLocalStateLocation(cwd, relativePath, options);
+        return locationCalls === 5
+          ? Object.freeze({ ...location, rootPath: "/synthetic-user/drifted-root" })
+          : location;
+      },
+      readUserLocalState: api.readUserLocalState,
+      publishUserLocalStateAtomically: api.publishUserLocalStateAtomically,
+      withPhysicalStateLock: api.withPhysicalStateLock,
+    });
+    const userLocalState = { ...backing, api: driftingApi };
+    const built = build({ nativeComposition: true, userLocalState });
+    const result = await built.composition.executeManualResume(request());
+    assert.deepEqual(result, { ok: false, reason: "manual_resume_capability_preflight_blocked" });
+    assert.equal(locationCalls, 5);
+    assert.equal(backing.stats.reads, 0);
+    assert.equal(built.calls.some(([name]) => name === "acquireClaim"), false);
+    assert.equal(built.calls.some(([name]) => name === "codex.resolveAndResume"), false);
+  });
+
+  await test("scope and runtime mismatch fail before Claim", async () => {
+    for (const overrides of [
+      { scopeRef: "different-candidate-scope" },
+      { runtimeEvidenceRuntimeId: "claude" },
+      { environmentRuntimeId: "claude" },
+      { providerId: "different-runtime-provider" },
+    ]) {
+      const built = build({ nativeComposition: true, capabilityMvpOverrides: overrides });
+      const result = await built.composition.executeManualResume(request());
+      assert.deepEqual(result, { ok: false, reason: "manual_resume_capability_preflight_blocked" });
+      assert.equal(built.calls.some(([name]) => name === "acquireClaim"), false);
+      assert.equal(built.calls.some(([name]) => name === "codex.resolveAndResume"), false);
+    }
+  });
+
+  await test("post-Claim response loss persists UNKNOWN and blocks same or new Attempt after restart", async () => {
+    const userLocalState = userLocalStateFixture();
+    let dispatches = 0;
+    const first = build({
+      nativeComposition: true,
+      userLocalState,
+      executor: { resolveAndResume: async () => {
+        dispatches += 1;
+        throw new Error(PRIVATE_MARKER);
+      } },
+    });
+    const firstResult = await first.composition.executeManualResume(request());
+    assert.deepEqual(firstResult, { ok: false, reason: "manual_resume_action_outcome_unknown" });
+    assert.equal(dispatches, 1);
+    const unknownRecord = [...userLocalState.records.values()]
+      .map(contents => JSON.parse(contents))
+      .find(envelope => envelope.value?.status === "dispatch_unknown").value;
+    assert.equal(unknownRecord.status, "dispatch_unknown");
+
+    const afterRestart = build({ nativeComposition: true, userLocalState });
+    const replay = await afterRestart.composition.executeManualResume(request());
+    assert.deepEqual(replay, { ok: false, reason: "manual_resume_attempt_replay_blocked" });
+    const freshAttempt = await afterRestart.composition.executeManualResume(request({
+      claim_attempt_id: "123e4567-e89b-42d3-a456-426614174001",
+    }));
+    assert.deepEqual(freshAttempt, { ok: false, reason: "manual_resume_attempt_recovery_required" });
+    assert.equal(afterRestart.calls.some(([name]) => name === "acquireClaim"), false);
+    assert.equal(afterRestart.calls.some(([name]) => name === "codex.resolveAndResume"), false);
+    assert.equal(dispatches, 1);
+  });
+});
+
 await group("Makefile composition wiring", async () => {
   await test("declares the composition target after Claude resolution", () => {
     assert.match(MAKEFILE_SOURCE, /^test-pending-handoff-manual-resume-runtime-composition-fixtures:\n\tnode \.\/scripts\/test-pending-handoff-manual-resume-runtime-composition-fixtures\.mjs$/m);
     assert.equal((MAKEFILE_SOURCE.match(/test-pending-handoff-manual-resume-runtime-composition-fixtures/g) ?? []).length, 4);
     assert.ok(MAKEFILE_SOURCE.indexOf("test-pending-handoff-claude-runtime-adapter-fixtures") < MAKEFILE_SOURCE.indexOf("test-pending-handoff-manual-resume-runtime-composition-fixtures"));
+  });
+});
+
+await group("F4 scope checkpoint composition", async () => {
+  await test("approved Scope Revision must match the durable checkpoint before Claim", async () => {
+    const built = build({
+      nativeComposition: true,
+      resolveApprovedWorkstreamForManualResume: () => (
+        fixtureApprovedWorkstream("RPL-120", "new-owner-revision-not-in-checkpoint")
+      ),
+    });
+    const result = await built.composition.executeManualResume(request());
+    assert.deepEqual(result, { ok: false, reason: "manual_resume_capability_preflight_blocked" });
+    assert.equal(built.userLocalState.stats.readPaths.length, 1);
+    assert.match(built.userLocalState.stats.readPaths[0], /^f4\/scope-preservation-checkpoints\//);
+    assert.equal(built.calls.some(([name]) => name === "acquireClaim"), false);
+    assert.equal(built.calls.some(([name]) => name === "codex.resolveAndResume"), false);
+  });
+
+  await test("BLOCKED workstream cannot pass the READY checkpoint gate", async () => {
+    const built = build({
+      nativeComposition: true,
+      resolveApprovedWorkstreamForManualResume: () => fixtureApprovedWorkstream("BLOCKED-OTHER"),
+    });
+    const result = await built.composition.executeManualResume(request());
+    assert.deepEqual(result, { ok: false, reason: "manual_resume_capability_preflight_blocked" });
+    assert.equal(built.calls.some(([name]) => name === "acquireClaim"), false);
+    assert.equal(built.calls.some(([name]) => name === "codex.resolveAndResume"), false);
+  });
+
+  await test("composition requires an Owner-backed workstream resolver", () => {
+    const built = build({ nativeComposition: true, omitScopeResolver: true });
+    assert.deepEqual(built.built, {
+      ok: false,
+      reason: "manual_resume_runtime_dependency_invalid",
+    });
+    assert.equal(built.calls.some(([name]) => name === "acquireClaim"), false);
+  });
+
+  await test("persists and restores a revision-CAS scope checkpoint through RPL-95 primitives", async () => {
+    const built = build({ nativeComposition: true, seedScopeCheckpoint: false });
+    assert.deepEqual(Reflect.ownKeys(built.composition), [
+      "executeManualResume",
+      "readScopeCheckpoint",
+      "reconcileScopeCheckpoint",
+    ]);
+
+    const approvedScope = {
+      objectiveId: "RPL-112",
+      scopeRevision: "RPL-112/comment/10729",
+      source: {
+        uri: "https://ranikunlabs.atlassian.net/browse/RPL-112",
+        revision: "RPL-112/comment/10729",
+        coverage: "COMPLETE",
+      },
+      requiredSources: [{ uri: "https://ranikunlabs.atlassian.net/rest/api/3/search" }],
+      items: [{ id: "F4", primaryJira: "RPL-120", owner: "F4" }],
+    };
+    const first = await built.composition.reconcileScopeCheckpoint({
+      approvedScope,
+      expectedCheckpointRevision: null,
+      refresh: {
+        sourceUri: "https://ranikunlabs.atlassian.net/rest/api/3/search",
+        sourceRevision: "jira-snapshot/first",
+        expectedPriorRevision: null,
+        refreshScope: "FULL_SOURCE",
+        coverage: "COMPLETE",
+        partialReasons: [],
+        observations: [{ id: "F4", status: "READY" }],
+      },
+      recentExecution: { primaryJira: "RPL-120", writer: "f4-writer", prHead: null },
+      nextReadyId: "F4",
+      stopReason: null,
+    });
+    assert.equal(first.ok, true);
+    assert.equal(first.checkpoint.checkpointRevision, 1);
+    assert.equal(built.userLocalState.stats.asyncLockCallbacks, 0);
+
+    const resumed = await built.composition.readScopeCheckpoint({ objectiveId: "RPL-112" });
+    assert.equal(resumed.ok, true);
+    assert.equal(resumed.value.scopeRevision, "RPL-112/comment/10729");
+    assert.equal(resumed.value.nextReadyId, "F4");
+
+    const blocked = await built.composition.reconcileScopeCheckpoint({
+      approvedScope,
+      expectedCheckpointRevision: 1,
+      refresh: {
+        sourceUri: "https://ranikunlabs.atlassian.net/rest/api/3/search",
+        sourceRevision: "jira-snapshot/next",
+        expectedPriorRevision: "jira-snapshot/first",
+        refreshScope: "INCREMENTAL_DELTA",
+        coverage: "COMPLETE",
+        partialReasons: [],
+        observations: [{ id: "F4", status: "BLOCKED" }],
+      },
+      recentExecution: null,
+      nextReadyId: null,
+      stopReason: "NO_VERIFIED_READY",
+    });
+    assert.equal(blocked.ok, true);
+    assert.equal(blocked.checkpoint.checkpointRevision, 2);
+    assert.equal(blocked.checkpoint.statusSummary.BLOCKED, 1);
+    assert.equal(blocked.checkpoint.goalDoneEligible, false);
+    assert.ok(built.userLocalState.stats.locations.some(relativePath => (
+      /^f4\/scope-preservation-checkpoints\/checkpoint-[a-f0-9]{64}\.json$/.test(relativePath)
+    )));
+
+    const staleResume = await built.composition.reconcileScopeCheckpoint({
+      approvedScope,
+      expectedCheckpointRevision: 1,
+      refresh: null,
+      recentExecution: null,
+      nextReadyId: null,
+      stopReason: "PARTIAL_DISCOVERY",
+    });
+    assert.equal(staleResume.ok, false);
+    assert.equal(staleResume.reason, "STALE_CHECKPOINT_REVISION");
+    assert.equal(built.userLocalState.stats.asyncLockCallbacks, 0);
+
+    built.userLocalState.setNextPublishDurabilityUnknown();
+    const unknownPublication = await built.composition.reconcileScopeCheckpoint({
+      approvedScope,
+      expectedCheckpointRevision: 2,
+      refresh: {
+        sourceUri: "https://ranikunlabs.atlassian.net/rest/api/3/search",
+        sourceRevision: "jira-snapshot/unknown-publication",
+        expectedPriorRevision: "jira-snapshot/next",
+        refreshScope: "INCREMENTAL_DELTA",
+        coverage: "COMPLETE",
+        partialReasons: [],
+        observations: [{ id: "F4", status: "DONE" }],
+      },
+      recentExecution: null,
+      nextReadyId: null,
+      stopReason: null,
+    });
+    assert.equal(unknownPublication.ok, false);
+    assert.equal(unknownPublication.reason, "scope_checkpoint_publication_unknown");
+    assert.equal(unknownPublication.checkpoint, null);
+    const reconciledAfterUnknown = await built.composition.readScopeCheckpoint({ objectiveId: "RPL-112" });
+    assert.equal(reconciledAfterUnknown.ok, true);
+    assert.equal(reconciledAfterUnknown.value.checkpointRevision, 3);
+    assert.equal(reconciledAfterUnknown.value.statusSummary.DONE, 1);
   });
 });
 
