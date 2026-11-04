@@ -56,7 +56,13 @@ function githubResult(number, overrides = {}) {
       },
     },
     status_for_sha: `head-${number}`,
+    status_for_repository: "ranikun-labs/oh-my-ai",
     status_result: { structuredContent: { sha: `head-${number}`, statuses: [] } },
+    workflow_for_sha: `head-${number}`,
+    workflow_for_repository: "ranikun-labs/oh-my-ai",
+    review_for_pr_number: number,
+    review_for_repository: "ranikun-labs/oh-my-ai",
+    review_for_head_sha: `head-${number}`,
     review_result: { structuredContent: { reviews: [] } },
   };
 }
@@ -90,7 +96,7 @@ test("normalizes real MCP envelope shapes and keeps Jira status separate from ex
       ...githubResult(88, { body: "Primary Jira: RPL-119; see RPL-115 for a dependency." }),
       status_for_sha: "head-88",
       status_result: { structuredContent: { sha: "head-88", statuses: [{ id: 881, sha: "head-88", state: "success" }] } },
-      review_result: { structuredContent: { reviews: [{ commit_id: "head-88", state: "COMMENTED" }] } },
+      review_result: { structuredContent: { reviews: [{ id: "PRR_88", commit_id: "head-88", state: "COMMENTED" }] } },
     }],
     confluence_results: [confluenceResult()],
   });
@@ -444,12 +450,22 @@ const statusEvidenceCases = [
     expected: "UNKNOWN",
   },
   {
-    name: "rejects status success when neither response nor individual statuses bind a SHA",
+    name: "rejects status evidence queried from a different repository",
+    entry: { ...statusEvidence(evidenceHead, statusResult({ responseSha: evidenceHead, statuses: [{ id: 41, state: "success" }] })), status_for_repository: "someone/fork" },
+    expected: "UNKNOWN",
+  },
+  {
+    name: "accepts a SHA-less status row when the exact repository and SHA query scope is recorded",
     entry: statusEvidence(evidenceHead, statusResult({
       responseSha: undefined,
       includeResponseSha: false,
       statuses: [{ id: 5, state: "success" }],
     })),
+    expected: "SUCCESS",
+  },
+  {
+    name: "rejects a SHA-less status row when exact query scope is missing",
+    entry: { ...statusEvidence(evidenceHead, statusResult({ responseSha: undefined, includeResponseSha: false, statuses: [{ id: 51, state: "success" }] })), status_for_sha: undefined },
     expected: "UNKNOWN",
   },
   {
@@ -563,6 +579,11 @@ const workflowEvidenceCases = [
     expected: "UNKNOWN",
   },
   {
+    name: "rejects Actions evidence queried from a different repository",
+    entry: { ...workflowEvidence({ workflowForSha: evidenceHead }), workflow_for_repository: "someone/fork" },
+    expected: "UNKNOWN",
+  },
+  {
     name: "rejects an Actions run without its run ID",
     entry: workflowEvidence({ workflowForSha: evidenceHead, runId: null, runHeadSha: evidenceHead }),
     expected: "UNKNOWN",
@@ -573,9 +594,9 @@ const workflowEvidenceCases = [
     expected: "UNKNOWN",
   },
   {
-    name: "rejects an Actions run without head_sha",
+    name: "accepts an Actions run without head_sha only when the exact repository and SHA query scope is recorded",
     entry: workflowEvidence({ workflowForSha: evidenceHead }),
-    expected: "UNKNOWN",
+    expected: "SUCCESS",
   },
   {
     name: "rejects an Actions run from an older PR head",
@@ -699,25 +720,45 @@ const reviewEvidenceCases = [
   },
   {
     name: "displays a review state when its commit ID matches the current PR head",
-    entry: { ...githubResult(90), review_result: { structuredContent: { reviews: [{ commit_id: evidenceHead, state: "COMMENTED" }] } } },
+    entry: { ...githubResult(90), review_result: { structuredContent: { reviews: [{ id: "PRR_900", commit_id: evidenceHead, state: "COMMENTED" }] } } },
     expected: "COMMENTED",
   },
   {
     name: "keeps a review on an older PR commit UNKNOWN",
-    entry: { ...githubResult(90), review_result: { structuredContent: { reviews: [{ commit_id: "old-head", state: "APPROVED" }] } } },
+    entry: { ...githubResult(90), review_result: { structuredContent: { reviews: [{ id: "PRR_901", commit_id: "old-head", state: "APPROVED" }] } } },
     expected: "UNKNOWN",
   },
   {
     name: "keeps mixed current and stale reviews UNKNOWN",
     entry: { ...githubResult(90), review_result: { structuredContent: { reviews: [
-      { commit_id: evidenceHead, state: "APPROVED" },
-      { commit_id: "old-head", state: "COMMENTED" },
+      { id: "PRR_902", commit_id: evidenceHead, state: "APPROVED" },
+      { id: "PRR_903", commit_id: "old-head", state: "COMMENTED" },
     ] } } },
     expected: "UNKNOWN",
   },
   {
     name: "keeps reviews without commit IDs UNKNOWN",
     entry: { ...githubResult(90), review_result: { structuredContent: { reviews: [{ state: "APPROVED" }] } } },
+    expected: "UNKNOWN",
+  },
+  {
+    name: "keeps review evidence UNKNOWN without a review ID",
+    entry: { ...githubResult(90), review_result: { structuredContent: { reviews: [{ commit_id: evidenceHead, state: "APPROVED" }] } } },
+    expected: "UNKNOWN",
+  },
+  {
+    name: "keeps review evidence UNKNOWN when the requested PR binding differs",
+    entry: { ...githubResult(90), review_for_pr_number: 89, review_result: { structuredContent: { reviews: [{ id: "PRR_905", commit_id: evidenceHead, state: "APPROVED" }] } } },
+    expected: "UNKNOWN",
+  },
+  {
+    name: "keeps review evidence UNKNOWN when the requested repository binding differs",
+    entry: { ...githubResult(90), review_for_repository: "someone/fork", review_result: { structuredContent: { reviews: [{ id: "PRR_906", commit_id: evidenceHead, state: "APPROVED" }] } } },
+    expected: "UNKNOWN",
+  },
+  {
+    name: "keeps review evidence UNKNOWN when the current head binding is missing",
+    entry: { ...githubResult(90), review_for_head_sha: undefined, review_result: { structuredContent: { reviews: [] } } },
     expected: "UNKNOWN",
   },
 ];
@@ -727,5 +768,24 @@ for (const { name, entry, expected } of reviewEvidenceCases) {
     assert.equal(portfolioPullRequestFor(entry).review_state, expected);
   });
 }
+
+test("normalizes the current GitHub connector response shape using recorded request scope", () => {
+  const entry = {
+    ...githubResult(90, { head_sha: "79480b9d6ca1fabf36a7987b54f836fcd3a6492f" }),
+    status_for_sha: "79480b9d6ca1fabf36a7987b54f836fcd3a6492f",
+    status_for_repository: "ranikun-labs/oh-my-ai",
+    status_result: { structuredContent: { statuses: [] } },
+    workflow_for_sha: "79480b9d6ca1fabf36a7987b54f836fcd3a6492f",
+    workflow_for_repository: "ranikun-labs/oh-my-ai",
+    workflow_result: { structuredContent: { workflow_runs: [{ id: 41754286050, status: "completed", conclusion: "success" }] } },
+    review_for_pr_number: 90,
+    review_for_repository: "ranikun-labs/oh-my-ai",
+    review_for_head_sha: "79480b9d6ca1fabf36a7987b54f836fcd3a6492f",
+    review_result: { structuredContent: { reviews: [] } },
+  };
+  const pr = portfolioPullRequestFor(entry);
+  assert.equal(pr.ci_state, "SUCCESS");
+  assert.equal(pr.review_state, "NOT_OBSERVED");
+});
 
 process.stdout.write(`PORTFOLIO BRIEFING MCP ADAPTER FIXTURES ${passed}/${passed} PASS\n`);
