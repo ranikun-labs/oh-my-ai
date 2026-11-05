@@ -163,14 +163,37 @@ const hiddenStatuses = validReport.replace(
 );
 const hiddenStatusResult = validateF1Report(hiddenStatuses);
 assert.equal(hiddenStatusResult.valid, true, hiddenStatusResult.errors.join("; "));
-const indentedHiddenHeadingReport = validReport.replace(
+for (const indentation of [" ", "   "]) {
+  const indentedHeadings = validReport.replace(/^##/gm, `${indentation}##`);
+  const indentedHeadingsResult = validateF1Report(indentedHeadings);
+  assert.equal(indentedHeadingsResult.valid, true, indentedHeadingsResult.errors.join("; "));
+}
+const fourSpaceIndentedHeadingReport = validReport.replace(
   /## 검증\n[\s\S]*?(?=## 아직 안 되는 것)/,
   ["    ## 검증", ...fakeStatusLines.map((line) => "    " + line), ""].join("\n")
 );
 expectInvalid(
-  "indented verification heading and statuses are hidden",
-  indentedHiddenHeadingReport,
+  "four-space indented heading remains code rather than a section",
+  fourSpaceIndentedHeadingReport,
   "missing required section: ## 검증"
+);
+const duplicateVerificationReport = validReport.replace(
+  "## 아직 안 되는 것",
+  [
+    "## 검증",
+    "- Native Test: FAIL — node fake-test.mjs 0/1",
+    "- CI: FAIL — https://example.invalid/fake-run",
+    "- Independent Review: FAIL — reviewer: fake, HEAD: deadbeef",
+    "- Runtime E2E: FAIL — runtime: fake, evidence deadbeef",
+    "- Owner Gate: BLOCKED — duplicate conflicting evidence",
+    "",
+    "## 아직 안 되는 것"
+  ].join("\n")
+);
+expectInvalid(
+  "duplicate verification section cannot overwrite earlier evidence",
+  duplicateVerificationReport,
+  "duplicate required section: ## 검증"
 );
 const commentHiddenVerification = [
   "<!--",
@@ -337,7 +360,7 @@ const visibleStatusAfterPre = validReport.replace(
 );
 const visibleStatusAfterPreResult = validateF1Report(visibleStatusAfterPre);
 assert.equal(visibleStatusAfterPreResult.valid, true, visibleStatusAfterPreResult.errors.join("; "));
-console.log("f1 report advisory fixtures passed: 45/45");
+console.log("f1 report advisory fixtures passed: 48/48");
 
 
 // F1 routing metadata regression fixtures.
