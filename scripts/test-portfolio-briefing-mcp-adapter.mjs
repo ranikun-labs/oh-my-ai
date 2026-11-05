@@ -274,15 +274,27 @@ test("keeps partial source data while a permission-denied connector stays UNKNOW
   assert.equal(JSON.stringify(result).includes("permission denied"), false);
 });
 
-test("marks a requested PR whose returned URL points to another identity as DRIFT", () => {
+test("rejects a requested PR whose returned URL points to another PR number", () => {
   const result = buildPortfolioBriefingFromMcpResults({
     captured_at: capturedAt,
     jira_results: [jiraResult("RPL-119", "Report", "할 일")],
     github_results: [githubResult(88, { url: "https://github.com/ranikun-labs/oh-my-ai/pull/89" })],
     confluence_results: [confluenceResult()],
   });
-  assert.equal(result.status, "DRIFT");
-  assert.equal(result.sources.find(source => source.name === "github").reasons.includes("pull_request_identity_conflict"), true);
+  assert.equal(result.status, "UNKNOWN");
+  assert.equal(result.sources.find(source => source.name === "github").quality, "UNKNOWN");
+  assert.equal(result.counts.unique_pull_requests, 0);
+});
+
+test("rejects a requested PR whose returned URL points to another repository", () => {
+  const result = buildPortfolioBriefingFromMcpResults({
+    captured_at: capturedAt,
+    jira_results: [jiraResult("RPL-119", "Report", "할 일")],
+    github_results: [githubResult(88, { url: "https://github.com/another-owner/oh-my-ai/pull/88" })],
+    confluence_results: [confluenceResult()],
+  });
+  assert.equal(result.status, "UNKNOWN");
+  assert.equal(result.sources.find(source => source.name === "github").quality, "UNKNOWN");
   assert.equal(result.counts.unique_pull_requests, 0);
 });
 

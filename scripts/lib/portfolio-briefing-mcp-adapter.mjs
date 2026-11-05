@@ -97,7 +97,11 @@ function normalizeGithubResults(entries) {
     const repository = requestedRepository;
     // Require exact query arguments; response metadata alone cannot establish scope.
     const identityMatches = requestedNumber !== null && returnedNumber !== null && requestedNumber === returnedNumber;
-    const identityAvailable = !result?.isError && identityMatches && requestedRepository !== null && urlIdentity !== null;
+    const urlIdentityMatches = urlIdentity !== null
+      && requestedRepository !== null
+      && urlIdentity.repository === requestedRepository
+      && urlIdentity.number === requestedNumber;
+    const identityAvailable = !result?.isError && identityMatches && urlIdentityMatches;
     const rawHeadSha = nonEmptyString(info.head_sha);
     const headSha = isGitSha(rawHeadSha) ? rawHeadSha.toLowerCase() : null;
     const ciState = summarizeCiEvidence(entry, headSha, repository);
