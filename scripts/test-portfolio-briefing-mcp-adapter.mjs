@@ -348,6 +348,45 @@ test("rejects a Jira response without a returned issue key", () => {
   assert.equal(result.sources.find(source => source.name === "jira").quality, "UNKNOWN");
 });
 
+test("does not infer a Jira request scope from a returned issue key", () => {
+  const entry = jiraResult("RPL-119", "Report", "할 일");
+  delete entry.requested_issue_key;
+  const result = buildPortfolioBriefingFromMcpResults({
+    captured_at: capturedAt,
+    jira_results: [entry],
+    github_results: [githubResult(88)],
+    confluence_results: [confluenceResult()],
+  });
+  assert.equal(result.issues.length, 0);
+  assert.equal(result.sources.find(source => source.name === "jira").quality, "UNKNOWN");
+});
+
+test("does not infer a GitHub request scope from a returned PR identity", () => {
+  const entry = githubResult(88);
+  delete entry.requested_number;
+  const result = buildPortfolioBriefingFromMcpResults({
+    captured_at: capturedAt,
+    jira_results: [jiraResult("RPL-119", "Report", "할 일")],
+    github_results: [entry],
+    confluence_results: [confluenceResult()],
+  });
+  assert.equal(result.pull_requests.length, 0);
+  assert.equal(result.sources.find(source => source.name === "github").quality, "UNKNOWN");
+});
+
+test("does not infer the requested repository from the response URL or head fork", () => {
+  const entry = githubResult(88);
+  delete entry.repository_full_name;
+  const result = buildPortfolioBriefingFromMcpResults({
+    captured_at: capturedAt,
+    jira_results: [jiraResult("RPL-119", "Report", "할 일")],
+    github_results: [entry],
+    confluence_results: [confluenceResult()],
+  });
+  assert.equal(result.pull_requests.length, 0);
+  assert.equal(result.sources.find(source => source.name === "github").quality, "UNKNOWN");
+});
+
 test("rejects a Confluence response whose page ID differs from the requested page", () => {
   const entry = confluenceResult();
   entry.result.structuredContent.content.nodes[0].id = "99999999";

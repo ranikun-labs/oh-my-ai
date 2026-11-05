@@ -57,8 +57,9 @@ function normalizeJiraResults(entries, baseUrl) {
       const fields = node?.fields || {};
       const requestedKey = validIssueKey(entry.requested_issue_key);
       const returnedKey = validIssueKey(node?.key);
-      const identityMatches = returnedKey !== null && (!requestedKey || requestedKey === returnedKey);
-      const key = requestedKey || returnedKey;
+      // A response key is not proof of which issue the host requested.
+      const identityMatches = requestedKey !== null && returnedKey !== null && requestedKey === returnedKey;
+      const key = requestedKey;
       const updated = nonEmptyString(fields.updated);
       const id = nonEmptyString(node?.id);
       snapshots.push({
@@ -91,12 +92,12 @@ function normalizeGithubResults(entries) {
     const returnedNumber = positiveInteger(info.number);
     const number = returnedNumber;
     const url = nonEmptyString(info.url);
-    const repository = nonEmptyString(entry?.repository_full_name)
-      || repositoryFromPullRequestUrl(url)
-      || nonEmptyString(info.head_repo_full_name)
-      || null;
-    const identityMatches = returnedNumber !== null && (!requestedNumber || requestedNumber === returnedNumber);
-    const identityAvailable = !result?.isError && identityMatches && url !== null && repository !== null;
+    const requestedRepository = nonEmptyString(entry?.repository_full_name)?.toLowerCase() || null;
+    const urlIdentity = pullRequestIdentityFromUrl(url);
+    const repository = requestedRepository;
+    // Require exact query arguments; response metadata alone cannot establish scope.
+    const identityMatches = requestedNumber !== null && returnedNumber !== null && requestedNumber === returnedNumber;
+    const identityAvailable = !result?.isError && identityMatches && requestedRepository !== null && urlIdentity !== null;
     const rawHeadSha = nonEmptyString(info.head_sha);
     const headSha = isGitSha(rawHeadSha) ? rawHeadSha.toLowerCase() : null;
     const ciState = summarizeCiEvidence(entry, headSha, repository);
@@ -108,7 +109,9 @@ function normalizeGithubResults(entries) {
 
     return {
       name: "github",
-      scope: repository && number ? `${repository}#${number}` : `pull-request:${index + 1}`,
+      scope: requestedRepository && requestedNumber
+        ? `${requestedRepository}#${requestedNumber}`
+        : `pull-request:${index + 1}`,
       uri: url || "UNKNOWN",
       revision: identityAvailable && headSha && updatedAt ? `github-head:${headSha}:updated:${updatedAt}` : null,
       checked_at: nonEmptyString(entry?.checked_at),
@@ -294,13 +297,18 @@ function extractIssueKeys(text) {
   return [...text.matchAll(/\bRPL-[1-9][0-9]*\b/g)].map(match => match[0]);
 }
 
-function repositoryFromPullRequestUrl(value) {
+function pullRequestIdentityFromUrl(value) {
   if (!value) return null;
   try {
-    const segments = new URL(value).pathname.split("/").filter(Boolean);
+    const parsed = new URL(value);
+    const segments = parsed.pathname.split("/").filter(Boolean);
     const pullIndex = segments.findIndex(segment => segment === "pull" || segment === "pulls");
     if (pullIndex < 2) return null;
-    return `${segments[pullIndex - 2]}/${segments[pullIndex - 1]}`.toLowerCase();
+    const owner = segments[pullIndex - 2];
+    const repository = segments[pullIndex - 1];
+    const number = positiveInteger(Number(segments[pullIndex + 1]));
+    if (!owner || !repository || !number) return null;
+    return { repository: `${owner}/${repository}`.toLowerCase(), number };
   } catch {
     return null;
   }

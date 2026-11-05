@@ -234,6 +234,45 @@ test("marks contradictory observations for the same Pull Request as DRIFT", () =
   assert.equal(result.status, "DRIFT");
 });
 
+test("marks conflicting Jira ownership for one Pull Request as DRIFT without linking either issue", () => {
+  const githubSnapshot = (scope, revision, jiraKey) => ({
+    name: "github",
+    scope,
+    uri: `https://api.github.com/repos/ranikun-labs/oh-my-ai/${scope}`,
+    revision,
+    checked_at: "2026-10-30T09:56:00.000Z",
+    status: "available",
+    issues: [],
+    pull_requests: [{
+      repository: "ranikun-labs/oh-my-ai",
+      number: 121,
+      url: "https://github.com/ranikun-labs/oh-my-ai/pull/121",
+      state: "open",
+      head_sha: "head-a",
+      jira_keys: [jiraKey],
+    }],
+  });
+  const result = buildPortfolioBriefingSnapshot({
+    captured_at: capturedAt,
+    required_sources: ["jira", "github"],
+    source_snapshots: [
+      jiraSnapshot("project", [
+        { key: "RPL-119", summary: "F1", status: "In Progress" },
+        { key: "RPL-121", summary: "F6", status: "In Progress" },
+      ]),
+      githubSnapshot("primary-jira", "gh-r1", "RPL-119"),
+      githubSnapshot("pr-context", "gh-r2", "RPL-121"),
+    ],
+  });
+  const pullRequest = result.pull_requests[0];
+  assert.equal(result.status, "DRIFT");
+  assert.equal(pullRequest.quality, "DRIFT");
+  assert.deepEqual(pullRequest.jira_keys, []);
+  assert.deepEqual(pullRequest.conflicts.jira_keys, ["RPL-119", "RPL-121"]);
+  assert.deepEqual(result.issues.find(issue => issue.key === "RPL-119").linked_pull_requests, []);
+  assert.deepEqual(result.issues.find(issue => issue.key === "RPL-121").linked_pull_requests, []);
+});
+
 test("deduplicates Pull Request records with repository identity or canonical URL", () => {
   const result = buildPortfolioBriefingSnapshot({
     captured_at: capturedAt,
@@ -420,4 +459,4 @@ test("invalid capture time fails closed", () => {
   assert.deepEqual(result.errors, ["captured_at_invalid"]);
 });
 
-process.stdout.write(`F6 portfolio briefing fixtures: ${passed}/20 PASS\n`);
+process.stdout.write(`F6 portfolio briefing fixtures: ${passed}/${passed} PASS\n`);
