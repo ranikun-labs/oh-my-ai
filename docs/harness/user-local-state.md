@@ -29,7 +29,16 @@ names and remote URLs are not persistent identity inputs.
 - `withPhysicalStateLock(location, callback, options)` runs a synchronous
   callback under an exclusive filesystem lock. It waits up to `timeoutMs`
   (default 5000 ms). A dead same-host PID can be recovered; a foreign host,
-  malformed owner, or ambiguous recovery fails closed.
+  malformed owner, or ambiguous recovery fails closed. Recognized async
+  function callbacks are rejected before invocation. Every other callback
+  must also be fully synchronous: it must not schedule deferred writes, start
+  asynchronous side effects, or return a Promise/thenable. A thenable is
+  detected only after an ordinary callback has already run; its work cannot
+  be cancelled and may continue after the lock is released. The resulting
+  `state_lock_callback_invalid` error does not mean that callback side effects
+  were rolled back. For a returned thenable, the error's non-rejecting
+  `callbackOutcome` Promise reports `fulfilled` or `rejected` without holding
+  the lock open. Callers must not use this API for deferred work.
 
 The publication call can throw `state_publish_durability_unknown` after the
 rename succeeded but the directory sync failed. The new contents may already

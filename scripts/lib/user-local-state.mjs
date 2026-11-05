@@ -10,6 +10,7 @@ const APP_DIRECTORY = "oh-my-ai";
 const LOCK_TIMEOUT_MS = 5000;
 const LOCK_RETRY_MS = 10;
 const WAIT_CELL = new Int32Array(new SharedArrayBuffer(4));
+const ASYNC_FUNCTION_PROTOTYPE = Object.getPrototypeOf(async function () {});
 
 /**
  * A stable, machine-readable failure from the physical state layer.
@@ -190,8 +191,14 @@ export function publishUserLocalStateAtomically(location, contents) {
 
 /**
  * Run a synchronous read-modify-publish operation under an exclusive
- * filesystem lock. A dead same-host owner is recovered by a guarded rename;
- * malformed, foreign-host, or ambiguous lock metadata fails closed.
+ * filesystem lock. Recognized async function callbacks are rejected before
+ * invocation. Other callbacks must not schedule asynchronous side effects or
+ * return a thenable: those effects cannot be cancelled after the callback
+ * starts and may continue after the lock is released. A returned thenable's
+ * rejection is observed through the thrown error's callbackOutcome promise.
+ * A dead same-host owner is recovered
+ * by a guarded rename; malformed, foreign-host, or ambiguous lock metadata
+ * fails closed.
  */
 export function withPhysicalStateLock(location, operation, options = {}) {
   const checked = assertLocation(location);
@@ -199,6 +206,12 @@ export function withPhysicalStateLock(location, operation, options = {}) {
     throw new UserLocalStateError(
       "state_lock_callback_invalid",
       "A synchronous operation callback is required for a physical state lock.",
+    );
+  }
+  if (isAsyncFunction(operation)) {
+    throw new UserLocalStateError(
+      "state_lock_callback_invalid",
+      "Native async operation callbacks are rejected before invocation; use a callback that completes synchronously.",
     );
   }
 
@@ -215,10 +228,17 @@ export function withPhysicalStateLock(location, operation, options = {}) {
   try {
     const result = operation();
     if (result && typeof result.then === "function") {
-      throw new UserLocalStateError(
+      const error = new UserLocalStateError(
         "state_lock_callback_invalid",
-        "Physical state lock callbacks must complete synchronously.",
+        "The callback started and returned a thenable. Its asynchronous work cannot be cancelled and may continue after the physical lock is released.",
       );
+      Object.defineProperty(error, "callbackOutcome", {
+        value: Promise.resolve(result).then(
+          () => "fulfilled",
+          () => "rejected",
+        ),
+      });
+      throw error;
     }
     return result;
   } catch (error) {
@@ -235,6 +255,20 @@ export function withPhysicalStateLock(location, operation, options = {}) {
       }
     }
   }
+}
+
+function isAsyncFunction(operation) {
+  const prototype = Object.getPrototypeOf(operation);
+  if (prototype === ASYNC_FUNCTION_PROTOTYPE) return true;
+
+  const constructor = prototype?.constructor;
+  if (Object.prototype.toString.call(operation) === "[object AsyncFunction]"
+    && typeof constructor === "function"
+    && constructor.name === "AsyncFunction"
+    && constructor.prototype === prototype) {
+    return true;
+  }
+  return false;
 }
 
 function resolveGitIdentity(cwd) {
