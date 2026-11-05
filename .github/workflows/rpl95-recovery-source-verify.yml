@@ -1,0 +1,67 @@
+name: RPL-95 recovery source verification
+
+on:
+  push:
+    branches:
+      - "verify/rpl-95-hosted-ci-20261105"
+
+permissions:
+  contents: read
+
+jobs:
+  verify-rpl95-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout the exact PR #110 source
+        uses: actions/checkout@v4
+        with:
+          ref: e672c6f226647c4bf710cec16852d4019d88e6fa
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Assert exact source and record workflow commit
+        shell: bash
+        env:
+          EXPECTED_SOURCE_SHA: e672c6f226647c4bf710cec16852d4019d88e6fa
+        run: |
+          actual="$(git rev-parse HEAD)"
+          printf 'workflow_commit=%s\n' "$GITHUB_SHA"
+          printf 'source_expected=%s\n' "$EXPECTED_SOURCE_SHA"
+          printf 'source_actual=%s\n' "$actual"
+          test "$actual" = "$EXPECTED_SOURCE_SHA"
+
+      - name: Configure isolated test state root
+        shell: bash
+        run: |
+          test -n "${RUNNER_TEMP:-}"
+          printf '%s\n' "OH_MY_AI_STATE_ROOT=${RUNNER_TEMP}/oh-my-ai-rpl95-verification" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Record Node version
+        run: node --version
+
+      - name: Check JavaScript and shell syntax
+        run: |
+          node --check scripts/lib/user-local-state.mjs
+          node --check scripts/lib/work-start-execution-state.mjs
+          node --check scripts/lib/hook-failure-state.mjs
+          node --check scripts/oh-my-ai.mjs
+          node --check scripts/prompt-routing-hook.mjs
+          node --check scripts/test-user-local-state-fixtures.mjs
+          bash -n scripts/test-install-fixtures.sh scripts/test-work-start-fixtures.sh scripts/test-routing-fixtures.sh
+
+      - name: Test user-local storage, physical lock, and async callback regression
+        run: make test-user-local-state-fixtures
+
+      - name: Test Work-start and suggestion regressions
+        run: ./scripts/test-work-start-fixtures.sh
+
+      - name: Test prompt-routing regressions
+        run: ./scripts/test-routing-fixtures.sh
+
+      - name: Test installation and execution-boundary regressions
+        run: ./scripts/test-install-fixtures.sh
