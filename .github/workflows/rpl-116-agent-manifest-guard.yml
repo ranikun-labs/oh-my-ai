@@ -29,7 +29,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: rpl-116-agent-manifest-${{ github.event.pull_request.head.ref || github.ref_name }}
+  group: rpl-116-agent-manifest-${{ github.event_name }}-${{ github.event.pull_request.head.ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
