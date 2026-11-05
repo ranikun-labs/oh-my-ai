@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - recovery/rpl-116-ci-closure-20261105
+      - feat/rpl-116-agent-manifest-preflight-20261028
     paths:
       - .github/workflows/rpl-116-agent-manifest-guard.yml
       - Makefile
@@ -13,6 +14,7 @@ on:
       - scripts/validate-agent-manifest.mjs
   pull_request:
     branches:
+      - master
       - feat/rpl-116-agent-manifest-preflight-20261028
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
