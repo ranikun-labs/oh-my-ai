@@ -301,6 +301,8 @@ function collectPullRequests(snapshots, normalizedSources, issueMap) {
         continue;
       }
       const { id, repository: normalizedRepository, number: normalizedNumber } = identity;
+      const jiraKeys = [...new Set((Array.isArray(record.jira_keys) ? record.jira_keys : [])
+        .map(normalizeIssueKey).filter(Boolean))].sort();
       const existing = pullRequests.get(id);
       const current = {
         id,
@@ -313,8 +315,7 @@ function collectPullRequests(snapshots, normalizedSources, issueMap) {
         ci_state: nonEmptyString(record.ci_state) || "UNKNOWN",
         review_state: nonEmptyString(record.review_state) || "UNKNOWN",
         merge_state: nonEmptyString(record.merge_state) || "UNKNOWN",
-        jira_keys: [...new Set((Array.isArray(record.jira_keys) ? record.jira_keys : [])
-          .map(normalizeIssueKey).filter(Boolean))].sort(),
+        jira_keys: jiraKeys,
         quality: source.quality,
         verification_status: source.verification_status,
         observations: [{
@@ -330,6 +331,7 @@ function collectPullRequests(snapshots, normalizedSources, issueMap) {
         }],
         conflicts: {},
       };
+      if (jiraKeys.length > 1) markJiraOwnershipConflict(source, current, jiraKeys);
       if (existing) {
         const observation = current.observations[0];
         existing.observations.push(observation);
@@ -349,7 +351,14 @@ function collectPullRequests(snapshots, normalizedSources, issueMap) {
         for (const field of ["state", "url", "head_sha", "base_sha", "ci_state", "review_state", "merge_state"]) {
           if (existing[field] === "UNKNOWN" && current[field] !== "UNKNOWN") existing[field] = current[field];
         }
-        existing.jira_keys = [...new Set([...existing.jira_keys, ...current.jira_keys])].sort();
+        const existingJiraKeys = existing.conflicts.jira_keys || existing.jira_keys;
+        const currentJiraKeys = current.conflicts.jira_keys || current.jira_keys;
+        const combinedJiraKeys = [...new Set([...existingJiraKeys, ...currentJiraKeys])].sort();
+        if (combinedJiraKeys.length > 1) {
+          markJiraOwnershipConflict(source, existing, combinedJiraKeys);
+        } else if (!existing.conflicts.jira_keys) {
+          existing.jira_keys = combinedJiraKeys;
+        }
       } else {
         pullRequests.set(id, current);
       }
@@ -367,6 +376,17 @@ function collectPullRequests(snapshots, normalizedSources, issueMap) {
     issue.linked_pull_requests = [...issue.linked_pull_requests].sort();
   }
   return result;
+}
+
+function markJiraOwnershipConflict(source, pullRequest, jiraKeys) {
+  const conflictingKeys = [...new Set(jiraKeys)].sort();
+  if (conflictingKeys.length < 2) return;
+  pullRequest.conflicts.jira_keys = conflictingKeys;
+  // A conflicted association is evidence of drift, not a set of valid links.
+  pullRequest.jira_keys = [];
+  pullRequest.quality = worseQuality(pullRequest.quality, "DRIFT");
+  source.quality = worseQuality(source.quality, "DRIFT");
+  source.reasons = [...new Set([...source.reasons, "pull_request_jira_ownership_conflict"])];
 }
 
 function normalizePullRequestIdentity(repository, number, url) {

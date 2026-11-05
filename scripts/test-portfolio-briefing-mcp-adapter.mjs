@@ -274,15 +274,39 @@ test("keeps partial source data while a permission-denied connector stays UNKNOW
   assert.equal(JSON.stringify(result).includes("permission denied"), false);
 });
 
-test("marks a requested PR whose returned URL points to another identity as DRIFT", () => {
+test("rejects a requested PR whose returned URL points to another PR number", () => {
   const result = buildPortfolioBriefingFromMcpResults({
     captured_at: capturedAt,
     jira_results: [jiraResult("RPL-119", "Report", "할 일")],
     github_results: [githubResult(88, { url: "https://github.com/ranikun-labs/oh-my-ai/pull/89" })],
     confluence_results: [confluenceResult()],
   });
-  assert.equal(result.status, "DRIFT");
-  assert.equal(result.sources.find(source => source.name === "github").reasons.includes("pull_request_identity_conflict"), true);
+  assert.equal(result.status, "UNKNOWN");
+  assert.equal(result.sources.find(source => source.name === "github").quality, "UNKNOWN");
+  assert.equal(result.counts.unique_pull_requests, 0);
+});
+
+test("rejects a requested PR whose returned URL points to another repository", () => {
+  const result = buildPortfolioBriefingFromMcpResults({
+    captured_at: capturedAt,
+    jira_results: [jiraResult("RPL-119", "Report", "할 일")],
+    github_results: [githubResult(88, { url: "https://github.com/another-owner/oh-my-ai/pull/88" })],
+    confluence_results: [confluenceResult()],
+  });
+  assert.equal(result.status, "UNKNOWN");
+  assert.equal(result.sources.find(source => source.name === "github").quality, "UNKNOWN");
+  assert.equal(result.counts.unique_pull_requests, 0);
+});
+
+test("rejects a pull request URL from a non-GitHub host", () => {
+  const result = buildPortfolioBriefingFromMcpResults({
+    captured_at: capturedAt,
+    jira_results: [jiraResult("RPL-119", "Report", "할 일")],
+    github_results: [githubResult(88, { url: "https://example.invalid/ranikun-labs/oh-my-ai/pull/88" })],
+    confluence_results: [confluenceResult()],
+  });
+  assert.equal(result.status, "UNKNOWN");
+  assert.equal(result.sources.find(source => source.name === "github").quality, "UNKNOWN");
   assert.equal(result.counts.unique_pull_requests, 0);
 });
 
@@ -346,6 +370,45 @@ test("rejects a Jira response without a returned issue key", () => {
   });
   assert.equal(result.issues.length, 0);
   assert.equal(result.sources.find(source => source.name === "jira").quality, "UNKNOWN");
+});
+
+test("does not infer a Jira request scope from a returned issue key", () => {
+  const entry = jiraResult("RPL-119", "Report", "할 일");
+  delete entry.requested_issue_key;
+  const result = buildPortfolioBriefingFromMcpResults({
+    captured_at: capturedAt,
+    jira_results: [entry],
+    github_results: [githubResult(88)],
+    confluence_results: [confluenceResult()],
+  });
+  assert.equal(result.issues.length, 0);
+  assert.equal(result.sources.find(source => source.name === "jira").quality, "UNKNOWN");
+});
+
+test("does not infer a GitHub request scope from a returned PR identity", () => {
+  const entry = githubResult(88);
+  delete entry.requested_number;
+  const result = buildPortfolioBriefingFromMcpResults({
+    captured_at: capturedAt,
+    jira_results: [jiraResult("RPL-119", "Report", "할 일")],
+    github_results: [entry],
+    confluence_results: [confluenceResult()],
+  });
+  assert.equal(result.pull_requests.length, 0);
+  assert.equal(result.sources.find(source => source.name === "github").quality, "UNKNOWN");
+});
+
+test("does not infer the requested repository from the response URL or head fork", () => {
+  const entry = githubResult(88);
+  delete entry.repository_full_name;
+  const result = buildPortfolioBriefingFromMcpResults({
+    captured_at: capturedAt,
+    jira_results: [jiraResult("RPL-119", "Report", "할 일")],
+    github_results: [entry],
+    confluence_results: [confluenceResult()],
+  });
+  assert.equal(result.pull_requests.length, 0);
+  assert.equal(result.sources.find(source => source.name === "github").quality, "UNKNOWN");
 });
 
 test("rejects a Confluence response whose page ID differs from the requested page", () => {
