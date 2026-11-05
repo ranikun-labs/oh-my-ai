@@ -1,0 +1,49 @@
+name: RPL-118 Recovery 68 Fixture CI
+
+on:
+  push:
+    branches:
+      - recovery/rpl-118-68-fixture-ci-20261105
+
+permissions:
+  contents: read
+
+jobs:
+  rpl118-pinned-fixtures:
+    name: RPL-118 68 fixtures at pinned PR #111 SHA
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      EXPECTED_SOURCE_SHA: f8bbb8cf69625a11cf5fe106cbb3a84c898d5cf2
+      BASE_SHA: 502365eb1dba02f4a8086413475d7aa5391afa47
+    steps:
+      - name: Check out exact PR #111 source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: f8bbb8cf69625a11cf5fe106cbb3a84c898d5cf2
+          fetch-depth: 0
+
+      - name: Verify checked-out source SHA and patch
+        run: |
+          actual_sha="$(git rev-parse HEAD)"
+          printf 'expected=%s\nactual=%s\n' "$EXPECTED_SOURCE_SHA" "$actual_sha"
+          test "$actual_sha" = "$EXPECTED_SOURCE_SHA"
+          git diff --check "$BASE_SHA...$EXPECTED_SOURCE_SHA"
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+
+      - name: Report Node version
+        run: node --version
+
+      - name: Check JavaScript syntax
+        run: |
+          node --check scripts/lib/rpl-118-capability-preflight-mvp.mjs
+          node --check scripts/test-rpl-118-capability-preflight-mvp.mjs
+
+      - name: Run and assert all 68 Capability fixtures
+        run: |
+          node scripts/test-rpl-118-capability-preflight-mvp.mjs | tee "$RUNNER_TEMP/rpl118-fixtures.log"
+          grep -Fx 'RPL-118 Capability MVP fixtures: 68 passed' "$RUNNER_TEMP/rpl118-fixtures.log"
