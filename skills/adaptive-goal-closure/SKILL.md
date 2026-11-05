@@ -69,7 +69,7 @@ Record per Primary Jira: Objective, Repo/PR/Branch, Base & verified HEAD, Writer
 ### Short task example
 
 ```text
-Read skills/adaptive-goal-closure/SKILL.md and apply F4.
+Apply the invoked adaptive-goal-closure SKILL.md procedure to the approved objective.
 Workstream: Developer AI Platform
 Primary Jira: RPL-120
 Repo: ranikun-labs/oh-my-ai
