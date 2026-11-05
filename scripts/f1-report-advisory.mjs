@@ -178,7 +178,7 @@ function visibleMarkdownLines(markdown) {
     const headingCandidate = inlineCodeDelimiterLength === 0
       && !insideHtmlComment
       && !insideHtmlPreBlock
-      && /^##\s+/.test(line);
+      && /^ {0,3}##[ \t]+/.test(line);
     let visible = "";
     let statusVisible = "";
     let cursor = 0;
@@ -269,14 +269,20 @@ function visibleMarkdownLines(markdown) {
 
 function splitSections(markdown, statusEvidenceOnly = false) {
   const sections = new Map();
+  const duplicates = new Set();
   let current = null;
   const body = [];
   const flush = () => {
-    if (current !== null) sections.set(current, body.join("\n").trimEnd());
+    if (current === null) return;
+    if (sections.has(current)) {
+      duplicates.add(current);
+      return;
+    }
+    sections.set(current, body.join("\n").trimEnd());
   };
 
   for (const { text: line, statusText, headingCandidate } of visibleMarkdownLines(markdown)) {
-    const heading = headingCandidate ? /^##\s+(.+?)\s*$/.exec(line) : null;
+    const heading = headingCandidate ? /^ {0,3}##[ \t]+(.+?)[ \t]*$/.exec(line) : null;
     if (heading) {
       flush();
       current = heading[1];
@@ -286,7 +292,7 @@ function splitSections(markdown, statusEvidenceOnly = false) {
     }
   }
   flush();
-  return sections;
+  return { sections, duplicates };
 }
 
 function hasUsableContent(body) {
@@ -313,7 +319,13 @@ function parseStatusLines(markdown) {
 
 function validateF1Report(markdown) {
   const errors = [];
-  const sections = splitSections(markdown);
+  const sectionScan = splitSections(markdown);
+  const sections = sectionScan.sections;
+  for (const duplicate of sectionScan.duplicates) {
+    if (REQUIRED_SECTIONS.includes(duplicate)) {
+      errors.push(`duplicate required section: ## ${duplicate}`);
+    }
+  }
 
   for (const section of REQUIRED_SECTIONS) {
     if (!sections.has(section)) {
@@ -323,7 +335,7 @@ function validateF1Report(markdown) {
     }
   }
 
-  const statusSections = splitSections(markdown, true);
+  const statusSections = splitSections(markdown, true).sections;
   const statusLines = parseStatusLines(statusSections.get("검증") ?? "");
   for (const label of STATUS_LABELS) {
     const entries = statusLines.get(label) ?? [];
