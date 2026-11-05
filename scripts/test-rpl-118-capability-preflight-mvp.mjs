@@ -862,4 +862,92 @@ assert.equal(sameRuntimeExecutionHandoff.status, "HANDOFF");
 assert.equal(sameRuntimeExecutionHandoff.dispatch_status, "NOT_RUN");
 pass("CODE_EXECUTION_SAME_RUNTIME_VERIFIED_HANDOFF");
 
+
+const invalidTaskCases = [
+  ["TASK_ID_MISSING", currentTask => { delete currentTask.task_id; }],
+  ["SCOPE_REF_MISSING", currentTask => { delete currentTask.scope_ref; }],
+  ["UNSUPPORTED_TASK_KIND", currentTask => { currentTask.task_kind = "DELETE"; }],
+  ["SOURCES_EMPTY", currentTask => { currentTask.sources = []; }],
+];
+for (const [caseId, invalidate] of invalidTaskCases) {
+  const invalidTask = task("READ", [readSources[0]]);
+  invalidate(invalidTask);
+  const verifierCalls = [];
+  const callTrackingVerifiers = new Proxy({}, {
+    get(_target, name) {
+      if (typeof name !== "string") return undefined;
+      return (..._args) => {
+        verifierCalls.push(name);
+        return true;
+      };
+    },
+  });
+  const result = preflightCapabilityMvp(
+    invalidTask,
+    environment(invalidTask),
+    callTrackingVerifiers,
+  );
+  assert.equal(result.status, "BLOCKED");
+  assert.equal(result.code, "MVP_PREFLIGHT_INVALID");
+  assert.equal(result.dispatch_status, "NOT_RUN");
+  assert.equal(result.executor_selection.status, "NOT_RUN");
+  assert.equal(result.handoff_destination, null);
+  assert.notEqual(result.status, "READY");
+  assert.notEqual(result.status, "HANDOFF");
+  assert.deepEqual(verifierCalls, []);
+  pass("INVALID_TASK_" + caseId + "_FAILS_CLOSED");
+}
+
+
+function validInputTask() {
+  return task("READ", [
+    source("validator-source", "git", "READ", "read", "repo:test"),
+  ]);
+}
+const invalidShapeCases = [
+  ["TASK_NOT_OBJECT", () => null],
+  ["TASK_ID_BLANK", () => { const value = validInputTask(); value.task_id = "  "; return value; }],
+  ["SCOPE_REF_BLANK", () => { const value = validInputTask(); value.scope_ref = " "; return value; }],
+  ["SOURCES_NOT_ARRAY", () => { const value = validInputTask(); value.sources = "sources"; return value; }],
+  ["SOURCE_NOT_OBJECT", () => { const value = validInputTask(); value.sources[0] = null; return value; }],
+  ["SOURCE_ID_MISSING", () => { const value = validInputTask(); delete value.sources[0].source_id; return value; }],
+  ["SOURCE_ID_BLANK", () => { const value = validInputTask(); value.sources[0].source_id = " "; return value; }],
+  ["CAPABILITY_MISSING", () => { const value = validInputTask(); delete value.sources[0].capability; return value; }],
+  ["CAPABILITY_UNSUPPORTED", () => { const value = validInputTask(); value.sources[0].capability = "invented"; return value; }],
+  ["TOOL_ID_MISSING", () => { const value = validInputTask(); delete value.sources[0].tool_id; return value; }],
+  ["PERMISSION_NOT_OBJECT", () => { const value = validInputTask(); value.sources[0].permission = null; return value; }],
+  ["PERMISSION_KIND_MISMATCH", () => { const value = validInputTask(); value.sources[0].permission.kind = "WRITE"; return value; }],
+  ["PERMISSION_SCOPE_MISSING", () => { const value = validInputTask(); delete value.sources[0].permission.scope; return value; }],
+  ["OPERATION_MISSING", () => { const value = validInputTask(); delete value.sources[0].operation; return value; }],
+  ["RESOURCE_MISSING", () => { const value = validInputTask(); delete value.sources[0].resource; return value; }],
+  ["SOURCE_REVISION_MISSING", () => { const value = validInputTask(); delete value.sources[0].source_revision; return value; }],
+  ["SOURCE_ID_DUPLICATE", () => { const value = validInputTask(); value.sources.push({ ...value.sources[0] }); return value; }],
+];
+const invalidShapeEnvironment = environment(validInputTask());
+for (const [caseId, createInvalidTask] of invalidShapeCases) {
+  const invalidTask = createInvalidTask();
+  const verifierCalls = [];
+  const callTrackingVerifiers = new Proxy({}, {
+    get(_target, name) {
+      if (typeof name !== "string") return undefined;
+      return (..._args) => {
+        verifierCalls.push(name);
+        return true;
+      };
+    },
+  });
+  const result = preflightCapabilityMvp(
+    invalidTask,
+    invalidShapeEnvironment,
+    callTrackingVerifiers,
+  );
+  assert.equal(result.status, "BLOCKED");
+  assert.equal(result.code, "MVP_PREFLIGHT_INVALID");
+  assert.equal(result.dispatch_status, "NOT_RUN");
+  assert.equal(result.executor_selection.status, "NOT_RUN");
+  assert.equal(result.handoff_destination, null);
+  assert.deepEqual(verifierCalls, []);
+  pass("INVALID_TASK_" + caseId + "_FAILS_CLOSED");
+}
+
 process.stdout.write("RPL-118 Capability MVP fixtures: " + passed.length + " passed\n");
