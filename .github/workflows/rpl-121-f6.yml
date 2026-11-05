@@ -2,7 +2,7 @@ name: RPL-121 F6 portfolio briefing
 
 on:
   pull_request:
-    branches: [master, feat/rpl-121-read-only-portfolio-briefing, recovery/rpl-121-evidence-binding-20261104, recovery/rpl-121-evidence-fail-closed-20261105]
+    branches: [master, feat/rpl-121-read-only-portfolio-briefing, recovery/rpl-121-evidence-binding-20261104]
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - '.github/workflows/rpl-121-f6.yml'

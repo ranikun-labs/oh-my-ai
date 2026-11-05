@@ -305,13 +305,15 @@ function pullRequestIdentityFromUrl(value) {
   if (!value) return null;
   try {
     const parsed = new URL(value);
+    if (parsed.protocol !== "https:" || parsed.hostname.toLowerCase() !== "github.com") return null;
+    if (parsed.username || parsed.password || parsed.port || parsed.search || parsed.hash) return null;
     const segments = parsed.pathname.split("/").filter(Boolean);
-    const pullIndex = segments.findIndex(segment => segment === "pull" || segment === "pulls");
-    if (pullIndex < 2) return null;
-    const owner = segments[pullIndex - 2];
-    const repository = segments[pullIndex - 1];
-    const number = positiveInteger(Number(segments[pullIndex + 1]));
-    if (!owner || !repository || !number) return null;
+    if (segments.length !== 4 || segments[2] !== "pull") return null;
+    const [owner, repository, , rawNumber] = segments;
+    if (!owner || !repository || encodeURIComponent(owner) !== owner || encodeURIComponent(repository) !== repository) return null;
+    const number = positiveInteger(Number(rawNumber));
+    if (!number || String(number) !== rawNumber) return null;
+    if (parsed.pathname !== `/${owner}/${repository}/pull/${rawNumber}`) return null;
     return { repository: `${owner}/${repository}`.toLowerCase(), number };
   } catch {
     return null;

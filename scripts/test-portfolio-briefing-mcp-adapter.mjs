@@ -298,6 +298,18 @@ test("rejects a requested PR whose returned URL points to another repository", (
   assert.equal(result.counts.unique_pull_requests, 0);
 });
 
+test("rejects a pull request URL from a non-GitHub host", () => {
+  const result = buildPortfolioBriefingFromMcpResults({
+    captured_at: capturedAt,
+    jira_results: [jiraResult("RPL-119", "Report", "할 일")],
+    github_results: [githubResult(88, { url: "https://example.invalid/ranikun-labs/oh-my-ai/pull/88" })],
+    confluence_results: [confluenceResult()],
+  });
+  assert.equal(result.status, "UNKNOWN");
+  assert.equal(result.sources.find(source => source.name === "github").quality, "UNKNOWN");
+  assert.equal(result.counts.unique_pull_requests, 0);
+});
+
 test("does not silently replace the requested PR number with a different response number", () => {
   const entry = githubResult(88);
   entry.requested_number = 89;
