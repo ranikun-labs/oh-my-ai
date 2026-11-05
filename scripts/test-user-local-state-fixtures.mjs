@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import vm from "node:vm";
 import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import {
@@ -36,6 +37,7 @@ try {
   verifyNonGitExecutionStatusFailsOpen();
   verifyHookFailureState();
   verifyAtomicPublicationAndPermissions();
+  await verifyLockCallbackContract();
   await verifyCrossProcessLocking();
   verifyLegacySymlinkHandling();
   await verifyCrashRecovery();
@@ -192,6 +194,130 @@ function verifyAtomicPublicationAndPermissions() {
     "state_permissions_unsafe");
   assert.equal(fs.statSync(unsafeRoot).mode & 0o777, 0o755,
     "an explicit override with broad permissions is rejected without changing the directory");
+}
+
+async function verifyLockCallbackContract() {
+  let asyncCallbackInvoked = false;
+  const unhandledRejections = [];
+  const recordUnhandledRejection = reason => unhandledRejections.push(reason);
+  process.on("unhandledRejection", recordUnhandledRejection);
+  const asyncCallbacks = [
+    async () => { asyncCallbackInvoked = true; throw new Error("must not run"); },
+    (async function boundAsyncCallback() { asyncCallbackInvoked = true; }).bind(null),
+    vm.runInNewContext("(effect) => async function crossRealmAsyncCallback() { effect(); }")(
+      () => { asyncCallbackInvoked = true; },
+    ),
+  ];
+  for (const [index, callback] of asyncCallbacks.entries()) {
+    const location = resolveUserLocalStateLocation(repository, `callback-contract/async-${index}.json`);
+    expectStateError(() => withPhysicalStateLock(location, callback), "state_lock_callback_invalid");
+    assert.equal(fs.existsSync(`${location.filePath}.lock`), false,
+      "rejecting an async callback does not acquire or strand the lock");
+  }
+  await new Promise(resolve => setImmediate(resolve));
+  process.off("unhandledRejection", recordUnhandledRejection);
+  assert.equal(asyncCallbackInvoked, false,
+    "native async callbacks are rejected before their body can cause side effects");
+  assert.deepEqual(unhandledRejections, [],
+    "a pre-rejected async callback never creates an unhandled Promise");
+
+  const syncLocation = resolveUserLocalStateLocation(repository, "callback-contract/sync.json");
+  const syncResult = withPhysicalStateLock(syncLocation, () => {
+    publishUserLocalStateAtomically(syncLocation, "sync-result");
+    return "completed";
+  });
+  assert.equal(syncResult, "completed", "ordinary synchronous callbacks retain their return value");
+  assert.equal(readUserLocalState(syncLocation), "sync-result",
+    "ordinary synchronous callbacks can still publish under the lock");
+  const methodNamedAsync = ({ async() { return "method-name-is-not-async"; } }).async;
+  assert.equal(withPhysicalStateLock(syncLocation, methodNamedAsync), "method-name-is-not-async",
+    "a synchronous method named async is not mistaken for an AsyncFunction");
+
+  const thenableLocation = resolveUserLocalStateLocation(repository, "callback-contract/thenable.json");
+  const events = [];
+  let deferredWrite;
+  let violation;
+  try {
+    withPhysicalStateLock(thenableLocation, () => {
+      events.push("ordinary-callback-started");
+      deferredWrite = new Promise(resolve => setTimeout(() => {
+        events.push("late-write");
+        publishUserLocalStateAtomically(thenableLocation, "late-thenable-write");
+        resolve();
+      }, 20));
+      return deferredWrite;
+    });
+  } catch (error) {
+    violation = error;
+  }
+  assert.equal(violation?.code, "state_lock_callback_invalid",
+    "a Promise returned by an ordinary callback is never reported as normal completion");
+  assert.match(violation.message, /may continue after the physical lock is released/,
+    "the contract violation explains that started async work cannot be cancelled");
+  const callbackOutcome = violation.callbackOutcome;
+  withPhysicalStateLock(thenableLocation, () => {
+    events.push("second-writer-entered");
+    publishUserLocalStateAtomically(thenableLocation, "second-writer");
+  });
+  await deferredWrite;
+  assert.equal(await callbackOutcome, "fulfilled",
+    "the rejected callback contract exposes the eventual thenable outcome");
+  assert.deepEqual(events, ["ordinary-callback-started", "second-writer-entered", "late-write"],
+    "a thenable already started by an ordinary callback can outlive the released lock");
+  assert.equal(readUserLocalState(thenableLocation), "late-thenable-write",
+    "the fixture preserves the residual race so callers cannot mistake it for a safe lock result");
+
+  const rejectedThenableLocation = resolveUserLocalStateLocation(repository, "callback-contract/rejected-thenable.json");
+  const lateRejections = [];
+  const recordLateRejection = reason => lateRejections.push(reason);
+  process.on("unhandledRejection", recordLateRejection);
+  let rejectedThenableError;
+  try {
+    withPhysicalStateLock(rejectedThenableLocation, () => Promise.reject(new Error("late async failure")));
+  } catch (error) {
+    rejectedThenableError = error;
+  }
+  assert.equal(rejectedThenableError?.code, "state_lock_callback_invalid",
+    "a rejected Promise is not mistaken for normal callback completion");
+  assert.equal(await rejectedThenableError.callbackOutcome, "rejected",
+    "the returned callback outcome reports an asynchronous rejection");
+  await new Promise(resolve => setImmediate(resolve));
+  process.off("unhandledRejection", recordLateRejection);
+  assert.deepEqual(lateRejections, [],
+    "the rejected Promise is observed and does not escape as an unhandled rejection");
+
+  const scheduledLocation = resolveUserLocalStateLocation(repository, "callback-contract/scheduled.json");
+  const scheduledEvents = [];
+  const reportedResult = withPhysicalStateLock(scheduledLocation, () => {
+    queueMicrotask(() => {
+      scheduledEvents.push("late-write");
+      publishUserLocalStateAtomically(scheduledLocation, "scheduled-late-write");
+    });
+    return "reported-complete";
+  });
+  scheduledEvents.push("sync-returned");
+  assert.equal(reportedResult, "reported-complete",
+    "a callback that hides deferred work from its return value is outside runtime detection");
+  withPhysicalStateLock(scheduledLocation, () => {
+    scheduledEvents.push("second-writer-entered");
+    publishUserLocalStateAtomically(scheduledLocation, "second-writer");
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(scheduledEvents, ["sync-returned", "second-writer-entered", "late-write"],
+    "an ordinary callback can schedule non-returned work that continues after lock release");
+  assert.equal(readUserLocalState(scheduledLocation), "scheduled-late-write",
+    "non-returned deferred work remains an explicit unsupported-callback limitation");
+
+  const partialLocation = resolveUserLocalStateLocation(repository, "callback-contract/partial.json");
+  const sentinel = new Error("callback failed after a partial publish");
+  assert.throws(() => withPhysicalStateLock(partialLocation, () => {
+    publishUserLocalStateAtomically(partialLocation, "partial-result");
+    throw sentinel;
+  }), error => error === sentinel, "callback errors propagate rather than becoming normal completion");
+  assert.equal(readUserLocalState(partialLocation), "partial-result",
+    "a propagated callback error does not imply its earlier side effects were rolled back");
+  assert.equal(withPhysicalStateLock(partialLocation, () => "lock-released"), "lock-released",
+    "the lock is released after a synchronous callback error");
 }
 
 function verifyWorkStartStateCompatibility() {
