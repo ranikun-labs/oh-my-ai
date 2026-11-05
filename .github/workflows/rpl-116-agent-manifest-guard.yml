@@ -1,0 +1,106 @@
+name: RPL-116 Agent Manifest Guard
+
+on:
+  push:
+    branches:
+      - recovery/rpl-116-ci-closure-20261105
+    paths:
+      - .github/workflows/rpl-116-agent-manifest-guard.yml
+      - Makefile
+      - docs/contracts/agent-manifest-guard.md
+      - scripts/lib/agent-manifest-guard.mjs
+      - scripts/test-agent-manifest-fixtures.mjs
+      - scripts/validate-agent-manifest.mjs
+  pull_request:
+    branches:
+      - feat/rpl-116-agent-manifest-preflight-20261028
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - .github/workflows/rpl-116-agent-manifest-guard.yml
+      - Makefile
+      - docs/contracts/agent-manifest-guard.md
+      - scripts/lib/agent-manifest-guard.mjs
+      - scripts/test-agent-manifest-fixtures.mjs
+      - scripts/validate-agent-manifest.mjs
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rpl-116-agent-manifest-${{ github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  agent-manifest-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact tested revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Record and assert Node.js version
+        run: |
+          node --version
+          node -e 'if (Number(process.versions.node.split(".")[0]) !== 22) process.exit(1)'
+
+      - name: Check JavaScript syntax
+        run: |
+          node --check scripts/lib/agent-manifest-guard.mjs
+          node --check scripts/test-agent-manifest-fixtures.mjs
+          node --check scripts/validate-agent-manifest.mjs
+
+      - name: Run complete manifest guard fixtures
+        run: make test-agent-manifest-fixtures
+
+      - name: Verify CLI accepts valid input and rejects missing fast setting
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+          import { tmpdir } from 'node:os';
+          import { join } from 'node:path';
+          import { spawnSync } from 'node:child_process';
+
+          const directory = mkdtempSync(join(tmpdir(), 'rpl-116-cli-'));
+          try {
+            const valid = {
+              agent_id: 'writer-ci', role: 'writer', task: 'validate manifest CLI',
+              permissions: 'scoped-write',
+              requested: { model: 'example-model', reasoning: 'medium', fast: false },
+              runtime: { id: 'synthetic-ci-runtime' },
+              authorization: { status: 'approved', scope: 'fixture only', evidence_ref: 'ci-fixture' },
+              target: { repo: 'example/repository', branch: 'fixture', primary_jira: 'EXAMPLE-1' }
+            };
+            const validPath = join(directory, 'valid.json');
+            writeFileSync(validPath, JSON.stringify(valid));
+            const accepted = spawnSync(process.execPath, ['scripts/validate-agent-manifest.mjs', validPath], { encoding: 'utf8' });
+            assert.equal(accepted.status, 0, accepted.stderr || accepted.stdout);
+            assert.match(accepted.stdout, /"code":"MANIFEST_VALID"/);
+
+            const invalid = structuredClone(valid);
+            delete invalid.requested.fast;
+            const invalidPath = join(directory, 'missing-fast.json');
+            writeFileSync(invalidPath, JSON.stringify(invalid));
+            const rejected = spawnSync(process.execPath, ['scripts/validate-agent-manifest.mjs', invalidPath], { encoding: 'utf8' });
+            assert.equal(rejected.status, 1, rejected.stderr || rejected.stdout);
+            assert.match(rejected.stdout, /"code":"F4_PROMPT_INVALID"/);
+          } finally {
+            rmSync(directory, { recursive: true, force: true });
+          }
+          console.log('PASS: valid manifest accepted; missing fast setting rejected');
+          NODE
+
+      - name: Check whitespace errors
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: git diff --check "$BASE_SHA...$HEAD_SHA"
