@@ -712,4 +712,6 @@ VS Code Settings (JSON)에 한 번만 추가:
 
 커스텀 스킬은 `SKILL.md` frontmatter에 `source`, `summary`, 필요시 `route`를 한 번만 작성한다. `make instructions`가 라우팅 표와 `MINE.md`를 생성한다.
 
+`dev-main-flow`는 `$dev-main-flow`로 명시 호출하는 임시 읽기 전용 계획 진입점이다. Source 디렉터리나 링크가 있다는 사실만으로 Native 발견 또는 Apply가 확인되지는 않는다.
+
 기존 `~/.claude/skills`나 `~/.agents/skills`가 있어도 core `work-start`는 개별 설치한다. 그 밖의 shared skill은 자동 병합하지 않으므로, 필요하면 `make doctor` 결과를 보고 직접 연결 방식을 결정한다. 커밋·푸시 전 현재 `remote`, `branch`, `author`, GitHub 인증 계정을 확인한다. 특정 계정 전환 스크립트나 push guard가 필요하면 `profiles/local/` 아래 개인 profile 또는 레포 밖 private script로 분리해서 운영한다.

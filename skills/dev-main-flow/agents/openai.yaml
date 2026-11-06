@@ -1,0 +1,8 @@
+interface:
+  display_name: "Dev Main Flow (Temporary)"
+  short_description: "Plan current work and connect existing approved development skills"
+  default_prompt: 'Use $dev-main-flow to inspect the existing workstream, recommend the next user goal, and collect only unresolved Owner decisions. Start read-only; use existing F4 only after explicit delegation and valid scope.'
+
+policy:
+  allow_implicit_invocation: false
+

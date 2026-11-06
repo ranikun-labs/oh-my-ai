@@ -1,0 +1,90 @@
+name: Validate dev-main-flow source
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-source:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the exact pull request head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validate explicit-only Skill metadata and source link
+        run: |
+          node <<'NODE'
+          const assert = require('node:assert/strict');
+          const fs = require('node:fs');
+          const path = require('node:path');
+
+          const root = process.cwd();
+          const skillDir = path.join(root, 'skills', 'dev-main-flow');
+          const skillPath = path.join(skillDir, 'SKILL.md');
+          const skill = fs.readFileSync(skillPath, 'utf8');
+          const match = skill.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+          assert.ok(match, 'SKILL.md must have frontmatter');
+          const lines = match[1].split(/\r?\n/);
+          const topValue = (key) => {
+            const line = lines.find((item) => !/^\s/.test(item) && item.startsWith(`${key}:`));
+            return line?.slice(key.length + 1).trim();
+          };
+          assert.equal(topValue('name'), 'dev-main-flow');
+          assert.equal(topValue('disable-model-invocation'), 'true');
+
+          const metadataStart = lines.indexOf('metadata:');
+          assert.notEqual(metadataStart, -1, 'metadata block is required');
+          const metadata = [];
+          for (const line of lines.slice(metadataStart + 1)) {
+            if (line && !/^\s/.test(line)) break;
+            metadata.push(line);
+          }
+          assert.ok(metadata.some((line) => /^\s+source:\s*born-here\s*$/.test(line)), 'source must be born-here');
+          assert.ok(metadata.some((line) => /^\s+summary:\s*\S/.test(line)), 'summary is required');
+          assert.ok(!metadata.some((line) => /^\s+(?:route|routing):/.test(line)), 'this planning entry must not add routing');
+
+          const agentMetadata = fs.readFileSync(path.join(skillDir, 'agents', 'openai.yaml'), 'utf8');
+          assert.match(agentMetadata, /^\s+allow_implicit_invocation:\s*false\s*$/m);
+          assert.match(agentMetadata, /default_prompt:.*Use \$dev-main-flow/);
+
+          const linkPath = path.join(root, '.agents', 'skills', 'dev-main-flow');
+          assert.ok(fs.lstatSync(linkPath).isSymbolicLink(), 'Repository Skill link must be a symlink');
+          const linkTarget = fs.readlinkSync(linkPath);
+          assert.equal(linkTarget, '../../skills/dev-main-flow', 'Repository Skill link must stay relative');
+          const linkedDir = path.resolve(path.dirname(linkPath), linkTarget);
+          assert.equal(fs.realpathSync(linkedDir), fs.realpathSync(skillDir), 'Repository Skill link must resolve to the source directory');
+          for (const name of ['SKILL.md', 'agents/openai.yaml']) {
+            assert.equal(
+              fs.realpathSync(path.join(linkPath, name)),
+              fs.realpathSync(path.join(skillDir, name)),
+              `${name} through the link must resolve to the source file`,
+            );
+          }
+          console.log('Explicit-only metadata and relative source link are valid. This check does not establish Native discovery or Apply.');
+          NODE
+
+      - name: Regenerate instructions and check generated diffs
+        run: |
+          make instructions
+          git diff --exit-code -- MINE.md
+          git diff --exit-code -- AGENTS.md CLAUDE.md claude/CLAUDE.md skills/skill-index.json
+
+      - name: Run the existing routing fixtures
+        run: make test-routing-fixtures
+
+      - name: Check whitespace in the pull request diff
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: git diff --check "$BASE_SHA...$HEAD_SHA"
