@@ -88,9 +88,10 @@ entrypoint_status() {
   fi
 }
 
-work_start_skill_status() {
-  src="$REPO/skills/work-start"
-  dest="$1"
+managed_skill_status() {
+  skill_name="$1"
+  dest="$2"
+  src="$REPO/skills/$skill_name"
   if [ ! -f "$src/SKILL.md" ]; then
     printf '%s\n' "incomplete"
   elif same_managed_path "$src" "$dest"; then
@@ -194,17 +195,18 @@ runtime_status() {
     event_status="$(entrypoint_status "$REPO/scripts/harness-event.mjs" "$LOCAL_BIN/harness-event")"
     hook_status="$(runtime_hook_status claude "$REPO/claude/settings.json" "$CLAUDE_DIR/settings.json")"
     activation_status="$(runtime_hooks_enabled_status claude "$CLAUDE_DIR/settings.json")"
-    skill_status="$(work_start_skill_status "$CLAUDE_DIR/skills/work-start")"
+    skill_status="$(managed_skill_status work-start "$CLAUDE_DIR/skills/work-start")"
     skill_contract_status="$(work_start_runtime_contract_status claude "$CLAUDE_DIR/skills/work-start")"
     [ "$activation_status" = "enabled" ] && activation_status="ready" || activation_status="incomplete"
     combined_status "$cli_status" "$engine_status" "$event_status" "$hook_status" "$skill_status" "$skill_contract_status" "$activation_status"
   else
     hook_status="$(runtime_hook_status codex "$REPO/codex/hooks.json" "$CODEX_DIR/hooks.json")"
     activation_status="$(runtime_hooks_enabled_status codex "$CODEX_DIR/hooks.json")"
-    skill_status="$(work_start_skill_status "$AGENT_DIR/skills/work-start")"
+    skill_status="$(managed_skill_status work-start "$AGENT_DIR/skills/work-start")"
+    spec_skill_status="$(managed_skill_status spec-to-implementation "$AGENT_DIR/skills/spec-to-implementation")"
     skill_contract_status="$(work_start_runtime_contract_status codex "$AGENT_DIR/skills/work-start")"
     [ "$activation_status" = "enabled" ] && activation_status="ready" || activation_status="incomplete"
-    combined_status "$cli_status" "$engine_status" "$hook_status" "$skill_status" "$skill_contract_status" "$activation_status"
+    combined_status "$cli_status" "$engine_status" "$hook_status" "$skill_status" "$spec_skill_status" "$skill_contract_status" "$activation_status"
   fi
 }
 
@@ -231,11 +233,12 @@ install_runtime_hooks() {
   fi
 }
 
-install_work_start_skill() {
-  runtime="$1"
-  dest="$2"
-  source="$REPO/skills/work-start"
-  label="$runtime work-start skill"
+install_managed_skill() {
+  skill_name="$1"
+  runtime="$2"
+  dest="$3"
+  source="$REPO/skills/$skill_name"
+  label="$runtime $skill_name skill"
   if [ ! -f "$source/SKILL.md" ]; then
     say "incomplete: $label source missing ($source)"
     INSTALL_FAILURE=1
@@ -324,14 +327,14 @@ report_runtime_readiness() {
           say "      hook activation could not be verified from the Runtime configuration"
           ;;
         *)
-          say "      required oh-my-ai entrypoint, installed work-start Engine boundary, managed hooks, or work-start skill is missing"
+          say "      a required oh-my-ai entrypoint, managed hook, or Codex skill path is missing"
           ;;
       esac
       DOCTOR_FAIL_COUNT=$((DOCTOR_FAIL_COUNT + 1))
       ;;
     conflict)
       say "$runtime_label: conflict"
-      say "      an existing config or work-start path was preserved because it is not managed by this repository"
+      say "      an existing config or skill path was preserved because it is not managed by this repository"
       DOCTOR_FAIL_COUNT=$((DOCTOR_FAIL_COUNT + 1))
       ;;
   esac
@@ -457,7 +460,7 @@ doctor() {
     path_state "$hook_path" "$(git_hook_relative_target "$hook_dir")"
   fi
   say ""
-  say "Core hooks are merged additively; work-start is installed as an individual skill path. Codex trust remains a manual /hooks check."
+  say "Core hooks are merged additively; Skills are installed as individual paths. Codex trust remains a manual /hooks check."
   say ""
   if [ -n "${HARNESS_PROFILE:-}" ]; then
     profile_local="$REPO/profiles/local/$HARNESS_PROFILE"
@@ -492,8 +495,9 @@ install_shared() {
   safe_link "$REPO/scripts/harness-event.mjs" "$LOCAL_BIN/harness-event" "harness-event"
   install_runtime_hooks claude "$REPO/claude/settings.json" "$CLAUDE_DIR/settings.json" "Claude managed hooks"
   install_runtime_hooks codex "$REPO/codex/hooks.json" "$CODEX_DIR/hooks.json" "Codex managed hooks"
-  install_work_start_skill Claude "$CLAUDE_DIR/skills/work-start"
-  install_work_start_skill Codex "$AGENT_DIR/skills/work-start"
+  install_managed_skill work-start Claude "$CLAUDE_DIR/skills/work-start"
+  install_managed_skill work-start Codex "$AGENT_DIR/skills/work-start"
+  install_managed_skill spec-to-implementation Codex "$AGENT_DIR/skills/spec-to-implementation"
   safe_link "$REPO/claude/agents" "$CLAUDE_DIR/agents" "Claude shared agents"
   install_git_hook
 
@@ -521,7 +525,7 @@ install_shared() {
     say "=== incomplete: existing user files were preserved; no manual merge was applied automatically ==="
     return 1
   fi
-  say "=== done: Runtime hook definitions are configured and work-start was installed without replacing existing directories ==="
+  say "=== done: Runtime hook definitions and individual Skills were installed without replacing existing directories ==="
   say "Codex trust: unverified — review the installed hook in Codex /hooks before relying on execution."
 }
 

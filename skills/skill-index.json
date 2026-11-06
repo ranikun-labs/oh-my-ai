@@ -53,6 +53,52 @@
       }
     },
     {
+      "name": "engineering-communication-ko",
+      "path": "skills/engineering-communication-ko/SKILL.md",
+      "description": "Write clear Korean reports for software development outcomes, keeping user impact, evidence, limits, and next action distinct.",
+      "summary": "개발 결과를 사용자 관점과 검증 근거 중심으로 한국어 보고",
+      "routing": {
+        "visibility": "contextual",
+        "risk_level": "low",
+        "task_types": [
+          "reporting"
+        ],
+        "triggers": [
+          {
+            "kind": "pattern",
+            "values": [
+              "^(?![\\s\\S]*(?:보고|정리|요약)\\s*했(?:어|다|습니다|었(?:다|어))\\s*[.!?]*$)(?![\\s\\S]*(?:보고|정리|요약)(?:의|에\\s*관한)?\\s*(?:정의|형식|사례|예시|패턴|동작|원리|사용법))(?![\\s\\S]*(?:skill|스킬)\\s*(?:패턴|라우팅|동작|원리|사용법))(?![\\s\\S]*(?:보고|정리|요약)\\s*(?:하지\\s*(?:마|말|않)|안\\s*(?:해|하|했)|할\\s*필요\\s*없|금지)(?![\\s\\S]*(?:보고|정리|요약)\\s*(?:해\\s*줘|해\\s*주세요|해\\s*줄래|해\\s*봐|해\\s*보자|부탁(?:해|드립니다|합니다)?|하자|해줘요|해주실래)))(?![\\s\\S]*(?:보고|정리|요약)\\s*(?:하지\\s*(?:마|말|않)|안\\s*(?:해|하|했)|할\\s*필요\\s*없|금지)[\\s\\S]*(?:보고|정리|요약)\\s*(?:해\\s*줘|해\\s*주세요|해\\s*줄래|해\\s*봐|해\\s*보자|부탁(?:해|드립니다|합니다)?|하자|해줘요|해주실래)\\s*[?？]\\s*[\\s\\S]*(?<!결과의 )(?:의미|뜻|표현|문장)\\s*(?:를|을|는|이)?\\s*(?:설명|알려))(?![\\s\\S]*(?:라고\\s*(?:했|말|쓰)|라는\\s*(?:말|표현|문장)|문장을?\\s*(?:설명|분석)|(?:무슨|어떤)\\s*뜻|의미가?\\s*뭐|과거형))(?![\\s\\S]*(?:방법|하는\\s*법)[\\s\\S]*(?:알려|설명)\\s*(?:해)?\\s*줘)(?!\\s*(?:왜|무엇|뭐|어떻게|방법|설명해줘|예시))(?=[\\s\\S]*(?:개발|구현|테스트|pr|작업|f1|핵심정리))(?=[\\s\\S]*(?:결과|보고|정리|성과))[\\s\\S]*(?:(?:보고|정리|요약)\\s*(?:해\\s*줘|해\\s*주세요|해\\s*줄래|해\\s*봐|해\\s*보자|부탁(?:해|드립니다|합니다)?|하자|해줘요|해주실래)|(?:보여\\s*줘|설명\\s*해\\s*줘|알려\\s*줘))\\s*[.!?]*$"
+            ]
+          },
+          {
+            "kind": "intent",
+            "values": [
+              "summarize_development_outcome_in_korean"
+            ]
+          }
+        ],
+        "keywords": {
+          "ko": [
+            "개발 결과",
+            "구현 결과",
+            "검증 결과",
+            "남은 작업"
+          ]
+        },
+        "use_when": [
+          "구현·검수·통합 결과를 한국어로 쉽게 설명해야 하는 경우"
+        ],
+        "do_not_use_when": [
+          "사용자가 원문 로그나 기계용 산출물만 요청한 경우",
+          "검증되지 않은 작업 완료를 꾸며 내야 하는 상황"
+        ],
+        "requires": [
+          "task_scope",
+          "available_evidence"
+        ]
+      }
+    },
+    {
       "name": "golang-dependency-injection",
       "path": "skills/golang-dependency-injection/SKILL.md",
       "description": "Comprehensive guide for dependency injection (DI) in Golang. Covers why DI matters (testability, loose coupling, separation of concerns, lifecycle management), manual constructor injection, and DI library comparison (google/wire, uber-go/dig, uber-go/fx, samber/do). Use this skill when designing service architecture, setting up dependency injection, refactoring tightly coupled code, managing singletons or service factories, or when the user asks about inversion of control, service containers, or wiring dependencies in Go.",
@@ -446,6 +492,71 @@
             "redis"
           ]
         }
+      }
+    },
+    {
+      "name": "spec-to-implementation",
+      "path": "skills/spec-to-implementation/SKILL.md",
+      "description": "Use for substantial feature requests or architecture changes that need explicit requirements, acceptance criteria, repository source-of-truth review, Owner decisions, approved implementation, independent review, and a PR gate. Do not impose this workflow on small fixes or simple questions. A Work-start Candidate is never an approved specification.",
+      "summary": "큰 변경을 승인 가능한 명세부터 독립 검수와 PR Gate까지 이끄는 구현 절차",
+      "routing": {
+        "visibility": "contextual",
+        "risk_level": "medium",
+        "task_types": [
+          "feature-planning",
+          "architecture-change",
+          "implementation-workflow"
+        ],
+        "triggers": [
+          {
+            "kind": "intent",
+            "values": [
+              "plan_and_implement_substantial_change",
+              "define_acceptance_criteria_before_implementation"
+            ]
+          },
+          {
+            "kind": "keyword",
+            "values": [
+              "추상 요구",
+              "명세부터 구현",
+              "승인된 명세"
+            ]
+          },
+          {
+            "kind": "pattern",
+            "values": [
+              "^(?![\\s\\S]*\\b(?:do\\s+not|don't|never)\\s+use\\s+spec-to-implementation\\b)[\\s\\S]*\\bspec-to-implementation\\b[\\s\\S]*$",
+              "^(?!\\s*(?:what|why|how|explain|tell\\s+me|can\\s+you\\s+(?:explain|tell|walk\\s+me\\s+through)|could\\s+you\\s+(?:explain|tell|walk\\s+me\\s+through)|i\\s+(?:wonder|am\\s+curious))\\b)(?![\\s\\S]*\\b(?:do\\s+not|don't|never)\\s+(?:build|implement|develop|create|add|design|plan)\\b)(?=[\\s\\S]*\\b(?:build|implement|develop|create|add|design|plan)\\b)(?=[\\s\\S]*\\b(?:requirements\\s+and\\s+acceptance\\s+criteria|acceptance\\s+criteria\\s+and\\s+requirements)\\b)[\\s\\S]{1,2000}$",
+              "^(?![\\s\\S]*(?:(?:구현|개발|추가|설계)(?:은|는|이|가|을|를)?\\s*(?:하지\\s*(?:마|말|않)|안\\s*(?:해|하고|할|합니다))|만들(?:지\\s*(?:마|말|않)|(?:기는|은|는|을|를)?\\s*(?:하지\\s*(?:마|말|않)|안\\s*(?:해|하고|할|합니다)))|(?:구현|개발|추가|설계)(?:해\\s*줘|해\\s*주세요|해줄래|하자|해봐)\\s*말고|만들(?:어\\s*줘|어\\s*주세요|어줄래|자|어봐)\\s*말고))(?=[\\s\\S]*요구사항\\s*과\\s*인수\\s*기준)(?=[\\s\\S]*(?:구현|개발|추가|설계)(?:해\\s*줘|해\\s*주세요|해줄래|하자|해봐)|만들(?:어\\s*줘|어\\s*주세요|어줄래|자|어봐))[\\s\\S]{1,2000}$"
+            ]
+          }
+        ],
+        "keywords": {
+          "ko": [
+            "요구사항",
+            "인수 기준",
+            "승인된 명세",
+            "독립 검수"
+          ],
+          "en": [
+            "acceptance criteria",
+            "approved specification",
+            "independent review",
+            "implementation plan"
+          ]
+        },
+        "use_when": [
+          "새 기능이나 구조 변경처럼 여러 파일·계약·책임이 걸리고 구현 전 합의가 필요한 경우",
+          "사용자가 요구사항 정리, 승인, 구현, 독립 검수까지 이어지는 작업을 요청한 경우"
+        ],
+        "do_not_use_when": [
+          "단순 질문, 문구 변경, 작은 국소 수정처럼 별도 명세 절차가 과한 경우",
+          "사용자가 아직 아이디어 탐색만 원하고 구현 준비를 요청하지 않은 경우"
+        ],
+        "requires": [
+          "substantial_change_or_explicit_workflow_request"
+        ]
       }
     },
     {

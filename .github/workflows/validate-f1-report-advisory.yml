@@ -1,0 +1,49 @@
+name: Validate F1 report advisory
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/f1-report-advisory.mjs'
+      - 'scripts/test-f1-report-advisory.mjs'
+      - 'scripts/test-f1-cross-pr-routing.mjs'
+      - 'skills/engineering-communication-ko/SKILL.md'
+      - 'docs/examples/f1-report-rpl119.md'
+      - '.github/workflows/validate-f1-report-advisory.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check F1 advisory fixtures
+        run: node scripts/test-f1-report-advisory.mjs
+      - name: Validate real F1 Markdown example
+        run: node scripts/f1-report-advisory.mjs docs/examples/f1-report-rpl119.md
+      - name: Checkout pinned #80 Router into isolated fixture
+        uses: actions/checkout@v4
+        with:
+          ref: '7f303332b549ea52937ce63ac708c8be8dada6af'
+          path: .f1-cross-pr-base
+          persist-credentials: false
+      - name: Validate #80 Router and #88 F1 Skill using both native consumers
+        shell: bash
+        run: |
+          test "$(git -C .f1-cross-pr-base rev-parse HEAD)" = "7f303332b549ea52937ce63ac708c8be8dada6af"
+          mkdir -p .f1-cross-pr-base/skills/engineering-communication-ko
+          cp skills/engineering-communication-ko/SKILL.md .f1-cross-pr-base/skills/engineering-communication-ko/SKILL.md
+          node .f1-cross-pr-base/scripts/render-skill-index.mjs
+          node scripts/test-f1-cross-pr-routing.mjs .f1-cross-pr-base
+          make -C .f1-cross-pr-base test-routing-fixtures
+      - name: Check F1 advisory syntax
+        run: node --check scripts/f1-report-advisory.mjs
+      - name: Check patch whitespace
+        run: git diff --check "${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}"

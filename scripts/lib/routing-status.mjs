@@ -62,13 +62,21 @@ export function matchSkillCandidatesWithStatus(normalizedInput, options = {}) {
 
       const routing = skill.routing;
       const keywordTriggers = routing.triggers.filter(trigger => trigger.kind === "keyword");
-      supportedTriggerCount += keywordTriggers.length;
-      unsupportedTriggerCount += routing.triggers.length - keywordTriggers.length;
+      const patternTriggers = routing.triggers.filter(trigger => trigger.kind === "pattern");
+      supportedTriggerCount += keywordTriggers.length + patternTriggers.length;
+      unsupportedTriggerCount += routing.triggers.length - keywordTriggers.length - patternTriggers.length;
 
       if (routing.visibility === "hidden" || routing.risk_level === "high") continue;
 
       const keywordValues = keywordTriggers.flatMap(trigger => trigger.values);
-      const matched = keywordValues.filter(value => normalizedInput.includes(value.toLowerCase()));
+      const matchedKeywords = keywordValues.filter(value => normalizedInput.includes(value.toLowerCase()));
+      // Pattern triggers are opt-in, non-executing candidates. Cap input to
+      // 2,000 characters to bound regex work on untrusted user prompts.
+      const patternInput = normalizedInput.slice(0, 2000);
+      const matchedPatterns = patternTriggers.flatMap(trigger => trigger.values)
+        .filter(value => new RegExp(value, "i").test(patternInput))
+        .map(() => "pattern:substantial-request");
+      const matched = [...matchedKeywords, ...matchedPatterns];
       if (matched.length > 0) {
         candidates.push({
           name: skill.name,

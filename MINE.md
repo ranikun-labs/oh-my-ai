@@ -11,6 +11,7 @@
 ### born-here (처음부터 이 레포에서 만든 것)
 - `skills/completion-notify/` — Codex·Claude Turn 완료 알림을 opt-in으로 안전하게 설치·점검·제거하는 로컬 통합
 - `skills/daily-report/` — Optional Slack/Notion 일일보고 workflow
+- `skills/engineering-communication-ko/` — 개발 결과를 사용자 관점과 검증 근거 중심으로 한국어 보고
 - `skills/execution-recovery/` — 도구·권한·샌드박스 장애의 재시도 폭주를 차단하고 안전하게 대피
 - `skills/git-work-preflight/` — Git Mutation 전 공통으로 소비하는 읽기 전용 Repository 안전 Gate
 - `skills/handoff-prompt/` — 세션 전환 시 다음 AI 세션에 붙여넣을 handoff prompt를 사람이 직접 작성하도록 안내
@@ -20,6 +21,7 @@
 - `skills/local-search/` — rg/find와 Jikji의 역할을 분리하는 로컬 파일·문서 탐색 플레이북
 - `skills/project-context/` — 세션 간 설계 배경과 작업 상태를 이어주는 컨텍스트 관리
 - `skills/release-note/` — Optional Jira/Confluence 릴리즈 노트 workflow
+- `skills/spec-to-implementation/` — 큰 변경을 승인 가능한 명세부터 독립 검수와 PR Gate까지 이끄는 구현 절차
 - `skills/work-start/` — 작업 시작 시 외부 맥락 회수 → repo 컨텍스트 수집 → 중간 점검 → 컨펌의 conversation-native 플레이북
 - `skills/worklog-note/` — Optional Notion 업무일지 정리 workflow
 
