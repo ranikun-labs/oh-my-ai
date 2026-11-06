@@ -1,0 +1,93 @@
+name: RPL-120 Portable Skill Validation
+
+on:
+  push:
+    branches:
+      - codex/rpl120-skill-portability-ci-20261106
+    paths:
+      - ".github/workflows/rpl120-skill-portability-validation.yml"
+      - "skills/adaptive-goal-closure/**"
+      - "scripts/render-instructions.sh"
+      - "scripts/render-skill-index.mjs"
+      - "scripts/test-routing-fixtures.sh"
+      - "scripts/work-start-skill-match.mjs"
+      - "scripts/prompt-routing-hook.mjs"
+      - "instructions/**"
+      - "Makefile"
+
+permissions:
+  contents: read
+
+jobs:
+  skill-portability:
+    name: Metadata, portability, routing, and generated files
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out the pushed source commit
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+
+      - name: Check exact source delta
+        env:
+          BASE_SHA: 201e919cdd981e04289cd06766c6ff712209e11d
+        run: git diff --check "$BASE_SHA...$GITHUB_SHA"
+
+      - name: Validate explicit-only Skill metadata and portable layout
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from "node:assert/strict";
+          import fs from "node:fs";
+          import os from "node:os";
+          import path from "node:path";
+
+          const skillPath = "skills/adaptive-goal-closure/SKILL.md";
+          const descriptorPath = "skills/adaptive-goal-closure/agents/openai.yaml";
+          const skill = fs.readFileSync(skillPath, "utf8");
+          const descriptor = fs.readFileSync(descriptorPath, "utf8");
+          const frontmatter = skill.match(/^---\\r?\\n([\\s\\S]*?)\\r?\\n---/);
+          assert.ok(frontmatter, "SKILL.md frontmatter must be present");
+          assert.match(frontmatter[1], /^name: adaptive-goal-closure$/m);
+          assert.match(frontmatter[1], /^description: .+$/m);
+          assert.match(frontmatter[1], /^disable-model-invocation: true$/m);
+          assert.match(frontmatter[1], /^  source: born-here$/m);
+          assert.match(frontmatter[1], /^  summary: .+$/m);
+          assert.doesNotMatch(frontmatter[1], /^  route:/m, "explicit-only Skill must not gain automatic routing");
+
+          assert.match(descriptor, /^interface:\\s*$/m);
+          assert.match(descriptor, /^  display_name: "Adaptive Goal Closure"$/m);
+          assert.match(descriptor, /^  short_description: "Continue an approved objective with bounded F4 execution"$/m);
+          assert.match(descriptor, /^  default_prompt: '.*SKILL\\.md.*'$/m);
+          assert.match(descriptor, /^  allow_implicit_invocation: false$/m);
+          const prompt = descriptor.split("\\n").find(line => line.startsWith("  default_prompt:"));
+          assert.doesNotMatch(prompt, /\\/workspace\\/|\\/home\\/|[A-Za-z]:\\\\/, "descriptor must not pin a local checkout path");
+
+          const index = JSON.parse(fs.readFileSync("skills/skill-index.json", "utf8"));
+          assert.equal(index.skills.some(skillEntry => skillEntry.name === "adaptive-goal-closure"), false,
+            "explicit-only Skill must remain outside the auto-routing index");
+
+          const temp = fs.mkdtempSync(path.join(os.tmpdir(), "rpl120-portable-skill-"));
+          try {
+            const target = path.join(temp, "another-project", "skills", "adaptive-goal-closure");
+            fs.mkdirSync(path.dirname(target), { recursive: true });
+            fs.cpSync(path.dirname(skillPath), target, { recursive: true });
+            assert.equal(fs.readFileSync(path.join(target, "SKILL.md"), "utf8"), skill);
+            assert.equal(fs.readFileSync(path.join(target, "agents", "openai.yaml"), "utf8"), descriptor);
+          } finally {
+            fs.rmSync(temp, { recursive: true, force: true });
+          }
+          NODE
+
+      - name: Regenerate Skill index and instructions
+        run: |
+          make instructions
+          git diff --exit-code -- AGENTS.md CLAUDE.md claude/CLAUDE.md MINE.md skills/skill-index.json
+
+      - name: Verify routing consumers and false-positive guards
+        run: make test-routing-fixtures
