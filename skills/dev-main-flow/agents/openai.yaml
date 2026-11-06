@@ -1,7 +1,7 @@
 interface:
   display_name: "Dev Main Flow (Temporary)"
-  short_description: "Plan current work and connect existing approved development skills"
-  default_prompt: 'Use $dev-main-flow to inspect the existing workstream, recommend the next user goal, and collect only unresolved Owner decisions. Start read-only; use existing F4 only after explicit delegation and valid scope.'
+  short_description: "Resume an approved goal with existing execution and review"
+  default_prompt: 'Use $dev-main-flow to resume the existing approved Objective for the current Workstream and apply the full workflow, including existing F4 Adaptive Goal Closure after its gates. Keep status/design-only requests read-only.'
 
 policy:
   allow_implicit_invocation: false

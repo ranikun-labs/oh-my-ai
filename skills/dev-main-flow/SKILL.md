@@ -1,6 +1,6 @@
 ---
 name: dev-main-flow
-description: Explicit temporary entry for reviewing an existing development workstream, recommending the next user goal, collecting unresolved Owner decisions, and handing approved work to existing execution, handoff, and Korean reporting skills. General conversation remains read-only planning.
+description: Explicit entry for resuming an existing approved development objective through current-context review, existing F4 execution, handoff, and service reporting. Status and design-only requests remain read-only.
 disable-model-invocation: true
 metadata:
   source: born-here
@@ -14,12 +14,53 @@ metadata:
 Primary Jira: RPL-113, for Intent/Skill entry only. RPL-120 owns F4, RPL-119 owns F1,
 and RPL-93/94/115 plus existing Handoff owners retain their contracts.
 RPL-113 and RPL-120 are separate work items under the existing Workstream objective.
-This file grants no Writer, branch, installation, merge, deployment, or remote-write authority.
+These Jira references identify the owners of this Skill's Source contracts; they do not replace the caller's actual Workstream, Objective, or Primary Jira.
+This file grants no new Writer assignment, branch custody, global installation, private-policy or private-data access, merge, deployment, or remote-write authority.
 
-Explicit `$dev-main-flow` starts with read-only planning. A general development conversation
-may use the same planning behavior when the approved existing runtime instruction layer
-references it; this candidate alone does not establish automatic loading or implicit Native invocation.
-Ordinary questions do not require a workstream-wide lookup or start execution.
+The direct explicit request below means: resume the existing approved objective, apply this complete workflow, and read/apply the existing F4 playbook when its gates pass. Other direct explicit `$dev-main-flow` requests that clearly ask to continue an existing approved objective use the same workflow. This is the Owner's explicit F4 request for that invocation; do not ask for a second long prompt or a separate `$adaptive-goal-closure` invocation.
+
+```text
+$dev-main-flow
+Developer AI Platform 기존 목표 이어서 진행해.
+```
+
+That request does not create scope, approve new product decisions, authorize Jira fields or Git writes, assign or replace a Writer, grant Runtime capabilities, or satisfy the Objective/Scope/Acceptance Criteria/ownership gates below. A direct request limited to status, design review, or a next-goal recommendation remains read-only even when it names this Skill. An ordinary development conversation may receive only the existing read-only planning behavior when an approved runtime instruction already references it; a quoted or discussed invocation, ordinary conversation, or this candidate alone does not invoke the full workflow or establish automatic loading, Native discovery, or Apply.
+
+## Full-wrapper workflow
+
+Apply this ordered workflow only for a direct explicit continuation request. Start the run with an actual UTC timestamp and a default maximum budget of 60 minutes. Use the time for safe approved work, then checkpoint at the budget boundary; finish earlier when every approved READY item is exhausted. Never imply background execution, an automatic restart, or control over another Cloud session.
+
+### 1. Resume the real workstream and establish current truth
+
+Identify the existing Workstream, active Objective, Primary Jira, repository, PR, verified Base/HEAD, branch/worktree custody, checkpoint/context, prior decisions, dependencies, and actual Writer/Task. Use supported connected sources or the approved source reader; do not infer identity, ownership, or approval from a directory name, assignee, PR author, copied text, or missing search result. Read only relevant context and never inspect raw transcripts.
+
+Follow the current explicit Owner instruction for this request and its authorized scope; an older summary or Skill recommendation cannot override it. Keep authority tied to the fact being checked: accepted decisions and canonical accepted Git documents govern product/architecture contracts; Jira is the live record for issue status, recorded Acceptance Criteria, dependencies, and next actions; actual repository HEAD/diff, tests/CI, and independent review establish implementation reality. Confluence is a human-readable projection and context source; verify the accepted Git source where available, and do not promote a projection or handoff candidate into a new approval. If sources conflict, preserve the conflict and request only the decision needed instead of silently replacing an accepted contract. For each source, retain its URI/path, revision or observed timestamp, and the time it was read. Prefer live retrieval during this run. Reuse older evidence only when its referenced revision/HEAD is unchanged and the evidence is still valid; otherwise refresh it or mark it stale/unknown. Do not claim “latest” without current retrieval evidence.
+
+Compare Confluence and Git documentation, Jira facts/acceptance criteria/dependencies/next actions, and the actual PR/HEAD/checkpoint. Report contradictions as `CONFLICTED` and collect only the decision needed to resolve them. If a connector, document, checkpoint, or current runtime source is unavailable, name that gap and its effect; keep independent safe work moving.
+
+Establish separately: (a) current user-facing capability by service/function, (b) actual work completed and remaining against the approved Objective, (c) approved executable READY work, and (d) a recommended next user goal with benefit and prerequisites. A recommendation is not approved scope or READY work. If the active Objective or its approval cannot be verified, do not infer one; stop execution with `BLOCKED/NOT_VERIFIABLE`, identify the exact Owner input needed, and continue only independent safe review. Distinguish a completed Slice from a completed Objective.
+
+### 2. Apply a proportional `/senior` review and resolve only real decisions
+
+Review the accepted goal, scope, current implementation and documentation, failure modes, dependencies, security/privacy risks, whether acceptance criteria are observable and cover the goal, rollout and rollback. Identify design gaps and the smallest scope that meets the existing need; recommend a proportionate improvement without adding speculative architecture or re-opening valid decisions. Reuse unchanged approvals and evidence.
+
+Bundle only unresolved product or authority decisions that prevent a READY item. For each, state the exact scope or authority needed, why it blocks, the consequence of each viable choice, and one recommendation with its reason. Ask once for the bundle and continue other independent approved READY work. Keep proposed scope changes outside the current Objective until the Owner approves them. Do not turn a recommended improvement, missing source, or Jira discrepancy into a guessed decision.
+
+### 3. Maintain existing Jira records only within explicit field scope
+
+Read existing Jira facts and reconcile progress, Acceptance Criteria, dependencies, and next actions against current evidence. Update an existing issue only when the authorization identifies the target issue and fields, or an exact previously approved reusable scope covers those fields, and the connected Jira role/field policy permits the update. Otherwise provide the proposed field delta without writing it. Jira progress metadata is not implementation evidence.
+
+Do not create an issue by default, transition an issue to Done without proven acceptance, change assignee or ownership, or update unspecified fields. Treat any role/ownership metadata separately from implementation and require its own explicit authority. A missing Jira connector or policy check blocks only that Jira mutation; it does not block independent read-only review or approved repository work.
+
+### 4. Enter the existing F4 playbook without weakening its gates
+
+The full-wrapper request above is the explicit request to apply the existing adaptive-goal-closure playbook, so no second prompt is needed. Read the actual dependency through supported Skill discovery/catalog or an approved source reader; retain its source URI and revision and follow its current contract. If Native Skill discovery or Apply is unavailable but the approved source is readable and the existing authority permits manual use, label that evidence `MANUAL_READ_APPLY`; never report it as Native. Do not treat the copy in this Skill or a manually remembered procedure as proof that the dependency was loaded. If the source or required authority cannot be verified, mark only the F4 execution stage `BLOCKED/NOT_RUN`, report the actual limit and safe alternatives, and continue independent read-only review or other approved READY work.
+
+Before any writable F4 lane, verify the existing approved Objective, exact Scope, Acceptance Criteria, permitted actions, repository/Base/HEAD, current Task and Writer custody, runtime/tool/CI capability, and required Git/Jira evidence. `git-work-preflight` is consumer-only: it may be requested only by an explicitly invoked `work-start`, `jira-work`, or `manual-review` consumer. This wrapper does not invoke those consumers or the preflight implicitly. If that evidence is required but unavailable, block only the affected lane and continue independent approved READY work. The wrapper invocation supplies explicit F4 intent but none of those facts or permissions. If Writer identity or worktree custody is unknown, block that writable lane without blocking independent READY reviews. Do not start a duplicate Writer, take over another Writer's branch, create Writer succession, or dispatch a Worker without supported Runtime capability and explicit ownership/dispatch authority.
+
+Follow the existing playbook's loop: authorized Writer → actual tests/CI → independent review of a fixed HEAD → finding returned to the same Writer → targeted retest and Delta review → fan-in → next independent approved READY. Keep Writer, Test/CI, Reviewer, and Owner decisions distinct; use only the safe, bounded parallelism and evidence reuse allowed by the dependency. Do not repeat an unchanged blocked diagnosis or duplicate the F4 engine contract here.
+
+Stop the whole run at the approved Objective boundary, when no approved READY item remains that can safely proceed, or at the 60-minute budget. A required Owner decision or lane-specific unsafe condition blocks only the affected scope; continue independent approved READY work unless the constraint applies to the whole run. All approved READY items being exhausted is a normal early stop. Record actual start/stop timestamps and a checkpoint with completed Slice, next READY or blocker, evidence, and required Owner decision. Never describe a Slice as whole-Objective completion without the Objective's acceptance evidence. Do not claim successful Native invocation, Subagent/Cloud execution, or effective model settings without direct evidence; requested model/reasoning/Fast remain distinct from actual attestation, and unknown is `UNKNOWN`.
 
 ## Resolve existing dependencies
 
@@ -29,8 +70,8 @@ not paths guessed relative to the user's current working directory.
 If a dependency is unavailable, report that stage BLOCKED/NOT_RUN; keep independent authorized planning open.
 
 - Intent and bounded context: existing RPL-113 route/Hook and authoritative task sources.
-- Git/work ownership: existing git-work-preflight; keep work-start and jira-work explicit-only.
-- Execution: existing adaptive-goal-closure SKILL.md, unchanged explicit invocation and approval gates.
+- Git/work ownership: `git-work-preflight` is consumer-only and may be requested only by explicit `work-start`, `jira-work`, or `manual-review` consumers; this wrapper invokes none of them or the preflight implicitly.
+- Execution: existing adaptive-goal-closure SKILL.md; this explicit wrapper request supplies the F4 invocation, while its Objective, ownership, Runtime, and mutation gates remain unchanged.
 - Handoff: existing handoff-prompt SKILL.md and owning Handoff/Association contracts.
 - Korean results: existing engineering-communication-ko SKILL.md and its advisory checker.
 - Runtime/authority/cost: existing capability and private-policy contracts when available.
@@ -38,18 +79,14 @@ If a dependency is unavailable, report that stage BLOCKED/NOT_RUN; keep independ
 Do not implement a router, scheduler, claim store, handoff transport, report parser,
 or a duplicate dependency body here. Do not copy private policy into this public Skill.
 
-## 1. Read-only current work
+## Read-only status and planning requests
 
-Identify the caller's actual Workstream, Lane, existing Primary, repository and valid approval scope.
-Obtain missing facts from bounded authoritative sources; do not infer Lane or ownership from a directory name.
-Check current user functions, unfinished Objective criteria, relevant Jira/PR/HEAD/CI/review and dependencies.
-Reuse unchanged valid evidence. Check targeted incoming handoff references through existing Issues/links/records.
-An absent search result is not proof of no work, no handoff, or a released Writer.
+For a status, design-only, or recommendation request, identify the caller's actual Workstream, Lane, existing Primary, repository and valid approval scope. Obtain missing facts from bounded authoritative sources; do not infer Lane or ownership from a directory name. Check current user functions, unfinished Objective criteria, relevant Jira/PR/HEAD/CI/review and dependencies. Reuse unchanged valid evidence. Check targeted incoming handoff references through existing Issues/links/records. An absent search result is not proof of no work, no handoff, or a released Writer.
 
 Return three distinct things: current capability, one recommended next user goal with effect/prerequisites,
 and executable approved READY items. Recommendations and READY are not interchangeable.
 
-## 2. One Owner decision bundle
+## One Owner decision bundle
 
 After goal selection, collect only unresolved product contracts and new authority needs.
 Keep existing valid approvals; do not ask again merely because a new session or Slice starts.
@@ -57,18 +94,11 @@ A selected goal is not YOU-CORE delegation, Actor dispatch, Jira mutation, or Gi
 Unknown Writer Task/branch/worktree custody blocks that writable scope without blocking other safe READY work.
 Do not create Jira, reassign a Writer, or edit another Writer's worktree.
 
-## 3. Existing F4 only after its gate
+## Existing F4 gates (apply during full continuation)
 
-Require both explicit F4 delegation and a valid approved Objective/Scope/AC before entering execution.
-Approval-only or a goal selection without explicit F4 remains planning.
-Load/apply the existing adaptive-goal-closure contract; do not reproduce its execution loop here.
-Pass exact Primary, source revisions, approvals, allowed writes/tests, budget and existing ownership evidence.
-Use its Writer -> Test/CI -> independent fixed-HEAD Review -> Finding Delta -> next READY process.
-A complete Slice is not a complete Active Objective. If another approved READY remains, continue;
-an actual budget/safety stop needs evidence. Unchanged BLOCKED work is not repeatedly diagnosed.
-Record actual timestamps and checkpoint evidence; never claim automatic restart or Cloud-to-Cloud control.
+The direct full-wrapper invocation supplies explicit F4 intent as defined above. A status/design-only request, an approval-only message, or goal selection without that invocation remains planning. Still require a valid approved Objective/Scope/AC and all source playbook gates before entering execution. Pass exact Primary, source revisions, approvals, allowed writes/tests, budget and existing ownership evidence. Do not reproduce or replace the F4 dependency's execution contract.
 
-## 4. Generic handoff through the existing owner
+## Generic handoff through the existing owner
 
 This applies to another Writer, session, Lane or Workstream, not only AI-to-Normal.
 Distinguish product-contract/task handoff from Source Writer-session succession.
@@ -78,8 +108,8 @@ read raw transcripts, auto-send a Worker contract, or replace its template with 
 
 Minimum contextual facts to provide to that existing process:
 Source/Target Issue, From/To role or Lane, ContractRef/revision, Source HEAD/CI/Review,
-handoff kind/state, acceptance conditions and NextAction.
-Treat these as contextual facts in existing records, not new Jira fields or workflow states.
+handoff kind/state, acceptance conditions and NextAction. Treat these as supplied context for the existing human-reviewed template, not a new schema or Jira fields.
+Treat handoff as applicable across Writers, sessions, Lanes and Workstreams. Never treat a product/task handoff as Writer succession.
 The intake labels below are not aliases for handoff-prompt lifecycle_status or review_state.
 Preserve its Context Preflight, unresolved markers, Human Review and manual-transfer template.
 
@@ -91,12 +121,9 @@ Changed contract/revision requires fresh acceptance under the owning contract.
 Product/task acceptance does not release the original Writer, transfer a branch, mark Jira Done,
 approve new implementation, or authorize merge/deployment.
 
-## 5. Service F1 and next READY
+## Service F1 and next READY
 
-Use existing engineering-communication-ko reporting; do not implement or bypass its advisory checker.
-Report per service/function: current user capability -> actual change ->
-implementation / verification / documentation / deployment states ->
-unavailable functions and reasons -> next goal, first action, responsible Lane and required conditions.
+Use existing engineering-communication-ko reporting; do not implement or bypass its advisory checker. Report per service/function: current user capability -> actual change -> actual implementation / test and CI / documentation / deployment states -> unavailable functions and reasons -> next user goal and first action, responsible Lane and required conditions/prerequisites.
 Keep Jira/PR/SHA as evidence; do not substitute numbers for function descriptions.
 If the existing report Skill/checker lacks a requested field, show the contract gap under RPL-119;
 do not invent a PASS or fork its implementation here.
