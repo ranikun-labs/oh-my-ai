@@ -7,6 +7,7 @@ on:
     paths:
       - ".github/workflows/rpl120-skill-portability-validation.yml"
       - "skills/adaptive-goal-closure/**"
+      - ".agents/skills/**"
       - "scripts/render-instructions.sh"
       - "scripts/render-skill-index.mjs"
       - "scripts/test-routing-fixtures.sh"
@@ -71,9 +72,16 @@ jobs:
           assert.ok(descriptorLines.includes('  display_name: "Adaptive Goal Closure"'));
           assert.ok(descriptorLines.includes('  short_description: "Continue an approved objective with bounded F4 execution"'));
           const promptLine = descriptorLines.find(line => line.startsWith("  default_prompt:"));
-          assert.ok(promptLine && promptLine.includes("SKILL.md"));
+          assert.ok(promptLine && promptLine.includes("$adaptive-goal-closure"),
+            "the descriptor must name the explicitly invoked Skill");
+          assert.ok(promptLine.includes("invoked SKILL.md procedure"),
+            "the descriptor must apply the invoked Skill instructions");
+          assert.equal(promptLine.includes("skills/adaptive-goal-closure/SKILL.md"), false,
+            "descriptor must not assume the Skill is inside the current repository");
           assert.equal(promptLine.includes("/workspace/"), false, "descriptor must not pin a local checkout path");
           assert.equal(promptLine.includes("/home/"), false, "descriptor must not pin a user home path");
+          assert.equal(skill.includes("skills/adaptive-goal-closure/SKILL.md"), false,
+            "Skill examples must not assume a repository-root-relative location");
           assert.ok(descriptorLines.includes("  allow_implicit_invocation: false"));
 
           const index = JSON.parse(fs.readFileSync("skills/skill-index.json", "utf8"));
@@ -81,13 +89,29 @@ jobs:
             "explicit-only Skill must remain outside the auto-routing index");
 
           const temp = fs.mkdtempSync(path.join(os.tmpdir(), "rpl120-portable-skill-"));
+          const priorCwd = process.cwd();
           try {
-            const target = path.join(temp, "another-project", "skills", "adaptive-goal-closure");
-            fs.mkdirSync(path.dirname(target), { recursive: true });
-            fs.cpSync(skillDir, target, { recursive: true });
-            assert.equal(fs.readFileSync(path.join(target, "SKILL.md"), "utf8"), skill);
-            assert.equal(fs.readFileSync(path.join(target, "agents", "openai.yaml"), "utf8"), descriptor);
+            const targetRepo = path.join(temp, "unrelated-project");
+            const copiedSkillDir = path.join(targetRepo, "vendor", "skills", "adaptive-goal-closure");
+            const discoveryLink = path.join(targetRepo, ".agents", "skills", "adaptive-goal-closure");
+            fs.mkdirSync(path.dirname(copiedSkillDir), { recursive: true });
+            fs.mkdirSync(path.dirname(discoveryLink), { recursive: true });
+            fs.cpSync(skillDir, copiedSkillDir, { recursive: true });
+
+            const relativeTarget = path.relative(path.dirname(discoveryLink), copiedSkillDir);
+            assert.equal(path.isAbsolute(relativeTarget), false, "portable discovery link must be relative");
+            fs.symlinkSync(relativeTarget, discoveryLink, "dir");
+            assert.equal(fs.lstatSync(discoveryLink).isSymbolicLink(), true);
+            assert.equal(fs.readlinkSync(discoveryLink), relativeTarget);
+            assert.equal(fs.realpathSync(discoveryLink), fs.realpathSync(copiedSkillDir));
+
+            process.chdir(targetRepo);
+            const discoveredSkillPath = path.join(process.cwd(), ".agents", "skills", "adaptive-goal-closure", "SKILL.md");
+            const discoveredDescriptorPath = path.join(process.cwd(), ".agents", "skills", "adaptive-goal-closure", "agents", "openai.yaml");
+            assert.equal(fs.readFileSync(discoveredSkillPath, "utf8"), skill);
+            assert.equal(fs.readFileSync(discoveredDescriptorPath, "utf8"), descriptor);
           } finally {
+            process.chdir(priorCwd);
             fs.rmSync(temp, { recursive: true, force: true });
           }
           NODE
@@ -99,3 +123,39 @@ jobs:
 
       - name: Verify routing consumers and false-positive guards
         run: make test-routing-fixtures
+
+      - name: Keep F4 Skill out of automatic routing
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from "node:assert/strict";
+          import path from "node:path";
+          import { spawnSync } from "node:child_process";
+
+          const indexPath = path.resolve("skills/skill-index.json");
+          const inputs = [
+            "What does F4 mean?",
+            "What did the F4 task do?",
+            "What is $adaptive-goal-closure?",
+          ];
+          const consumers = [
+            ["work-start", "scripts/work-start-skill-match.mjs", "--format=json"],
+            ["prompt-hook", "scripts/prompt-routing-hook.mjs", "--format=routing-json"],
+          ];
+
+          for (const prompt of inputs) {
+            for (const [name, script, format] of consumers) {
+              const result = spawnSync(process.execPath, [script, format], {
+                input: prompt,
+                encoding: "utf8",
+                env: { ...process.env, OH_MY_AI_SKILL_INDEX: indexPath },
+              });
+              assert.equal(result.status, 0, `${name} exited for ${JSON.stringify(prompt)}: ${result.stderr}`);
+              const routing = JSON.parse(result.stdout);
+              assert.equal(routing.routing_status, "no_match",
+                `${name} auto-routed ${JSON.stringify(prompt)}`);
+              assert.deepEqual(routing.skill_candidates, [],
+                `${name} returned candidates for ${JSON.stringify(prompt)}`);
+              console.log(`passed: ${name} does not auto-route ${JSON.stringify(prompt)}`);
+            }
+          }
+          NODE
