@@ -1,0 +1,84 @@
+name: RPL-120 Aggregate Guard Validation
+
+on:
+  push:
+    branches:
+      - codex/rpl120-test-aggregate-ci-20261106
+    paths:
+      - ".github/workflows/rpl120-test-aggregate-validation.yml"
+      - "scripts/test-pending-handoff-candidate-fixtures.mjs"
+      - "scripts/test-pending-handoff-secret-provider-fixtures.mjs"
+
+permissions:
+  contents: read
+
+jobs:
+  aggregate-guard:
+    name: Exact #91 tests with #87 aggregate delta
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out the pushed source commit
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+
+      - name: Check patch whitespace
+        env:
+          BASE_SHA: 0a690ce791b9b6353667224e99422a79323ee7d6
+        run: git diff --check "$BASE_SHA...$GITHUB_SHA"
+
+      - name: Add exact F5 aggregate target to the runner workspace
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from "node:assert/strict";
+          import { readFileSync, writeFileSync } from "node:fs";
+
+          const path = "Makefile";
+          const lines = readFileSync(path, "utf8").split("\n");
+          assert.equal(lines.filter(line => line.startsWith(".PHONY:")).length, 1);
+          assert.equal(lines.some(line => line.includes("test-agent-manifest-fixtures")), false);
+
+          const phony = lines.findIndex(line => line.startsWith(".PHONY:"));
+          assert.ok(lines[phony].includes("test-capability-fixtures test-result-fixtures"));
+          lines[phony] = lines[phony].replace(
+            "test-capability-fixtures test-result-fixtures",
+            "test-capability-fixtures test-agent-manifest-fixtures test-result-fixtures",
+          );
+
+          const v1 = lines.findIndex(line => line.startsWith("test-v1-fixtures:"));
+          assert.notEqual(v1, -1);
+          lines.splice(v1, 0, "test-agent-manifest-fixtures:", "\tnode ./scripts/test-agent-manifest-fixtures.mjs", "");
+
+          const aggregate = lines.findIndex(line => line === "test-v1x-fixtures: \\");
+          assert.notEqual(aggregate, -1);
+          assert.equal(lines[aggregate + 1], "\ttest-v1-fixtures \\");
+          lines.splice(aggregate + 2, 0, "\ttest-agent-manifest-fixtures \\");
+
+          writeFileSync(path, lines.join("\n"));
+          NODE
+
+      - name: Verify aggregate dry-run includes each target once
+        run: |
+          set -euo pipefail
+          make -n test-v1x-fixtures > "$RUNNER_TEMP/v1x-plan"
+          for target in \
+            test-agent-manifest-fixtures \
+            test-pending-handoff-manual-resume-attempt-outcome-fixtures \
+            test-pending-handoff-manual-resume-attempt-outcome-store-adapter-fixtures \
+            test-pending-handoff-candidate-fixtures \
+            test-pending-handoff-secret-provider-fixtures
+          do
+            count="$(grep -Fxc "node ./scripts/${target}.mjs" "$RUNNER_TEMP/v1x-plan" || true)"
+            test "$count" = 1
+          done
+
+      - name: Run Candidate and Secret Provider fixtures
+        run: |
+          node scripts/test-pending-handoff-candidate-fixtures.mjs
+          node scripts/test-pending-handoff-secret-provider-fixtures.mjs
