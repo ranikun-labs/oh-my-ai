@@ -9,6 +9,7 @@ import { pathToFileURL } from "node:url";
 const REQUIRED_SECTIONS = [
   "문제",
   "사용자에게 달라지는 점",
+  "서비스 기능",
   "이번 변경",
   "검증",
   "아직 안 되는 것",
@@ -19,6 +20,22 @@ const REQUIRED_SECTIONS = [
 const EVIDENCE_STATUSES = new Set(["PASS", "FAIL", "NOT_RUN", "BLOCKED", "UNKNOWN"]);
 const OWNER_STATUSES = new Set(["APPROVED", "PENDING", "BLOCKED", "UNKNOWN", "NOT_REQUIRED"]);
 const STATUS_LABELS = ["Native Test", "CI", "Independent Review", "Runtime E2E", "Owner Gate"];
+const REQUIRED_REPORT_FIELDS = [
+  { section: "서비스 기능", label: "서비스명", requireDescription: true },
+  { section: "서비스 기능", label: "기능명", requireDescription: true },
+  { section: "서비스 기능", label: "현재 사용자 기능", requireDescription: true },
+  { section: "이번 변경", label: "실제 변경" },
+  { section: "검증", label: "구현 상태" },
+  { section: "검증", label: "검증 상태" },
+  { section: "검증", label: "문서 상태" },
+  { section: "검증", label: "배포 상태" },
+  { section: "아직 안 되는 것", label: "미지원 기능" },
+  { section: "아직 안 되는 것", label: "미지원 이유" },
+  { section: "다음 행동", label: "다음 목표" },
+  { section: "다음 행동", label: "첫 행동" },
+  { section: "다음 행동", label: "담당 Lane" },
+  { section: "다음 행동", label: "필요 조건" },
+];
 
 function isIndentedCodeLine(line) {
   let columns = 0;
@@ -181,6 +198,7 @@ function visibleMarkdownLines(markdown) {
       && /^ {0,3}##[ \t]+/.test(line);
     let visible = "";
     let statusVisible = "";
+    let fieldVisible = "";
     let cursor = 0;
     const backtick = String.fromCharCode(96);
 
@@ -257,11 +275,12 @@ function visibleMarkdownLines(markdown) {
 
       visible += line[cursor];
       statusVisible += line[cursor];
+      fieldVisible += line[cursor];
       cursor += 1;
     }
 
     if (isIndentedCodeLine(visible)) continue;
-    visibleLines.push({ text: visible, statusText: statusVisible, headingCandidate });
+    visibleLines.push({ text: visible, statusText: statusVisible, fieldText: fieldVisible, headingCandidate });
   }
 
   return visibleLines;
@@ -269,9 +288,11 @@ function visibleMarkdownLines(markdown) {
 
 function splitSections(markdown, statusEvidenceOnly = false) {
   const sections = new Map();
+  const fieldSections = new Map();
   const duplicates = new Set();
   let current = null;
   const body = [];
+  const fieldBody = [];
   const flush = () => {
     if (current === null) return;
     if (sections.has(current)) {
@@ -279,20 +300,89 @@ function splitSections(markdown, statusEvidenceOnly = false) {
       return;
     }
     sections.set(current, body.join("\n").trimEnd());
+    fieldSections.set(current, [...fieldBody]);
   };
 
-  for (const { text: line, statusText, headingCandidate } of visibleMarkdownLines(markdown)) {
+  for (const { text: line, statusText, fieldText, headingCandidate } of visibleMarkdownLines(markdown)) {
     const heading = headingCandidate ? /^ {0,3}##[ \t]+(.+?)[ \t]*$/.exec(line) : null;
     if (heading) {
       flush();
       current = heading[1];
       body.length = 0;
+      fieldBody.length = 0;
     } else if (current !== null) {
       body.push(statusEvidenceOnly ? statusText : line);
+      fieldBody.push({ text: line, fieldText });
     }
   }
   flush();
-  return { sections, duplicates };
+  return { sections, fieldSections, duplicates };
+}
+
+function isReferenceOnly(value) {
+  const remainder = String(value)
+    .replace(/https?:\/\/\S+/giu, " ")
+    .replace(/\bRPL-\d+\b/giu, " ")
+    .replace(/\bPR\s*#?\s*\d+\b/giu, " ")
+    .replace(/\b[a-f0-9]{7,40}\b/giu, " ")
+    .replace(/\b(?:jira|issue|commit|sha(?:1|256)?|hash|url|link)\b/giu, " ")
+    .replace(/[^\p{L}\p{N}]/gu, "");
+  return remainder.length === 0;
+}
+
+function isStructuralPlaceholder(value) {
+  const lines = String(value).split(/\r?\n/u).map((line) => line.trim()).filter(Boolean);
+  if (lines.length === 0) return true;
+  return lines.every((line) => /^(?:[-*](?:[ \t]*\[[ xX]?\])?|\[[ xX]?\])$/u.test(line));
+}
+
+function validateRequiredReportFields(sectionScan) {
+  const errors = [];
+  for (const field of REQUIRED_REPORT_FIELDS) {
+    const occurrences = [];
+    let repeatedOnLine = false;
+    const explicitVisiblePattern = new RegExp("^[ \\t]*(?:[-*][ \\t]*)?" + field.label + "[ \\t]*:[ \\t]*(.*)$", "u");
+    const explicitPattern = new RegExp("^[ \\t]*(?:[-*][ \\t]*)?" + field.label + "[ \\t]*:[ \\t]*(.*)$", "u");
+
+    for (const [section, lines] of sectionScan.fieldSections) {
+      for (const line of lines) {
+        const visibleMatch = explicitVisiblePattern.exec(line.fieldText);
+        if (!visibleMatch) continue;
+        const repeatedLabelPattern = new RegExp(field.label + "[ \\t]*:", "gu");
+        if ([...visibleMatch[1].matchAll(repeatedLabelPattern)].length > 0) repeatedOnLine = true;
+        occurrences.push({ section, match: explicitPattern.exec(line.text) });
+      }
+    }
+
+    if (occurrences.length === 0) {
+      errors.push("missing required field: " + field.label);
+      continue;
+    }
+    if (occurrences.length > 1 || repeatedOnLine) {
+      errors.push("ambiguous duplicate field: " + field.label);
+      continue;
+    }
+
+    const occurrence = occurrences[0];
+    if (occurrence.section !== field.section || !occurrence.match) {
+      errors.push("field must be a visible Markdown label in ## " + field.section + ": " + field.label);
+      continue;
+    }
+
+    const value = occurrence.match[1].trim();
+    if (value.replaceAll(String.fromCharCode(96), "").trim().length === 0) {
+      errors.push("empty required field: " + field.label);
+      continue;
+    }
+    if (isStructuralPlaceholder(value.replaceAll(String.fromCharCode(96), ""))) {
+      errors.push("placeholder-only required field: " + field.label);
+      continue;
+    }
+    if (field.requireDescription && isReferenceOnly(value)) {
+      errors.push(field.label + " must describe the service or user-visible function, not only Jira/PR references, URLs, or SHAs");
+    }
+  }
+  return errors;
 }
 
 function hasUsableContent(body) {
@@ -334,6 +424,8 @@ function validateF1Report(markdown) {
       errors.push(`section must contain a concrete statement: ## ${section}`);
     }
   }
+
+  errors.push(...validateRequiredReportFields(sectionScan));
 
   const statusSections = splitSections(markdown, true).sections;
   const statusLines = parseStatusLines(statusSections.get("검증") ?? "");

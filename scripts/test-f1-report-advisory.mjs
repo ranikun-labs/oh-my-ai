@@ -12,10 +12,20 @@ const validReport = `# F1 보고 구조 검사기
 ## 사용자에게 달라지는 점
 검사기가 보고서에 변경 효과와 각 검증 상태가 따로 기록됐는지 알려 준다.
 
+## 서비스 기능
+- 서비스명: oh-my-ai
+- 기능명: F1 보고서 구조 검사
+- 현재 사용자 기능: 사용자는 F1 보고서 필수 절과 다섯 Gate 상태의 구조를 확인할 수 있다.
+
 ## 이번 변경
+ - 실제 변경: 한국어 보고 Skill 후보와 상태 표기 검사기, 서비스별 필수 보고 필드를 추가했다.
 한국어 보고 Skill 후보와 상태 표기 검사기, 회귀 Fixture를 추가했다.
 
 ## 검증
+ - 구현 상태: validator 후보가 실행 가능하다.
+ - 검증 상태: Native Test fixture를 실행했다.
+ - 문서 상태: Skill 계약과 RPL-119 예시를 갱신했다.
+ - 배포 상태: 운영 배포는 하지 않았다.
 - Native Test: PASS — \`node scripts/test-f1-report-advisory.mjs\`, 17/17
 - CI: NOT_RUN — 이 로컬 실행에서는 CI를 호출하지 않았다.
 - Independent Review: BLOCKED — 새 HEAD에 대한 별도 Reviewer가 아직 없다.
@@ -23,9 +33,15 @@ const validReport = `# F1 보고 구조 검사기
 - Owner Gate: PENDING — Source Merge 승인은 별도다.
 
 ## 아직 안 되는 것
+ - 미지원 기능: 보고서 사실의 진실성 검사와 Runtime E2E.
+ - 미지원 이유: 이 도구는 구조를 advisory로 검사하며 원격 근거를 확인하지 않는다.
 Skill 자동 발견과 실제 Runtime E2E는 확인하지 않았다.
 
 ## 다음 행동
+ - 다음 목표: F1 서비스별 보고 계약을 적용한다.
+ - 첫 행동: 이 validator fixture와 RPL-119 예시를 실행해 확인한다.
+ - 담당 Lane: oh-my-ai reporting
+ - 필요 조건: report inputs와 고정 근거.
 Skill Index 경로가 충돌 없이 열리면 생성물을 갱신하고 해당 HEAD를 검수한다.
 
 ## 근거
@@ -360,6 +376,161 @@ const visibleStatusAfterPre = validReport.replace(
 );
 const visibleStatusAfterPreResult = validateF1Report(visibleStatusAfterPre);
 assert.equal(visibleStatusAfterPreResult.valid, true, visibleStatusAfterPreResult.errors.join("; "));
+
+const serviceContractFields = [
+  { label: "서비스명", line: "- 서비스명: oh-my-ai" },
+  { label: "기능명", line: "- 기능명: F1 보고서 구조 검사" },
+  { label: "현재 사용자 기능", line: "- 현재 사용자 기능: 사용자는 F1 보고서 필수 절과 다섯 Gate 상태의 구조를 확인할 수 있다." },
+  { label: "실제 변경", line: " - 실제 변경: 한국어 보고 Skill 후보와 상태 표기 검사기, 서비스별 필수 보고 필드를 추가했다." },
+  { label: "구현 상태", line: " - 구현 상태: validator 후보가 실행 가능하다." },
+  { label: "검증 상태", line: " - 검증 상태: Native Test fixture를 실행했다." },
+  { label: "문서 상태", line: " - 문서 상태: Skill 계약과 RPL-119 예시를 갱신했다." },
+  { label: "배포 상태", line: " - 배포 상태: 운영 배포는 하지 않았다." },
+  { label: "미지원 기능", line: " - 미지원 기능: 보고서 사실의 진실성 검사와 Runtime E2E." },
+  { label: "미지원 이유", line: " - 미지원 이유: 이 도구는 구조를 advisory로 검사하며 원격 근거를 확인하지 않는다." },
+  { label: "다음 목표", line: " - 다음 목표: F1 서비스별 보고 계약을 적용한다." },
+  { label: "첫 행동", line: " - 첫 행동: 이 validator fixture와 RPL-119 예시를 실행해 확인한다." },
+  { label: "담당 Lane", line: " - 담당 Lane: oh-my-ai reporting" },
+  { label: "필요 조건", line: " - 필요 조건: report inputs와 고정 근거." }
+];
+
+for (const field of serviceContractFields) {
+  const missing = validReport.replace(field.line + "\n", "");
+  assert.notEqual(missing, validReport, "fixture contains " + field.label);
+  expectInvalid("missing service report field " + field.label, missing, "missing required field: " + field.label);
+  const empty = validReport.replace(field.line, "- " + field.label + ":   ");
+  expectInvalid("empty service report field " + field.label, empty, "empty required field: " + field.label);
+}
+
+const blankCodeValue = validReport.replace(
+  "- 서비스명: oh-my-ai",
+  "- 서비스명: " + String.fromCharCode(96) + "  " + String.fromCharCode(96)
+);
+expectInvalid("inline code whitespace is an empty service value", blankCodeValue, "empty required field: 서비스명");
+
+const referenceOnlyFeature = validReport.replace(
+  "- 현재 사용자 기능: 사용자는 F1 보고서 필수 절과 다섯 Gate 상태의 구조를 확인할 수 있다.",
+  "- 현재 사용자 기능: RPL-119 PR #88 761b5d25197faf32f7ad4b678e318d9a0a1c2400 https://example.invalid"
+);
+expectInvalid(
+  "Jira, PR, SHA and URL references alone do not describe the current user feature",
+  referenceOnlyFeature,
+  "현재 사용자 기능 must describe"
+);
+
+const labeledReferenceOnlyFeature = validReport.replace(
+  "- 현재 사용자 기능: 사용자는 F1 보고서 필수 절과 다섯 Gate 상태의 구조를 확인할 수 있다.",
+  "- 현재 사용자 기능: Jira: RPL-119; commit SHA: 761b5d25197faf32f7ad4b678e318d9a0a1c2400"
+);
+expectInvalid(
+  "Jira and SHA labels do not turn reference lists into a feature description",
+  labeledReferenceOnlyFeature,
+  "현재 사용자 기능 must describe"
+);
+
+const duplicateService = validReport.replace(
+  "- 서비스명: oh-my-ai",
+  "- 서비스명: oh-my-ai\n- 서비스명: another-service"
+);
+expectInvalid("duplicate service field is ambiguous", duplicateService, "ambiguous duplicate field: 서비스명");
+
+const sameLineDuplicateService = validReport.replace(
+  "- 서비스명: oh-my-ai",
+  "- 서비스명: oh-my-ai 서비스명: another"
+);
+expectInvalid("same-line repeated explicit service field is ambiguous", sameLineDuplicateService, "ambiguous duplicate field: 서비스명");
+
+const inlineCodeFieldExample = validReport.replace(
+  "- 서비스명: oh-my-ai",
+  "- 서비스명: oh-my-ai " + backtick + "서비스명: example" + backtick
+);
+const inlineCodeFieldExampleResult = validateF1Report(inlineCodeFieldExample);
+assert.equal(inlineCodeFieldExampleResult.valid, true, inlineCodeFieldExampleResult.errors.join("; "));
+
+const commentFieldExample = validReport.replace(
+  "- 서비스명: oh-my-ai",
+  "- 서비스명: oh-my-ai <!-- 서비스명: example -->"
+);
+const commentFieldExampleResult = validateF1Report(commentFieldExample);
+assert.equal(commentFieldExampleResult.valid, true, commentFieldExampleResult.errors.join("; "));
+
+const proseFieldNameAndColon = validReport.replace(
+  " - 실제 변경: 한국어 보고 Skill 후보와 상태 표기 검사기, 서비스별 필수 보고 필드를 추가했다.",
+  " - 실제 변경: 입력 예시의 서비스명: 표기를 설명하고, 한국어 보고 Skill 후보와 상태 표기 검사기, 서비스별 필수 보고 필드를 추가했다."
+);
+const proseFieldNameResult = validateF1Report(proseFieldNameAndColon);
+assert.equal(proseFieldNameResult.valid, true, proseFieldNameResult.errors.join("; "));
+
+const wrongSectionService = validReport
+  .replace("- 서비스명: oh-my-ai\n", "")
+  .replace("## 문제\n", "## 문제\n- 서비스명: oh-my-ai\n");
+expectInvalid("service fields are confined to the service section", wrongSectionService, "field must be a visible Markdown label in ## 서비스 기능: 서비스명");
+
+for (const placeholder of [
+  { label: "미지원 이유", marker: "-" },
+  { label: "구현 상태", marker: "*" },
+  { label: "필요 조건", marker: "- [ ]" }
+]) {
+  const field = serviceContractFields.find((entry) => entry.label === placeholder.label);
+  const labelPrefix = field.line.slice(0, field.line.indexOf(":") + 1);
+  const report = validReport.replace(field.line, labelPrefix + " " + placeholder.marker);
+  expectInvalid(
+    "structural placeholder is not a required value for " + placeholder.label,
+    report,
+    "placeholder-only required field: " + placeholder.label
+  );
+}
+
+const explicitNoUnsupported = validReport
+  .replace(" - 미지원 기능: 보고서 사실의 진실성 검사와 Runtime E2E.", " - 미지원 기능: 없음")
+  .replace(" - 미지원 이유: 이 도구는 구조를 advisory로 검사하며 원격 근거를 확인하지 않는다.", " - 미지원 이유: 해당 없음");
+const explicitNoUnsupportedResult = validateF1Report(explicitNoUnsupported);
+assert.equal(explicitNoUnsupportedResult.valid, true, explicitNoUnsupportedResult.errors.join("; "));
+
+const hiddenFieldCases = [
+  {
+    name: "HTML comment",
+    report: validReport.replace("- 서비스명: oh-my-ai", "<!-- - 서비스명: hidden -->"),
+    missingLabel: "서비스명"
+  },
+  {
+    name: "fenced block",
+    report: validReport.replace(
+      " - 구현 상태: validator 후보가 실행 가능하다.",
+      backtick.repeat(3) + "text\n- 구현 상태: hidden\n" + backtick.repeat(3)
+    ),
+    missingLabel: "구현 상태"
+  },
+  {
+    name: "indented code",
+    report: validReport.replace(" - 첫 행동: 이 validator fixture와 RPL-119 예시를 실행해 확인한다.", "    - 첫 행동: hidden"),
+    missingLabel: "첫 행동"
+  },
+  {
+    name: "multiline inline code",
+    report: validReport.replace(
+      "- 현재 사용자 기능: 사용자는 F1 보고서 필수 절과 다섯 Gate 상태의 구조를 확인할 수 있다.",
+      "문자열 " + backtick + "\n- 현재 사용자 기능: hidden\n" + backtick + " 안의 예시"
+    ),
+    missingLabel: "현재 사용자 기능"
+  }
+];
+for (const hidden of hiddenFieldCases) {
+  expectInvalid(
+    "field inside " + hidden.name + " is not visible evidence",
+    hidden.report,
+    "missing required field: " + hidden.missingLabel
+  );
+}
+
+const inlineValueService = validReport.replace(
+  "- 서비스명: oh-my-ai",
+  "- 서비스명: " + backtick + "oh-my-ai" + backtick
+);
+const inlineValueResult = validateF1Report(inlineValueService);
+assert.equal(inlineValueResult.valid, true, inlineValueResult.errors.join("; "));
+console.log("f1 service report field fixtures passed: " + (serviceContractFields.length * 2 + hiddenFieldCases.length + 14) + "/46");
+
 console.log("f1 report advisory fixtures passed: 48/48");
 
 
