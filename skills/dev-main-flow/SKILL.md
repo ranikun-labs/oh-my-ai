@@ -1,6 +1,6 @@
 ---
 name: dev-main-flow
-description: Explicit entry for resuming an existing approved development objective through current-context review, existing F4 execution, handoff, and service reporting. Status and design-only requests remain read-only.
+description: When discovered or loaded, a direct bare $dev-main-flow or clear work-with-this-Skill request resumes the caller's existing approved Objective and Checkpoint with existing F4 intent after its gates. Status, design, explanation, and quoted mentions remain read-only.
 disable-model-invocation: true
 metadata:
   source: born-here
@@ -17,20 +17,19 @@ RPL-113 and RPL-120 are separate work items under the existing Workstream object
 These Jira references identify the owners of this Skill's Source contracts; they do not replace the caller's actual Workstream, Objective, or Primary Jira.
 This file grants no new Writer assignment, branch custody, global installation, private-policy or private-data access, merge, deployment, or remote-write authority.
 
-Every explicit `$dev-main-flow` workflow must end with a function-first Korean F1 section, including bare/status/design-only, full continuation, execution, BLOCKED/no-READY, and budget-stop outcomes. Do not wait for `/F1` or another prompt. This is an output requirement only: a bare call remains read-only planning and does not delegate F4 or grant write authority.
+Every direct bare `$dev-main-flow` invocation, clear work-with-this-Skill request, or other explicit Skill workflow must end with a function-first Korean F1 section, including status/design-only, full continuation, execution, BLOCKED/no-READY, and budget-stop outcomes. Do not wait for `/F1` or another prompt. This output requirement grants no new authority.
 
-The direct explicit request below means: resume the existing approved objective, apply this complete workflow, and read/apply the existing F4 playbook when its gates pass. Other direct explicit `$dev-main-flow` requests that clearly ask to continue an existing approved objective use the same workflow. This is the Owner's explicit F4 request for that invocation; do not ask for a second long prompt or a separate `$adaptive-goal-closure` invocation.
+When this Skill is actually discovered/loaded or read through an approved source path, a direct bare `$dev-main-flow` invocation or a clear direct request such as “Let’s work on our current Workstream with this Skill” means resume the caller's existing approved Objective and Checkpoint, apply this workflow, and invoke the existing F4 playbook after its gates. No second long prompt or separate `$adaptive-goal-closure` invocation is needed.
 
 ```text
 $dev-main-flow
-Developer AI Platform 기존 목표 이어서 진행해.
 ```
 
-That request does not create scope, approve new product decisions, authorize Jira fields or Git writes, assign or replace a Writer, grant Runtime capabilities, or satisfy the Objective/Scope/Acceptance Criteria/ownership gates below. A direct request limited to status, design review, or a next-goal recommendation remains read-only even when it names this Skill. An ordinary development conversation may receive only the existing read-only planning behavior when an approved runtime instruction already references it; a quoted or discussed invocation, ordinary conversation, or this candidate alone does not invoke the full workflow or establish automatic loading, Native discovery, or Apply.
+The continuation request does not create or infer a new Goal, Objective, Acceptance Criteria, or Primary; authorize Jira fields or Git writes; assign or replace a Writer; grant Runtime, merge, install, or private-data capabilities; or satisfy the Objective/Scope/Acceptance Criteria/ownership gates below. If the existing Objective, approval, or custody is missing or ambiguous, block only the affected scope, identify the precise Owner input needed, and continue independent safe READY work. A direct request limited to status, design, explanation, or a next-goal recommendation remains read-only even when it names this Skill. A quoted or discussed invocation and ordinary conversation do not activate the full workflow; ordinary conversation may use only existing read-only planning when an approved Runtime instruction already references this Skill. This body cannot load or register itself: in an unregistered environment, the bare call has no proven effect until a supported loader or source reader actually provides this Skill.
 
 ## Full-wrapper workflow
 
-Apply this ordered workflow only for a direct explicit continuation request. Start the run with an actual UTC timestamp and a default maximum budget of 60 minutes. Use the time for safe approved work, then checkpoint at the budget boundary; finish earlier when every approved READY item is exhausted. Never imply background execution, an automatic restart, or control over another Cloud session.
+Apply this ordered workflow only for the direct bare invocation or clear continuation request defined above; status/design/explanation-only requests and quoted mentions remain read-only. Start the run with an actual UTC timestamp and a default maximum budget of 60 minutes. Use the time for safe approved work, then checkpoint at the budget boundary; finish earlier when every approved READY item is exhausted. Never imply background execution, an automatic restart, or control over another Cloud session.
 
 ### 1. Resume the real workstream and establish current truth
 
@@ -42,7 +41,7 @@ Compare Confluence and Git documentation, Jira facts/acceptance criteria/depende
 
 At the start of each full-wrapper run, make one bounded, read-only coverage pass across the verified Workstream's existing approved Objective and relevant existing Lanes. Reuse the current checkpoint and unchanged valid F4/F1 evidence; refresh only stale, changed, or disputed facts. Label each relevant item `READY` (approved and executable), `REVIEW_ONLY` (safe read-only review/evidence), `OWNER_GATE` (specific Owner decision or authority needed), `BLOCKED` (verified unmet prerequisite), or `UNKNOWN` (not yet checked or not verifiable); retain `CONFLICTED` as the reason when sources disagree. Never infer the Primary Jira from an umbrella Epic. Scope mutations only from the verified Primary, authorized Writer/Task, actual owned files/worktree, and current permissions. This coverage check does not authorize backlog/Jira writes or new Objectives. After each Slice, update only affected coverage using new evidence and select the next approved READY from the same Objective; preserve valid PASS evidence and do not repeat an unchanged BLOCKED diagnosis or restart the whole scan.
 
-Establish separately: (a) current user-facing capability by service/function, (b) actual work completed and remaining against the approved Objective, (c) approved executable READY work, and (d) a recommended next user goal with benefit and prerequisites. A recommendation is not approved scope or READY work. If the active Objective or its approval cannot be verified, do not infer one; stop execution with `BLOCKED/NOT_VERIFIABLE`, identify the exact Owner input needed, and continue only independent safe review. Distinguish a completed Slice from a completed Objective.
+Establish separately: (a) current user-facing capability by service/function, (b) actual work completed and remaining against the approved Objective, (c) approved executable READY work, and (d) a recommended next user goal with benefit and prerequisites. A recommendation is not approved scope or READY work. If the active Objective or its approval cannot be verified, do not infer one; block the affected writable scope with `BLOCKED/NOT_VERIFIABLE`, identify the exact Owner input needed, and continue independent safe READY work where supported. Distinguish a completed Slice from a completed Objective.
 
 ### 2. Apply a proportional `/senior` review and resolve only real decisions
 
@@ -82,6 +81,8 @@ Read the actual owning contract before using it; retain its source URI and revis
 Resolve dependencies through the supported runtime discovery/catalog or approved source reader,
 not paths guessed relative to the user's current working directory.
 If a dependency is unavailable, report that stage BLOCKED/NOT_RUN; keep independent authorized planning open.
+
+For this Skill's own Source, use `https://github.com/ranikun-labs/oh-my-ai/blob/master/skills/dev-main-flow/SKILL.md` as the default approved reference. At bootstrap, use a supported source reader to record the current Source revision and compare it with the version actually loaded in the current Runtime. If Native loading or its loaded version is not proven, report `NOT_RUN/UNKNOWN`; an installed file, descriptor, or remembered prompt is not Native evidence. Reuse a cached Source only when its revision is known and still valid; do not repeatedly fetch an unchanged revision. If Native Apply is not proven but the actual Source is readable and existing approvals permit manual use, label it `MANUAL_READ_APPLY` and stay within that approved scope. If the Source cannot be read, do not claim Apply; block only that stage and continue independent safe work. If the loader, source URL, or source reader is unavailable in an unregistered environment, leave integration as an `OWNER_GATE` and execution `NOT_RUN/UNKNOWN`; do not claim a universal fallback or that the bare call executed.
 
 - Intent and bounded context: existing RPL-113 route/Hook and authoritative task sources.
 - Git/work ownership: `git-work-preflight` is consumer-only and may be requested only by explicit `work-start`, `jira-work`, or `manual-review` consumers; this wrapper invokes none of them or the preflight implicitly.
