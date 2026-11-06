@@ -1,0 +1,7 @@
+interface:
+  display_name: "Dev Main Flow (Temporary)"
+  short_description: "Resume an approved goal with existing execution and review"
+  default_prompt: 'Use $dev-main-flow to resume the existing approved Objective for the current Workstream and apply the full workflow, including existing F4 Adaptive Goal Closure after its gates. Keep status/design-only requests read-only. Always return Korean function-first F1 on every outcome; no separate F1 prompt is needed.'
+
+policy:
+  allow_implicit_invocation: false
