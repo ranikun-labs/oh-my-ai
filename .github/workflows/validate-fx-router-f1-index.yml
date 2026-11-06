@@ -1,0 +1,83 @@
+name: Validate isolated FX Router and Korean report Skill
+
+on:
+  push:
+    branches:
+      - validation/fx-router-f1-index-20261106
+
+permissions:
+  contents: read
+
+jobs:
+  combined-routing:
+    name: F1 routing and install/update regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout exact combined Source SHA
+        uses: actions/checkout@v4
+        with:
+          ref: d771675e9afbc55cb3b75e2f8634f91c2595ef5f
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify pinned Source and validation branch ancestry
+        shell: bash
+        env:
+          EXPECTED_SOURCE_SHA: d771675e9afbc55cb3b75e2f8634f91c2595ef5f
+          EXPECTED_MASTER_SHA: 6d2a93893c0c7a40e1d0b99b691a8f950aa17969
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"
+          test "$PUSH_BEFORE_SHA" = "$EXPECTED_SOURCE_SHA"
+          git merge-base --is-ancestor "$EXPECTED_MASTER_SHA" "$EXPECTED_SOURCE_SHA"
+          git diff --check "$EXPECTED_MASTER_SHA..$EXPECTED_SOURCE_SHA"
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Regenerate and verify Skill Index
+        run: |
+          make instructions
+          git diff --exit-code -- AGENTS.md CLAUDE.md claude/CLAUDE.md MINE.md skills/skill-index.json
+
+      - name: Check shell and Router syntax
+        run: |
+          bash -n setup.sh scripts/test-routing-fixtures.sh scripts/test-install-fixtures.sh
+          node --check scripts/lib/routing-status.mjs
+          node --check scripts/work-start-skill-match.mjs
+          node --check scripts/prompt-routing-hook.mjs
+
+      - name: F1 report and metadata regression
+        run: |
+          node scripts/test-f1-report-advisory.mjs
+          node scripts/f1-report-advisory.mjs docs/examples/f1-report-rpl119.md
+
+      - name: Router false-positive fixtures
+        run: make test-routing-fixtures
+
+      - name: Verify both Router consumers against the generated combined Index
+        shell: bash
+        env:
+          EXPECTED_SOURCE_SHA: d771675e9afbc55cb3b75e2f8634f91c2595ef5f
+        run: |
+          isolated="$RUNNER_TEMP/fx-router-isolated"
+          mkdir -p "$isolated"
+          git archive "$EXPECTED_SOURCE_SHA" | tar -x -C "$isolated"
+          node scripts/test-f1-cross-pr-routing.mjs "$isolated"
+
+      - name: Verify install, update, and user-owned Skill conflict paths
+        shell: bash
+        run: |
+          sed '/^run_isolated_check check_fresh_install/,$d' scripts/test-install-fixtures.sh > "$RUNNER_TEMP/fx-install-targeted-tests.sh"
+          source "$RUNNER_TEMP/fx-install-targeted-tests.sh"
+          run_isolated_check check_fresh_install
+          run_isolated_check check_reinstall_idempotency
+          run_isolated_check check_spec_to_implementation_conflict
+
+      - name: Report tested Source
+        run: |
+          echo "Combined Source SHA: d771675e9afbc55cb3b75e2f8634f91c2595ef5f" >> "$GITHUB_STEP_SUMMARY"
+          echo "Workflow commit is a separate child of this Source SHA." >> "$GITHUB_STEP_SUMMARY"
