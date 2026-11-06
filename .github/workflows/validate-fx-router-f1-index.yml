@@ -35,28 +35,28 @@ jobs:
           git merge-base --is-ancestor "$EXPECTED_SOURCE_SHA" "$PUSH_HEAD_SHA"
 
           actual_paths="$(git diff --name-only "$EXPECTED_MASTER_SHA..$EXPECTED_SOURCE_SHA" | LC_ALL=C sort)"
-          expected_paths="$(cat <<'PATHS' | LC_ALL=C sort
-.agents/skills/spec-to-implementation
-.github/workflows/validate-f1-report-advisory.yml
-.github/workflows/validate-skill-routing.yml
-MINE.md
-README.md
-docs/devcontainer-workflow.md
-docs/examples/f1-report-rpl119.md
-fixtures/install/FX-INS-110-spec-to-implementation-conflict/README.md
-fixtures/install/FX-INS-110-spec-to-implementation-conflict/fixture.yaml
-scripts/f1-report-advisory.mjs
-scripts/lib/routing-status.mjs
-scripts/test-f1-cross-pr-routing.mjs
-scripts/test-f1-report-advisory.mjs
-scripts/test-install-fixtures.sh
-scripts/test-routing-fixtures.sh
-setup.sh
-skills/engineering-communication-ko/SKILL.md
-skills/skill-index.json
-skills/spec-to-implementation/SKILL.md
-PATHS
-)"
+          expected_paths="$(cat <<'PATHS' | sed 's/^  //' | LC_ALL=C sort
+            .agents/skills/spec-to-implementation
+            .github/workflows/validate-f1-report-advisory.yml
+            .github/workflows/validate-skill-routing.yml
+            MINE.md
+            README.md
+            docs/devcontainer-workflow.md
+            docs/examples/f1-report-rpl119.md
+            fixtures/install/FX-INS-110-spec-to-implementation-conflict/README.md
+            fixtures/install/FX-INS-110-spec-to-implementation-conflict/fixture.yaml
+            scripts/f1-report-advisory.mjs
+            scripts/lib/routing-status.mjs
+            scripts/test-f1-cross-pr-routing.mjs
+            scripts/test-f1-report-advisory.mjs
+            scripts/test-install-fixtures.sh
+            scripts/test-routing-fixtures.sh
+            setup.sh
+            skills/engineering-communication-ko/SKILL.md
+            skills/skill-index.json
+            skills/spec-to-implementation/SKILL.md
+          PATHS
+          )"
           if [ "$actual_paths" != "$expected_paths" ]; then
             diff -u <(printf '%s\n' "$expected_paths") <(printf '%s\n' "$actual_paths")
             exit 1
