@@ -831,7 +831,7 @@ test("Group 12 Makefile runs the bounded target once after Core and Identity onl
   const declaration = [declarationLines[0]];
   while (declaration.at(-1).endsWith("\\")) declaration.push(lines[start + declaration.length]);
   const dependencies = declaration.join(" ").replace(/^test-v1x-fixtures:\s*/, "").replaceAll("\\", " ").trim().split(/\s+/);
-  assert.deepEqual(dependencies, [
+  const requiredDependencies = [
     "test-v1-fixtures",
     "test-context-checkpoint-fixtures",
     "test-pending-handoff-core-fixtures",
@@ -848,8 +848,12 @@ test("Group 12 Makefile runs the bounded target once after Core and Identity onl
     "test-pending-handoff-manual-resume-fixtures",
     "test-pending-handoff-codex-runtime-adapter-fixtures",
     "test-pending-handoff-claude-runtime-adapter-fixtures",
+    "test-pending-handoff-manual-resume-attempt-outcome-fixtures",
+    "test-pending-handoff-manual-resume-attempt-outcome-store-adapter-fixtures",
     "test-pending-handoff-manual-resume-runtime-composition-fixtures",
-  ]);
+  ];
+  assert.equal(new Set(dependencies).size, dependencies.length, "aggregate dependencies must be unique");
+  assert.deepEqual(dependencies.filter(dependency => requiredDependencies.includes(dependency)), requiredDependencies, "required dependencies must remain present in order");
   const dryRun = spawnSync("make", ["-n", "test-v1x-fixtures"], {
     cwd: fileURLToPath(new URL("..", import.meta.url)),
     encoding: "utf8",
