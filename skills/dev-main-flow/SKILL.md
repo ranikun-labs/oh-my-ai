@@ -115,4 +115,3 @@ Requested model/reasoning/Fast is not effective attestation; unknown remains UNK
 
 This temporary Skill can be removed after the approved default instruction entry covers the same behavior.
 Removal or replacement requires its existing Source Owner; no second permanent control plane is created.
-
