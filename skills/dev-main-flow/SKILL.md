@@ -17,6 +17,8 @@ RPL-113 and RPL-120 are separate work items under the existing Workstream object
 These Jira references identify the owners of this Skill's Source contracts; they do not replace the caller's actual Workstream, Objective, or Primary Jira.
 This file grants no new Writer assignment, branch custody, global installation, private-policy or private-data access, merge, deployment, or remote-write authority.
 
+Every explicit `$dev-main-flow` workflow must end with a function-first Korean F1 section, including bare/status/design-only, full continuation, execution, BLOCKED/no-READY, and budget-stop outcomes. Do not wait for `/F1` or another prompt. This is an output requirement only: a bare call remains read-only planning and does not delegate F4 or grant write authority.
+
 The direct explicit request below means: resume the existing approved objective, apply this complete workflow, and read/apply the existing F4 playbook when its gates pass. Other direct explicit `$dev-main-flow` requests that clearly ask to continue an existing approved objective use the same workflow. This is the Owner's explicit F4 request for that invocation; do not ask for a second long prompt or a separate `$adaptive-goal-closure` invocation.
 
 ```text
@@ -83,7 +85,7 @@ or a duplicate dependency body here. Do not copy private policy into this public
 
 For a status, design-only, or recommendation request, identify the caller's actual Workstream, Lane, existing Primary, repository and valid approval scope. Obtain missing facts from bounded authoritative sources; do not infer Lane or ownership from a directory name. Check current user functions, unfinished Objective criteria, relevant Jira/PR/HEAD/CI/review and dependencies. Reuse unchanged valid evidence. Check targeted incoming handoff references through existing Issues/links/records. An absent search result is not proof of no work, no handoff, or a released Writer.
 
-Return three distinct things: current capability, one recommended next user goal with effect/prerequisites,
+Keep three facts distinct in the final F1: current capability, one recommended next user goal with effect/prerequisites,
 and executable approved READY items. Recommendations and READY are not interchangeable.
 
 ## One Owner decision bundle
@@ -121,16 +123,23 @@ Changed contract/revision requires fresh acceptance under the owning contract.
 Product/task acceptance does not release the original Writer, transfer a branch, mark Jira Done,
 approve new implementation, or authorize merge/deployment.
 
-## Service F1 and next READY
+## Mandatory service and function-first Korean F1 on every path
 
-Use existing engineering-communication-ko reporting; do not implement or bypass its advisory checker. Report per service/function: current user capability -> actual change -> actual implementation / test and CI / documentation / deployment states -> unavailable functions and reasons -> next user goal and first action, responsible Lane and required conditions/prerequisites.
-Keep Jira/PR/SHA as evidence; do not substitute numbers for function descriptions.
-If the existing report Skill/checker lacks a requested field, show the contract gap under RPL-119;
-do not invent a PASS or fork its implementation here.
-End with next independent approved READY, or a precise checkpoint/Owner Gate when none can run.
-When no approved READY remains, also recommend one next user goal, its benefit and the exact
-Owner decisions or prerequisites needed to make it READY. Do not execute or silently add that
-new goal to the current approved Objective.
+This is the final user-facing section for every explicit `$dev-main-flow` workflow. Use the existing `engineering-communication-ko` Skill and advisory checker; do not implement, replace, or bypass either. If either dependency cannot be read, mark it `BLOCKED/NOT_RUN`, still provide the F1 fields from verified facts, and do not claim an advisory PASS. Honor an explicit response-format request while preserving these facts. The F1 contract does not change read-only boundaries or grant F4, Jira, Git, Runtime, Merge, install, or deployment authority.
+
+Lead in plain Korean that a colleague outside the conversation can understand without reading earlier chat. Start with the service and product function, then say what users can do now. Separate cumulative capability from this run's actual change. State `이번 실행에서 새로 구현한 제품 기능은 없습니다.` only when no product or Skill behavior was implemented or changed and the work was limited to research, documentation, Jira metadata, handoff, test preparation, or verification of unchanged behavior. If product or Skill behavior changed but is still an unmerged candidate or unavailable in a supported Runtime, name the actual change and report Source, merge, Native/apply, usability, and deployment states separately; do not label it zero merely because it is undeployed. Do not describe preparation, a closed Jira item, a changed document, or a test result as a new product function. If facts are missing, include the field and mark it `UNKNOWN`, `BLOCKED`, `NOT_VERIFIABLE`, or `NOT_RUN` with the reason.
+
+For each service/function, report these facts in this order:
+
+1. Service and product function, with the capability users can currently use.
+2. What this run actually changed; state zero new product functions when applicable and distinguish prior capability from this-run delta.
+3. Implementation, test/verification and CI, documentation, and deployment states separately, using the existing F1 contract's status rules and evidence.
+4. Functions unavailable or unverified and the specific reason. Distinguish source prepared from source merged, Native-loaded/applied, usable in the supported Runtime, and deployed.
+5. Next user goal, first action, responsible Lane, and required conditions/prerequisites. Keep the recommended next goal separate from executable approved READY work.
+
+When no approved READY remains, recommend one next user goal, its benefit, and the exact Owner decisions or prerequisites needed to make it READY. Do not execute or silently add that goal to the current approved Objective. If a lane is blocked, report the unaffected next READY separately. Put Jira, PR, SHA, test counts, and links below the function result as evidence. Do not invent PASS states or fork the RPL-119 checker.
+
+Before returning, check that a third-party reader can answer: what product function exists, what changed in this run, what is usable or unavailable and why, and what happens next. If any answer is missing, revise the F1 before sending it.
 
 ## Evidence levels and stop boundary
 
@@ -140,5 +149,4 @@ Manual Read/Apply, a descriptor prompt, or a successful Source fixture is not Na
 A local CLI probe or this session's Subagent is not a new Normal/AI Cloud session.
 Requested model/reasoning/Fast is not effective attestation; unknown remains UNKNOWN.
 
-This temporary Skill can be removed after the approved default instruction entry covers the same behavior.
-Removal or replacement requires its existing Source Owner; no second permanent control plane is created.
+This temporary Skill can be removed or replaced only after an approved default entry covers the same behavior, including the mandatory function-first Korean F1 for every explicit workflow. Removal or replacement requires its existing Source Owner; do not silently drop this output contract or create a second control plane. This source change does not prove that installed copies or supported Runtimes have been updated.

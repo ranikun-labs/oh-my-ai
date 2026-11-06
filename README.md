@@ -721,4 +721,6 @@ Developer AI Platform 기존 목표 이어서 진행해.
 
 이 직접 호출은 기존 목표의 전체 절차와 승인된 F4 플레이북을 적용하라는 요청이다. 상태 확인·설계 검토만 명시한 요청은 읽기 전용으로 남고, 이 문구를 인용하거나 Skill 소스/링크가 있다는 사실만으로 Native 발견 또는 Apply가 확인되지는 않는다.
 
+`dev-main-flow`는 모든 직접 호출의 마지막 사용자용 섹션을 한국어 기능 중심 F1 보고로 작성한다. 이는 전체 이어가기뿐 아니라 bare 호출, 상태·설계 확인, 차단·승인 대기, READY 소진, 예산 종료에도 적용되며 별도 `/F1` 요청이 필요 없다. 읽기 전용 요청은 계속 읽기 전용이다. 누적 기능과 이번 실행의 변경을 분리하고, 문서·인계·검증 준비만 했다면 새 제품 기능은 없다고 밝히며, 준비된 Source와 실제 사용 가능·Native 적용·배포 상태를 구분한다.
+
 기존 `~/.claude/skills`나 `~/.agents/skills`가 있어도 core `work-start`는 개별 설치한다. 그 밖의 shared skill은 자동 병합하지 않으므로, 필요하면 `make doctor` 결과를 보고 직접 연결 방식을 결정한다. 커밋·푸시 전 현재 `remote`, `branch`, `author`, GitHub 인증 계정을 확인한다. 특정 계정 전환 스크립트나 push guard가 필요하면 `profiles/local/` 아래 개인 profile 또는 레포 밖 private script로 분리해서 운영한다.
