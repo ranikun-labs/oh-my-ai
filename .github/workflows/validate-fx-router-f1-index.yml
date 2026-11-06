@@ -21,17 +21,60 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Verify pinned Source and validation branch ancestry
+      - name: Verify pinned Source, branch ancestry, and changed paths
         shell: bash
         env:
           EXPECTED_SOURCE_SHA: d771675e9afbc55cb3b75e2f8634f91c2595ef5f
           EXPECTED_MASTER_SHA: 6d2a93893c0c7a40e1d0b99b691a8f950aa17969
-          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          PUSH_HEAD_SHA: ${{ github.sha }}
+          EXPECTED_BRANCH: validation/fx-router-f1-index-20261106
         run: |
           test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"
-          test "$PUSH_BEFORE_SHA" = "$EXPECTED_SOURCE_SHA"
+          test "$GITHUB_REF_NAME" = "$EXPECTED_BRANCH"
           git merge-base --is-ancestor "$EXPECTED_MASTER_SHA" "$EXPECTED_SOURCE_SHA"
-          git diff --check "$EXPECTED_MASTER_SHA..$EXPECTED_SOURCE_SHA"
+          git merge-base --is-ancestor "$EXPECTED_SOURCE_SHA" "$PUSH_HEAD_SHA"
+
+          actual_paths="$(git diff --name-only "$EXPECTED_MASTER_SHA..$EXPECTED_SOURCE_SHA" | LC_ALL=C sort)"
+          expected_paths="$(cat <<'PATHS' | LC_ALL=C sort
+.agents/skills/spec-to-implementation
+.github/workflows/validate-f1-report-advisory.yml
+.github/workflows/validate-skill-routing.yml
+MINE.md
+README.md
+docs/devcontainer-workflow.md
+docs/examples/f1-report-rpl119.md
+fixtures/install/FX-INS-110-spec-to-implementation-conflict/README.md
+fixtures/install/FX-INS-110-spec-to-implementation-conflict/fixture.yaml
+scripts/f1-report-advisory.mjs
+scripts/lib/routing-status.mjs
+scripts/test-f1-cross-pr-routing.mjs
+scripts/test-f1-report-advisory.mjs
+scripts/test-install-fixtures.sh
+scripts/test-routing-fixtures.sh
+setup.sh
+skills/engineering-communication-ko/SKILL.md
+skills/skill-index.json
+skills/spec-to-implementation/SKILL.md
+PATHS
+)"
+          if [ "$actual_paths" != "$expected_paths" ]; then
+            diff -u <(printf '%s\n' "$expected_paths") <(printf '%s\n' "$actual_paths")
+            exit 1
+          fi
+
+          set +e
+          whitespace_report="$(git diff --check "$EXPECTED_MASTER_SHA..$EXPECTED_SOURCE_SHA" 2>&1)"
+          whitespace_status=$?
+          set -e
+          if [ "$whitespace_status" -eq 0 ]; then
+            echo "No whitespace findings."
+          elif [ "$whitespace_report" = "skills/spec-to-implementation/SKILL.md:123: new blank line at EOF." ]; then
+            echo "::warning::Pinned PR #80 Skill source has one pre-existing blank line at EOF; source remains unchanged by this validation."
+            printf '%s\n' "$whitespace_report"
+          else
+            printf '%s\n' "$whitespace_report"
+            exit "$whitespace_status"
+          fi
 
       - name: Set up Node.js 22
         uses: actions/setup-node@v4
@@ -77,7 +120,8 @@ jobs:
           run_isolated_check check_reinstall_idempotency
           run_isolated_check check_spec_to_implementation_conflict
 
-      - name: Report tested Source
+      - name: Report tested Source and known boundary
         run: |
           echo "Combined Source SHA: d771675e9afbc55cb3b75e2f8634f91c2595ef5f" >> "$GITHUB_STEP_SUMMARY"
-          echo "Workflow commit is a separate child of this Source SHA." >> "$GITHUB_STEP_SUMMARY"
+          echo "Workflow commit is a separate descendant of the tested Source SHA." >> "$GITHUB_STEP_SUMMARY"
+          echo "PR #80's single trailing blank-line warning was retained and not edited." >> "$GITHUB_STEP_SUMMARY"
