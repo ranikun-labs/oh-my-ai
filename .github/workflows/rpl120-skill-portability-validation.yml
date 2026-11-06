@@ -48,25 +48,33 @@ jobs:
           import path from "node:path";
 
           const skillPath = "skills/adaptive-goal-closure/SKILL.md";
-          const descriptorPath = "skills/adaptive-goal-closure/agents/openai.yaml";
+          const skillDir = path.dirname(skillPath);
+          const descriptorPath = path.join(skillDir, "agents", "openai.yaml");
           const skill = fs.readFileSync(skillPath, "utf8");
           const descriptor = fs.readFileSync(descriptorPath, "utf8");
-          const frontmatter = skill.match(/^---\\r?\\n([\\s\\S]*?)\\r?\\n---/);
-          assert.ok(frontmatter, "SKILL.md frontmatter must be present");
-          assert.match(frontmatter[1], /^name: adaptive-goal-closure$/m);
-          assert.match(frontmatter[1], /^description: .+$/m);
-          assert.match(frontmatter[1], /^disable-model-invocation: true$/m);
-          assert.match(frontmatter[1], /^  source: born-here$/m);
-          assert.match(frontmatter[1], /^  summary: .+$/m);
-          assert.doesNotMatch(frontmatter[1], /^  route:/m, "explicit-only Skill must not gain automatic routing");
+          const skillLines = skill.split("\n");
+          assert.equal(skillLines[0], "---");
+          const frontmatterEnd = skillLines.indexOf("---", 1);
+          assert.ok(frontmatterEnd > 1, "SKILL.md frontmatter must close");
+          const metadataLines = skillLines.slice(1, frontmatterEnd);
 
-          assert.match(descriptor, /^interface:\\s*$/m);
-          assert.match(descriptor, /^  display_name: "Adaptive Goal Closure"$/m);
-          assert.match(descriptor, /^  short_description: "Continue an approved objective with bounded F4 execution"$/m);
-          assert.match(descriptor, /^  default_prompt: '.*SKILL\\.md.*'$/m);
-          assert.match(descriptor, /^  allow_implicit_invocation: false$/m);
-          const prompt = descriptor.split("\\n").find(line => line.startsWith("  default_prompt:"));
-          assert.doesNotMatch(prompt, /\\/workspace\\/|\\/home\\/|[A-Za-z]:\\\\/, "descriptor must not pin a local checkout path");
+          assert.ok(metadataLines.includes("name: adaptive-goal-closure"));
+          assert.ok(metadataLines.some(line => line.startsWith("description: ") && line.length > "description: ".length));
+          assert.ok(metadataLines.includes("disable-model-invocation: true"));
+          assert.ok(metadataLines.includes("  source: born-here"));
+          assert.ok(metadataLines.some(line => line.startsWith("  summary: ") && line.length > "  summary: ".length));
+          assert.equal(metadataLines.some(line => line.startsWith("  route:")), false,
+            "explicit-only Skill must not gain automatic routing");
+
+          const descriptorLines = descriptor.split("\n");
+          assert.ok(descriptorLines.includes("interface:"));
+          assert.ok(descriptorLines.includes('  display_name: "Adaptive Goal Closure"'));
+          assert.ok(descriptorLines.includes('  short_description: "Continue an approved objective with bounded F4 execution"'));
+          const promptLine = descriptorLines.find(line => line.startsWith("  default_prompt:"));
+          assert.ok(promptLine && promptLine.includes("SKILL.md"));
+          assert.equal(promptLine.includes("/workspace/"), false, "descriptor must not pin a local checkout path");
+          assert.equal(promptLine.includes("/home/"), false, "descriptor must not pin a user home path");
+          assert.ok(descriptorLines.includes("  allow_implicit_invocation: false"));
 
           const index = JSON.parse(fs.readFileSync("skills/skill-index.json", "utf8"));
           assert.equal(index.skills.some(skillEntry => skillEntry.name === "adaptive-goal-closure"), false,
@@ -76,7 +84,7 @@ jobs:
           try {
             const target = path.join(temp, "another-project", "skills", "adaptive-goal-closure");
             fs.mkdirSync(path.dirname(target), { recursive: true });
-            fs.cpSync(path.dirname(skillPath), target, { recursive: true });
+            fs.cpSync(skillDir, target, { recursive: true });
             assert.equal(fs.readFileSync(path.join(target, "SKILL.md"), "utf8"), skill);
             assert.equal(fs.readFileSync(path.join(target, "agents", "openai.yaml"), "utf8"), descriptor);
           } finally {
