@@ -712,14 +712,13 @@ VS Code Settings (JSON)에 한 번만 추가:
 
 커스텀 스킬은 `SKILL.md` frontmatter에 `source`, `summary`, 필요시 `route`를 한 번만 작성한다. `make instructions`가 라우팅 표와 `MINE.md`를 생성한다.
 
-`dev-main-flow`는 기존 승인 목표를 다시 이어가는 명시 호출용 전체 흐름 진입점이다. 짧은 호출은 아래와 같다.
+`dev-main-flow`는 호출자의 기존 승인 Objective와 Checkpoint를 이어가는 전체 흐름 진입점이다. Skill이 실제로 제공·로딩된 환경에서는 bare 호출 또는 명확한 직접 요청으로 기존 F4 의도까지 전달한다.
 
 ```text
 $dev-main-flow
-Developer AI Platform 기존 목표 이어서 진행해.
 ```
 
-이 직접 호출은 기존 목표의 전체 절차와 승인된 F4 플레이북을 적용하라는 요청이다. 상태 확인·설계 검토만 명시한 요청은 읽기 전용으로 남고, 이 문구를 인용하거나 Skill 소스/링크가 있다는 사실만으로 Native 발견 또는 Apply가 확인되지는 않는다.
+직접 bare 호출 또는 “현재 Workstream에서 이 Skill로 작업하자”라는 명확한 직접 요청은 기존 승인 범위에서 전체 절차와 F4 플레이북을 적용하라는 요청이다. 새 Objective·Primary·AC·Writer·변경 권한은 만들지 않는다. 상태·설계·설명만 요청한 경우와 인용은 읽기 전용이며 F1을 포함한다. 저장소 문서나 이 예제 자체는 Skill 로딩·Native 발견·Apply를 증명하지 않는다. 실행 환경에서 Skill을 제공하지 않으면 bare 호출이 실행됐다고 주장하지 않는다.
 
 `dev-main-flow`는 모든 직접 호출의 마지막 사용자용 섹션을 한국어 기능 중심 F1 보고로 작성한다. 이는 전체 이어가기뿐 아니라 bare 호출, 상태·설계 확인, 차단·승인 대기, READY 소진, 예산 종료에도 적용되며 별도 `/F1` 요청이 필요 없다. 읽기 전용 요청은 계속 읽기 전용이다. 누적 기능과 이번 실행의 변경을 분리하고, 문서·인계·검증 준비만 했다면 새 제품 기능은 없다고 밝히며, 준비된 Source와 실제 사용 가능·Native 적용·배포 상태를 구분한다.
 
