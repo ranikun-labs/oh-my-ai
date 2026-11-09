@@ -25,7 +25,22 @@ export function createPendingHandoffClaimLeaseService(options) {
 
   const { store, mutationPort, leaseDurationMs, clock } = inspected.value;
   const service = Object.freeze({
-    acquireClaim: request => acquireClaim(store, mutationPort, leaseDurationMs, clock, request),
+    acquireClaim: request => acquireClaim(
+      store,
+      mutationPort,
+      leaseDurationMs,
+      clock,
+      request,
+      { allowSameAttemptReplay: true },
+    ),
+    acquireClaimForDispatch: request => acquireClaim(
+      store,
+      mutationPort,
+      leaseDurationMs,
+      clock,
+      request,
+      { allowSameAttemptReplay: false },
+    ),
     registerPending: request => registerPending(store, mutationPort, clock, request),
     recoverClaimLease: request => recoverClaimLease(store, mutationPort, clock, request),
     releaseClaimBeforeDelivery: request => releaseClaimBeforeDelivery(store, mutationPort, clock, request),
@@ -79,7 +94,14 @@ async function registerPending(store, mutationPort, clock, request) {
   }));
 }
 
-async function acquireClaim(store, mutationPort, leaseDurationMs, clock, request) {
+async function acquireClaim(
+  store,
+  mutationPort,
+  leaseDurationMs,
+  clock,
+  request,
+  { allowSameAttemptReplay },
+) {
   const inspected = inspectRequest(request, [
     "candidate_id",
     "expected_revision",
@@ -113,6 +135,7 @@ async function acquireClaim(store, mutationPort, leaseDurationMs, clock, request
     }
     if (state.claim.claim_owner_identity === inspected.value.currentSessionIdentity
       && state.claim.claim_attempt_id === inspected.value.claimAttemptId) {
+      if (!allowSameAttemptReplay) return failure("claim_conflict");
       if (state.state_revision < 1
         || inspected.value.expectedRevision !== state.state_revision - 1) {
         return failure("claim_conflict");
