@@ -83,6 +83,13 @@ jobs:
       - name: Run the existing routing fixtures
         run: make test-routing-fixtures
 
+      - name: Run existing report, result and preflight regressions
+        run: |
+          node scripts/test-f1-report-advisory.mjs
+          make test-result-fixtures
+          make test-truthfulness-fixtures
+          make test-git-work-preflight-fixtures
+
       - name: Check whitespace in the pull request diff
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}

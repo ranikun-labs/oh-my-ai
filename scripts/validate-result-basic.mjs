@@ -12,6 +12,7 @@
 // well-formed and does not contradict itself.
 
 import fs from "node:fs";
+import { splitSections as splitVisibleSections } from "./f1-report-advisory.mjs";
 
 const REQUIRED_HEADINGS = [
   "Contract Metadata",
@@ -41,22 +42,35 @@ const REQUIRED_HEADINGS = [
 
 const EXECUTION_STATUS_VALUES = new Set(["complete", "partial", "failed", "blocked"]);
 
-function splitSections(markdown) {
+function splitSections(markdown, errors = []) {
+  // Use the existing scanner to locate visible headings, but slice Result
+  // bodies from the original text: code blocks can contain actual evidence
+  // or deviations and must not disappear before cross-field validation.
   const lines = markdown.split("\n");
-  const sections = {};
-  let current = null;
-  let buf = [];
-  for (const line of lines) {
-    const m = /^##\s+(.+?)\s*$/.exec(line);
-    if (m) {
-      if (current) sections[current] = buf.join("\n").trim();
-      current = m[1];
-      buf = [];
-    } else if (current) {
-      buf.push(line);
+  let marker = "RESULT_SECTION_LINE_";
+  while (markdown.includes(marker)) marker += "_";
+  const marked = lines.map((line, index) => line.replace(
+    /^( {0,3}##[ \t]+)(.*)$/,
+    (_, prefix, heading) => `${prefix}${marker}${index}__${heading}`,
+  )).join("\n");
+  const boundaries = [];
+  for (const heading of splitVisibleSections(marked).sections.keys()) {
+    const match = new RegExp(`^${marker}(\\d+)__(.*)$`).exec(heading);
+    if (match && match[2].trim()) {
+      boundaries.push({ index: Number(match[1]), heading: match[2].trim() });
     }
   }
-  if (current) sections[current] = buf.join("\n").trim();
+  const sections = Object.create(null);
+  for (const [index, boundary] of boundaries.entries()) {
+    if (Object.hasOwn(sections, boundary.heading)) {
+      if (REQUIRED_HEADINGS.includes(boundary.heading)) {
+        errors.push(`duplicate required heading: ## ${boundary.heading}`);
+      }
+      continue;
+    }
+    const end = boundaries[index + 1]?.index ?? lines.length;
+    sections[boundary.heading] = lines.slice(boundary.index + 1, end).join("\n").trim();
+  }
   return sections;
 }
 
@@ -70,21 +84,35 @@ function isNone(body) {
 }
 
 function field(metadataBody, name) {
-  const re = new RegExp(`^-\\s*\`${name}\`:\\s*\`?([^\`\\n]*)\`?\\s*$`, "m");
-  const m = re.exec(metadataBody);
+  const m = metadataFields(metadataBody, name)[0];
   return m ? m[1].trim() : null;
+}
+
+function metadataFields(metadataBody, name) {
+  const re = new RegExp(`^-\\s*\`${name}\`:\\s*\`?([^\`\\n]*)\`?\\s*$`, "gm");
+  return [...metadataBody.matchAll(re)];
 }
 
 function validate(markdown) {
   const errors = [];
-  const sections = splitSections(markdown);
+  const sections = splitSections(markdown, errors);
 
   for (const heading of REQUIRED_HEADINGS) {
     if (!(heading in sections)) errors.push(`missing required heading: ## ${heading}`);
   }
   if (errors.length > 0) return errors; // structural failure; stop here
 
-  const meta = sections["Contract Metadata"];
+  const meta = splitVisibleSections(
+    `## Contract Metadata\n${sections["Contract Metadata"]}`,
+  ).sections.get("Contract Metadata") ?? "";
+  // These fields drive validation decisions. Never silently choose one of
+  // several reported values, even when the repeated values happen to agree.
+  for (const name of ["execution_status", "receipt_status", "created_by", "source_handoff_ref"]) {
+    if (metadataFields(meta, name).length > 1) {
+      errors.push(`duplicate Contract Metadata field: ${name}`);
+    }
+  }
+  if (errors.length > 0) return errors;
   const executionStatus = field(meta, "execution_status");
   if (!EXECUTION_STATUS_VALUES.has(executionStatus)) {
     errors.push(`execution_status must be one of complete/partial/failed/blocked, got: ${executionStatus}`);
@@ -119,6 +147,27 @@ function validate(markdown) {
     if (!scopeDeviationsEmpty) {
       errors.push("execution_status=complete but Scope Deviations is non-empty (Contract §23: complete requires no Material Scope Deviation)");
     }
+    // Owner decision: these are the required criteria of the currently
+    // approved completion unit. Do not infer extra criteria from validation
+    // failures, later deployment stages, or the fact that a PR is unmerged.
+    // Reuse the visible scanner so comments/examples are not status claims;
+    // keep the original bodies intact for the other evidence checks.
+    const criteria = splitVisibleSections(
+      `## Completion Criteria Results\n${sections["Completion Criteria Results"]}`,
+    ).sections.get("Completion Criteria Results") ?? "";
+    const entries = criteria.split("\n").map((line) => line.trim()).filter(Boolean);
+    if (entries.length === 0 || isNone(criteria)) {
+      errors.push("execution_status=complete requires explicit met Completion Criteria Results for the current approved completion unit");
+    } else {
+      for (const entry of entries) {
+        const criterion = /^-\s+`([^`]+)`:\s*`(met|unmet|partial|blocked)`\s*-\s*\S.*$/.exec(entry);
+        if (!criterion) {
+          errors.push("execution_status=complete requires Completion Criteria Results entries in the template format with status met (unrecognized criterion or status)");
+        } else if (criterion[2] !== "met") {
+          errors.push(`execution_status=complete contradicts Completion Criteria Results status=${criterion[2]} for ${criterion[1]}`);
+        }
+      }
+    }
   }
 
   if (executionStatus === "partial") {
@@ -144,6 +193,12 @@ function validate(markdown) {
 
   const createdBy = field(meta, "created_by");
   if (!createdBy) errors.push("Contract Metadata missing created_by");
+
+  // The existing manual template requires the Handoff reference. A returned
+  // Result without that reference cannot identify the task it reports on;
+  // this checks presence only, not task correlation or Handoff acceptance.
+  const sourceHandoffRef = field(meta, "source_handoff_ref");
+  if (!sourceHandoffRef) errors.push("Contract Metadata missing source_handoff_ref");
 
   const receiptStatus = field(meta, "receipt_status");
   if (receiptStatus !== "received") {

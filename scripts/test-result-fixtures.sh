@@ -131,6 +131,7 @@ fx_files_read_changed_separation() {
   if has_exact_files_read_changed_headings "$duplicate_out"; then
     fail "Files-Read-Changed-negative: accepted a duplicate Files Read heading"
   fi
+  expect_invalid "$duplicate_out" "Files-Read-Changed-duplicate-validator" "duplicate required heading: ## Files Read"
   echo "passed: FX-RS-files-read-changed-separation"
 }
 
@@ -193,6 +194,220 @@ fx_blocked_result() {
   echo "passed: FX-RS-blocked-result"
 }
 
+# --- 8. Ambiguous sections and metadata --------------------------------------
+
+fx_ambiguous_result() {
+  local src="$FIXTURE_ROOT/FX-RS-good-complete-validation-performed.md"
+  local d out
+  d="$(sandbox)"; out="$d/ambiguous.md"
+
+  # A later empty section must not erase an earlier reported deviation.
+  mutate_result "$src" "$out" "## Scope Deviations" \
+    $'## Scope Deviations\n\n- Modified an out-of-scope file.\n\n## Scope Deviations'
+  expect_invalid "$out" "Scope-Deviations-duplicate" "duplicate required heading: ## Scope Deviations"
+
+  mutate_result "$src" "$out" "## Contract Metadata" \
+    $'## Contract Metadata\n\n- `execution_status`: `blocked`\n\n## Contract Metadata'
+  expect_invalid "$out" "Contract-Metadata-duplicate" "duplicate required heading: ## Contract Metadata"
+
+  mutate_result "$src" "$out" '- `execution_status`: `complete`' \
+    $'- `execution_status`: `complete`\n- `execution_status`: `blocked`'
+  expect_invalid "$out" "Execution-Status-conflict" "duplicate Contract Metadata field: execution_status"
+
+  mutate_result "$src" "$out" '- `receipt_status`: `received`' \
+    $'- `receipt_status`: `received`\n- `receipt_status`: `missing`'
+  expect_invalid "$out" "Receipt-Status-conflict" "duplicate Contract Metadata field: receipt_status"
+
+  mutate_result "$src" "$out" '- `created_by`: `fixture-worker`' \
+    $'- `created_by`: `fixture-worker`\n- `created_by`: `different-worker`'
+  expect_invalid "$out" "Created-By-conflict" "duplicate Contract Metadata field: created_by"
+
+  mutate_result "$src" "$out" '- `execution_status`: `complete`' \
+    $'- `execution_status`: `complete`\n- `execution_status`: `complete`'
+  expect_invalid "$out" "Execution-Status-identical-duplicate" "duplicate Contract Metadata field: execution_status"
+
+  # Text that mentions a field or heading in ordinary prose is not a duplicate.
+  mutate_result "$src" "$out" "## Summary" \
+    $'## Summary\n\nThe earlier label was `execution_status`: `blocked`; ## Summary is the section name.'
+  expect_valid "$out" "Status-And-Heading-prose-mention"
+
+  # Examples and comments are not additional visible sections or claims.
+  mutate_result "$src" "$out" "## Summary" \
+    $'## Summary\n\n```markdown\n## Summary\n```'
+  expect_valid "$out" "Fenced-Required-Heading-example"
+
+  mutate_result "$src" "$out" '- `execution_status`: `complete`' \
+    $'- `execution_status`: `complete`\n<!--\n- `execution_status`: `blocked`\n-->'
+  expect_valid "$out" "Commented-Execution-Status-example"
+
+  mutate_result "$src" "$out" '- `execution_status`: `complete`' \
+    $'- `execution_status`: `complete`\n```markdown\n- `execution_status`: `blocked`\n```'
+  expect_valid "$out" "Fenced-Execution-Status-example"
+
+  mutate_result "$src" "$out" "## Summary" \
+    $'## Summary\n\n<!--\n## Summary\n-->'
+  expect_valid "$out" "Commented-Required-Heading-example"
+
+  # Result bodies retain code-formatted evidence and deviations as data.
+  mutate_result "$src" "$out" \
+    '- `bash -n README.md` is not applicable to Markdown; visually diffed the single-line change against the surrounding install steps.' \
+    $'```text\nObserved command result: validation passed.\n```'
+  expect_valid "$out" "Fenced-Validation-Performed-evidence"
+
+  mutate_result "$src" "$out" \
+    '- `bash -n README.md` is not applicable to Markdown; visually diffed the single-line change against the surrounding install steps.' \
+    '    Observed command result: validation passed.'
+  expect_valid "$out" "Indented-Validation-Performed-evidence"
+
+  mutate_result "$src" "$out" \
+    '- `bash -n README.md` is not applicable to Markdown; visually diffed the single-line change against the surrounding install steps.' \
+    '<pre>Observed command result: validation passed.</pre>'
+  expect_valid "$out" "Pre-Validation-Performed-evidence"
+
+  mutate_result "$src" "$out" $'## Scope Deviations\n\n- `None`' \
+    $'## Scope Deviations\n\n```text\nModified an out-of-scope file.\n```'
+  expect_invalid "$out" "Fenced-Scope-Deviation-preserved" "complete but Scope Deviations is non-empty"
+
+  mutate_result "$src" "$out" $'## Scope Deviations\n\n- `None`' \
+    $'## Scope Deviations\n\n    Modified an out-of-scope file.'
+  expect_invalid "$out" "Indented-Scope-Deviation-preserved" "complete but Scope Deviations is non-empty"
+
+  mutate_result "$src" "$out" $'## Scope Deviations\n\n- `None`' \
+    $'## Scope Deviations\n\n<pre>Modified an out-of-scope file.</pre>'
+  expect_invalid "$out" "Pre-Scope-Deviation-preserved" "complete but Scope Deviations is non-empty"
+
+  mutate_result "$src" "$out" '- `execution_status`: `complete`' \
+    $'- `execution_status`: `complete`\n-\n`execution_status`: `blocked`'
+  expect_invalid "$out" "Multiline-Execution-Status-conflict" "duplicate Contract Metadata field: execution_status"
+
+  # A heading containing only a comment must not create a new empty section.
+  mutate_result "$src" "$out" "## Summary" \
+    $'## Summary\n\n## <!-- example-only heading -->'
+  expect_valid "$out" "Comment-Only-Heading-example"
+
+  mutate_result "$src" "$out" "## Summary" \
+    $'## Summary\n\nRESULT_SECTION_LINE_ and RESULT_SECTION_LINE__ are ordinary user data.'
+  expect_valid "$out" "Heading-Marker-input-collision"
+
+  mutate_result "$src" "$out" "## Files Read" \
+    $'```markdown\n## Files Read\n```\n\n## Files Read'
+  expect_valid "$out" "Hidden-Heading-before-Visible-Heading"
+
+  mutate_result "$src" "$out" "## Summary" \
+    $'## Summary\n\n```markdown\n## Summary\n```\n\n## Summary'
+  expect_invalid "$out" "Visible-Duplicate-after-Hidden-Heading" "duplicate required heading: ## Summary"
+  echo "passed: FX-RS-ambiguous-result"
+}
+
+fx_completion_criteria_status() {
+  local src="$FIXTURE_ROOT/FX-RS-good-complete-validation-performed.md"
+  local d out status
+  d="$(sandbox)"; out="$d/criteria.md"
+  expect_valid "$src" "Complete-All-Criteria-Met"
+
+  for status in unmet partial blocked; do
+    mutate_result "$src" "$out" '`Typo corrected`: `met`' "\`Typo corrected\`: \`$status\`"
+    expect_invalid "$out" "Complete-Criterion-$status" "contradicts Completion Criteria Results status=$status"
+  done
+
+  for status in unknown not_met passed; do
+    mutate_result "$src" "$out" '`Typo corrected`: `met`' "\`Typo corrected\`: \`$status\`"
+    expect_invalid "$out" "Complete-Criterion-Unknown-$status" "unrecognized criterion or status"
+  done
+
+  mutate_result "$src" "$out" '- `Typo corrected`: `met` - verified by grep' '- Typo corrected: complete'
+  expect_invalid "$out" "Complete-Criterion-Malformed" "unrecognized criterion or status"
+  mutate_result "$src" "$out" '- `Typo corrected`: `met` - verified by grep' '- `None`'
+  expect_invalid "$out" "Complete-Criteria-Empty" "requires explicit met Completion Criteria Results"
+
+  expect_valid "$FIXTURE_ROOT/FX-RS-good-partial-validation-not-performed.md" "Partial-Criterion-Unmet"
+
+  mutate_result "$src" "$out" $'## Validation Not Performed\n\n- `None`' \
+    $'## Validation Not Performed\n\n- Optional deployment smoke check was not requested for this unit.'
+  mutate_result "$out" "$out" '## Validation Results' \
+    $'## Validation Results\n\n- `Optional deployment smoke check`: `not_run` - outside this approved unit'
+  expect_valid "$out" "Complete-Optional-Validation-Not-Run"
+
+  mutate_result "$src" "$out" '- `Typo corrected`: `met` - verified by grep' \
+    '- `User-approved candidate ready for review`: `met` - candidate diff and local checks available; merge is a later unit'
+  mutate_result "$out" "$out" $'## Open Issues\n\n- `None`' \
+    $'## Open Issues\n\n- PR is unmerged; merge is outside this user-approved candidate completion unit.'
+  expect_valid "$out" "Complete-Unmerged-Candidate-Own-AC-Met"
+
+  mutate_result "$src" "$out" '## Completion Criteria Results' \
+    $'## Completion Criteria Results\n\n<!--\n- `Example criterion`: `unmet` - example only\n-->\n\n```markdown\n- `Example criterion`: `blocked` - example only\n```'
+  expect_valid "$out" "Complete-Criteria-Comment-And-Fenced-Examples"
+
+  mutate_result "$src" "$out" '- `Typo corrected`: `met` - verified by grep' \
+    $'```markdown\n- `Typo corrected`: `met` - example only\n```'
+  expect_invalid "$out" "Complete-Only-Fenced-Criteria" "requires explicit met Completion Criteria Results"
+  echo "passed: FX-RS-completion-criteria-status"
+}
+
+fx_filled_current_template() {
+  local d out
+  d="$(sandbox)"; out="$d/filled-template.md"
+  # Fill the shipped template itself, retaining its prose. Replacing whole
+  # sections with old fixtures would hide template/parser incompatibilities.
+  node - "$out" <<'NODE'
+const fs = require("fs");
+let text = fs.readFileSync("templates/result-basic.md", "utf8");
+const replacements = new Map([
+  ["<result-YYYYMMDD-HHMMSS-short-slug>", "result-20261109-090000-template-fixture"],
+  ["<handoff_ref from the Structured Handoff Candidate>", "handoff-20261109-080000-template-fixture"],
+  ["<complete | partial | failed | blocked>", "complete"],
+  ["<none_detected | redacted | contains_sensitive_data | unknown>", "none_detected"],
+  ["<YYYY-MM-DDTHH:MM:SSZ>", "2026-11-09T09:00:00Z"],
+  ["<worker runtime or person>", "fixture-worker"],
+  ["<short result title>", "Approved candidate unit ready for review"],
+  ["<brief outcome summary>", "Prepared the user-approved unmerged candidate unit."],
+  ["<what was actually done>", "Prepared the candidate and checked its diff."],
+  ["<validation that was actually performed>", "Checked the candidate diff against its approved scope."],
+  ["<validation that was requested or expected but not performed, with reason>", "Optional deployment smoke check not run; deployment is outside this unit."],
+  ["- `<validation name>`: `<pass | fail | blocked | not_run>` - `<evidence or reason>`", "- `Optional deployment smoke check`: `not_run` - outside this approved candidate unit"],
+  ["- `<criterion>`: `<met | unmet | partial | blocked>` - `<evidence or reason>`", "- `Approved candidate prepared`: `met` - scoped candidate diff is available for review"],
+  ["<open issue or question>", "Candidate is unmerged; merge is outside this approved completion unit."],
+  ["<recommended next step for the human reviewer>", "Review the candidate and its evidence."],
+]);
+for (const [placeholder, value] of replacements) {
+  if (!text.includes(placeholder)) throw new Error(`template placeholder missing: ${placeholder}`);
+  text = text.split(placeholder).join(value);
+}
+// All unused optional examples are explicitly empty, rather than omitted.
+text = text.replace(/<[^>\n]+>/g, "None");
+text = text.split(/(?=^## )/m).map((section) => {
+  const lines = section.split("\n");
+  const hasContent = lines.some((line) => line.startsWith("- ") && line !== "- `None`");
+  return (hasContent ? lines.filter((line) => line !== "- `None`") : lines).join("\n");
+}).join("");
+fs.writeFileSync(process.argv[2], text);
+NODE
+  expect_valid "$out" "Filled-Current-Template-Complete-Optional-Not-Run"
+  echo "passed: FX-RS-filled-current-template"
+}
+
+fx_source_handoff_reference() {
+  local src="$FIXTURE_ROOT/FX-RS-good-complete-validation-performed.md"
+  local d out
+  d="$(sandbox)"; out="$d/reference.md"
+  expect_valid "$src" "Source-Handoff-Reference-positive"
+
+  mutate_result "$src" "$out" '- `source_handoff_ref`: `handoff-20260720-085000-fixture`' ''
+  expect_invalid "$out" "Source-Handoff-Reference-missing" "Contract Metadata missing source_handoff_ref"
+
+  mutate_result "$src" "$out" '- `source_handoff_ref`: `handoff-20260720-085000-fixture`' '- `source_handoff_ref`: ``'
+  expect_invalid "$out" "Source-Handoff-Reference-empty" "Contract Metadata missing source_handoff_ref"
+
+  mutate_result "$src" "$out" '- `source_handoff_ref`: `handoff-20260720-085000-fixture`' \
+    $'- `source_handoff_ref`: `handoff-20260720-085000-fixture`\n- `source_handoff_ref`: `handoff-other`'
+  expect_invalid "$out" "Source-Handoff-Reference-conflicting" "duplicate Contract Metadata field: source_handoff_ref"
+
+  mutate_result "$src" "$out" '- `source_handoff_ref`: `handoff-20260720-085000-fixture`' \
+    $'- `source_handoff_ref`: `handoff-20260720-085000-fixture`\n<!--\n- `source_handoff_ref`: `handoff-example`\n-->'
+  expect_valid "$out" "Source-Handoff-Reference-comment-example"
+  echo "passed: FX-RS-source-handoff-reference"
+}
+
 # --- run everything ----------------------------------------------------------
 
 require_file "$VALIDATOR"
@@ -207,5 +422,9 @@ fx_scope_deviation
 fx_missing_result
 fx_partial_result
 fx_blocked_result
+fx_ambiguous_result
+fx_source_handoff_reference
+fx_completion_criteria_status
+fx_filled_current_template
 
 echo "all Result Basic fixtures passed"

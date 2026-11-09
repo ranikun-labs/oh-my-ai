@@ -207,7 +207,7 @@ const fixture = JSON.parse(fs.readFileSync(fixturePath, "utf8"));
 assert.equal(fixture.contract, "git-work-preflight-runtime-fixtures-v2");
 assert.deepEqual(
   fixture.scenarios.map(({ id }) => id),
-  ["actual-pushurl-aligned", "canonical-repository-identity", "redirect-alias-repository-identity", "verified-fork-repository-identity", "unrelated-repository-identity", "malformed-feature-branch", "malformed-base-branch", "multiple-pushurls", "canonical-push-remote-split", "local-only-base-tip", "local-only-unique-commit", "canonical-base-push-cache-mismatch", "canonical-pr-collision", "draft-pr-key-order", "merged-pr", "merged-pr-after-base-advanced", "merged-pr-association-mismatch", "merged-pr-feature-tip-advanced", "merged-pr-base-mismatch", "aligned", "local-ahead", "remote-ahead", "diverged", "candidate-ancestor", "expected-canonical-base-mismatch", "github-unavailable", "multiple-prs", "report-newline-injection", "malformed-pr-json", "jira-association-unavailable", "jira-association-conflict", "remote-ahead-local-tip-already-in-base", "jira-association-unavailable-ancestor", "jira-association-matched-ancestor", "jira-association-conflicted-ancestor", "manual-review-ancestor", "stale-cached-feature-remote-ahead", "jira-work-missing-issue-key", "jira-work-valid-issue-key"],
+  ["actual-pushurl-aligned", "canonical-repository-identity", "redirect-alias-repository-identity", "verified-fork-repository-identity", "unrelated-repository-identity", "malformed-feature-branch", "malformed-base-branch", "multiple-pushurls", "canonical-push-remote-split", "local-only-base-tip", "local-only-unique-commit", "canonical-base-push-cache-mismatch", "canonical-pr-collision", "draft-pr-key-order", "merged-pr", "merged-pr-after-base-advanced", "merged-pr-association-mismatch", "merged-pr-feature-tip-advanced", "merged-pr-base-mismatch", "aligned", "tracked-dirty-original", "local-ahead", "remote-ahead", "diverged", "candidate-ancestor", "expected-canonical-base-mismatch", "github-unavailable", "multiple-prs", "report-newline-injection", "malformed-pr-json", "jira-association-unavailable", "jira-association-conflict", "remote-ahead-local-tip-already-in-base", "jira-association-unavailable-ancestor", "jira-association-matched-ancestor", "jira-association-conflicted-ancestor", "manual-review-ancestor", "stale-cached-feature-remote-ahead", "jira-work-missing-issue-key", "jira-work-valid-issue-key"],
 );
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "git-work-preflight-runtime-"));
@@ -219,6 +219,23 @@ assert.ok(systemGit, "system git is required for the disposable fixture reposito
 assert.equal(spawnSync(systemGit, ["init", "-q", repo]).status, 0, "disposable repository creation failed");
 fs.mkdirSync(fakeBin);
 fs.mkdirSync(fakeHome);
+// Fixture-only identity and commit: no user's repository or Git configuration is changed.
+const setupEnv = { ...process.env, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_AUTHOR_NAME: "Fixture Writer", GIT_AUTHOR_EMAIL: "fixture@example.invalid", GIT_COMMITTER_NAME: "Fixture Writer", GIT_COMMITTER_EMAIL: "fixture@example.invalid" };
+function fixtureGit(args) {
+  const result = spawnSync(systemGit, ["-C", repo, ...args], { encoding: "utf8", env: setupEnv });
+  assert.equal(result.status, 0, `fixture Git setup/inspection failed: ${args.join(" ")}: ${result.stderr}`);
+  return result.stdout;
+}
+const dirtySourcePath = path.join(repo, "existing-writer-source.txt");
+const dirtySource = "synthetic Writer unreflected changes must survive\n";
+fs.writeFileSync(dirtySourcePath, "synthetic committed baseline\n");
+fixtureGit(["add", "existing-writer-source.txt"]);
+fixtureGit(["-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "fixture baseline"]);
+fs.writeFileSync(dirtySourcePath, dirtySource);
+const originalHead = fs.readFileSync(path.join(repo, ".git", "HEAD"), "utf8");
+const originalCommit = fixtureGit(["rev-parse", "HEAD"]).trim();
+const originalIndex = fs.readFileSync(path.join(repo, ".git", "index"));
+assert.equal(fixtureGit(["--no-optional-locks", "status", "--short", "--ignored"]), " M existing-writer-source.txt\n", "disposable fixture must contain a real tracked dirty file");
 
 const fakeGit = String.raw`#!/usr/bin/env bash
 set -euo pipefail
@@ -267,6 +284,7 @@ esac
 if [ "$1" = '-C' ]; then shift 2; fi
 command="$1"
 shift
+printf '%s\n' "$command" >> "$PREFLIGHT_GIT_COMMAND_LOG"
 case "$command" in
   rev-parse)
     case "$*" in
@@ -337,7 +355,12 @@ case "$command" in
         ;;
     esac
     ;;
-  status) exit 0 ;;
+  status)
+    if [ "$scenario" = 'tracked-dirty-original' ]; then
+      "$PREFLIGHT_SYSTEM_GIT" --no-optional-locks -C "$repo" status --short --ignored
+    fi
+    exit 0
+    ;;
   branch)
     case "$scenario" in
       expected-canonical-base-mismatch|canonical-push-remote-split|canonical-base-push-cache-mismatch|canonical-pr-collision) exit 0 ;;
@@ -440,12 +463,24 @@ try {
     ];
     if (jiraConsumer && scenario.id !== "jira-work-missing-issue-key") args.push("--issue-key", "RPL-TEST");
     if (scenario.id === "canonical-base-push-cache-mismatch" || scenario.id === "expected-canonical-base-mismatch" || scenario.id === "merged-pr-after-base-advanced") args.push("--expected-base-sha", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    const commandLog = path.join(root, `${scenario.id}.git-commands.log`);
     const result = spawnSync(runtimePath, args, {
       encoding: "utf8",
-      env: { ...process.env, HOME: fakeHome, PATH: `${fakeBin}:${process.env.PATH}`, PREFLIGHT_SCENARIO: scenario.id, PREFLIGHT_REPO: repo },
+      env: { ...process.env, HOME: fakeHome, PATH: `${fakeBin}:${process.env.PATH}`, PREFLIGHT_SCENARIO: scenario.id, PREFLIGHT_REPO: repo, PREFLIGHT_GIT_COMMAND_LOG: commandLog, PREFLIGHT_SYSTEM_GIT: systemGit },
     });
     assert.equal(result.status, scenario.process_exit_code, `${scenario.id}: process exit code`);
     const report = parseReport(result.stdout);
+    // This is a fixture repository, not evidence of any real Writer's custody.
+    assert.equal(fs.readFileSync(dirtySourcePath, "utf8"), dirtySource, `${scenario.id}: original dirty content preserved`);
+    assert.equal(fs.readFileSync(path.join(repo, ".git", "HEAD"), "utf8"), originalHead, `${scenario.id}: original HEAD preserved`);
+    assert.equal(fixtureGit(["rev-parse", "HEAD"]).trim(), originalCommit, `${scenario.id}: original commit preserved`);
+    assert.deepEqual(fs.readFileSync(path.join(repo, ".git", "index")), originalIndex, `${scenario.id}: original index bytes preserved`);
+    const gitCommands = fs.existsSync(commandLog) ? fs.readFileSync(commandLog, "utf8").trim().split("\n") : [];
+    const mutatingCommands = new Set(["switch", "checkout", "reset", "restore", "stash", "clean", "merge", "rebase", "pull", "push", "commit", "update-ref"]);
+    assert.deepEqual(gitCommands.filter(command => mutatingCommands.has(command)), [], `${scenario.id}: no mutating Git invocation`);
+    if (scenario.id === "tracked-dirty-original") {
+      assert.equal(report.get("Tracked Status"), "COUNT=1", "real disposable tracked dirty state was observed through the fixture transport");
+    }
     for (const [field, expected] of Object.entries({
       "Preflight Result": scenario.preflight_result,
       Blocking: scenario.blocking,
