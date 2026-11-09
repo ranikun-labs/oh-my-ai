@@ -131,6 +131,7 @@ fx_files_read_changed_separation() {
   if has_exact_files_read_changed_headings "$duplicate_out"; then
     fail "Files-Read-Changed-negative: accepted a duplicate Files Read heading"
   fi
+  expect_invalid "$duplicate_out" "Files-Read-Changed-duplicate-validator" "duplicate required heading: ## Files Read"
   echo "passed: FX-RS-files-read-changed-separation"
 }
 
@@ -193,6 +194,111 @@ fx_blocked_result() {
   echo "passed: FX-RS-blocked-result"
 }
 
+# --- 8. Ambiguous sections and metadata --------------------------------------
+
+fx_ambiguous_result() {
+  local src="$FIXTURE_ROOT/FX-RS-good-complete-validation-performed.md"
+  local d out
+  d="$(sandbox)"; out="$d/ambiguous.md"
+
+  # A later empty section must not erase an earlier reported deviation.
+  mutate_result "$src" "$out" "## Scope Deviations" \
+    $'## Scope Deviations\n\n- Modified an out-of-scope file.\n\n## Scope Deviations'
+  expect_invalid "$out" "Scope-Deviations-duplicate" "duplicate required heading: ## Scope Deviations"
+
+  mutate_result "$src" "$out" "## Contract Metadata" \
+    $'## Contract Metadata\n\n- `execution_status`: `blocked`\n\n## Contract Metadata'
+  expect_invalid "$out" "Contract-Metadata-duplicate" "duplicate required heading: ## Contract Metadata"
+
+  mutate_result "$src" "$out" '- `execution_status`: `complete`' \
+    $'- `execution_status`: `complete`\n- `execution_status`: `blocked`'
+  expect_invalid "$out" "Execution-Status-conflict" "duplicate Contract Metadata field: execution_status"
+
+  mutate_result "$src" "$out" '- `receipt_status`: `received`' \
+    $'- `receipt_status`: `received`\n- `receipt_status`: `missing`'
+  expect_invalid "$out" "Receipt-Status-conflict" "duplicate Contract Metadata field: receipt_status"
+
+  mutate_result "$src" "$out" '- `created_by`: `fixture-worker`' \
+    $'- `created_by`: `fixture-worker`\n- `created_by`: `different-worker`'
+  expect_invalid "$out" "Created-By-conflict" "duplicate Contract Metadata field: created_by"
+
+  mutate_result "$src" "$out" '- `execution_status`: `complete`' \
+    $'- `execution_status`: `complete`\n- `execution_status`: `complete`'
+  expect_invalid "$out" "Execution-Status-identical-duplicate" "duplicate Contract Metadata field: execution_status"
+
+  # Text that mentions a field or heading in ordinary prose is not a duplicate.
+  mutate_result "$src" "$out" "## Summary" \
+    $'## Summary\n\nThe earlier label was `execution_status`: `blocked`; ## Summary is the section name.'
+  expect_valid "$out" "Status-And-Heading-prose-mention"
+
+  # Examples and comments are not additional visible sections or claims.
+  mutate_result "$src" "$out" "## Summary" \
+    $'## Summary\n\n```markdown\n## Summary\n```'
+  expect_valid "$out" "Fenced-Required-Heading-example"
+
+  mutate_result "$src" "$out" '- `execution_status`: `complete`' \
+    $'- `execution_status`: `complete`\n<!--\n- `execution_status`: `blocked`\n-->'
+  expect_valid "$out" "Commented-Execution-Status-example"
+
+  mutate_result "$src" "$out" '- `execution_status`: `complete`' \
+    $'- `execution_status`: `complete`\n```markdown\n- `execution_status`: `blocked`\n```'
+  expect_valid "$out" "Fenced-Execution-Status-example"
+
+  mutate_result "$src" "$out" "## Summary" \
+    $'## Summary\n\n<!--\n## Summary\n-->'
+  expect_valid "$out" "Commented-Required-Heading-example"
+
+  # Result bodies retain code-formatted evidence and deviations as data.
+  mutate_result "$src" "$out" \
+    '- `bash -n README.md` is not applicable to Markdown; visually diffed the single-line change against the surrounding install steps.' \
+    $'```text\nObserved command result: validation passed.\n```'
+  expect_valid "$out" "Fenced-Validation-Performed-evidence"
+
+  mutate_result "$src" "$out" \
+    '- `bash -n README.md` is not applicable to Markdown; visually diffed the single-line change against the surrounding install steps.' \
+    '    Observed command result: validation passed.'
+  expect_valid "$out" "Indented-Validation-Performed-evidence"
+
+  mutate_result "$src" "$out" \
+    '- `bash -n README.md` is not applicable to Markdown; visually diffed the single-line change against the surrounding install steps.' \
+    '<pre>Observed command result: validation passed.</pre>'
+  expect_valid "$out" "Pre-Validation-Performed-evidence"
+
+  mutate_result "$src" "$out" $'## Scope Deviations\n\n- `None`' \
+    $'## Scope Deviations\n\n```text\nModified an out-of-scope file.\n```'
+  expect_invalid "$out" "Fenced-Scope-Deviation-preserved" "complete but Scope Deviations is non-empty"
+
+  mutate_result "$src" "$out" $'## Scope Deviations\n\n- `None`' \
+    $'## Scope Deviations\n\n    Modified an out-of-scope file.'
+  expect_invalid "$out" "Indented-Scope-Deviation-preserved" "complete but Scope Deviations is non-empty"
+
+  mutate_result "$src" "$out" $'## Scope Deviations\n\n- `None`' \
+    $'## Scope Deviations\n\n<pre>Modified an out-of-scope file.</pre>'
+  expect_invalid "$out" "Pre-Scope-Deviation-preserved" "complete but Scope Deviations is non-empty"
+
+  mutate_result "$src" "$out" '- `execution_status`: `complete`' \
+    $'- `execution_status`: `complete`\n-\n`execution_status`: `blocked`'
+  expect_invalid "$out" "Multiline-Execution-Status-conflict" "duplicate Contract Metadata field: execution_status"
+
+  # A heading containing only a comment must not create a new empty section.
+  mutate_result "$src" "$out" "## Summary" \
+    $'## Summary\n\n## <!-- example-only heading -->'
+  expect_valid "$out" "Comment-Only-Heading-example"
+
+  mutate_result "$src" "$out" "## Summary" \
+    $'## Summary\n\nRESULT_SECTION_LINE_ and RESULT_SECTION_LINE__ are ordinary user data.'
+  expect_valid "$out" "Heading-Marker-input-collision"
+
+  mutate_result "$src" "$out" "## Files Read" \
+    $'```markdown\n## Files Read\n```\n\n## Files Read'
+  expect_valid "$out" "Hidden-Heading-before-Visible-Heading"
+
+  mutate_result "$src" "$out" "## Summary" \
+    $'## Summary\n\n```markdown\n## Summary\n```\n\n## Summary'
+  expect_invalid "$out" "Visible-Duplicate-after-Hidden-Heading" "duplicate required heading: ## Summary"
+  echo "passed: FX-RS-ambiguous-result"
+}
+
 # --- run everything ----------------------------------------------------------
 
 require_file "$VALIDATOR"
@@ -207,5 +313,6 @@ fx_scope_deviation
 fx_missing_result
 fx_partial_result
 fx_blocked_result
+fx_ambiguous_result
 
 echo "all Result Basic fixtures passed"

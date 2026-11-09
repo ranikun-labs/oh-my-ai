@@ -36,9 +36,10 @@ The compatibility notes above use these pinned official references:
 
 ## Next Validation
 
-1. Resolve the exact Codex Local and Cloud surfaces and their supported Source/catalog readers; compare each loaded Source revision with the canonical commit above.
-2. Validate the applicable profile with its pinned, source-reviewed client tooling only after the target environment and approval are known. Do not download, execute, or install tooling from this profile.
-3. In each confirmed client, verify discovery separately from an explicit `$dev-main-flow` call and read-only status/quoted controls. Keep the two invocation policies independent.
-4. Resolve the canonical F4 and F1 checker dependencies in that same client before claiming full workflow readiness. Until then, report the dependency limits and use only the safe read-only subset.
+1. Identify the exact client, mode and supported Source/catalog reader. Preserve the snapshot above as historical evidence; obtain the currently approved canonical revision for the next check rather than assuming this snapshot or a default branch is the client's installed Source.
+2. Inspect the client-reported loaded Source path and revision when the client exposes them. Compare that file with the intended canonical Skill and descriptor. A matching disk file is Source evidence; without a client loading observation, record actual loading as `UNKNOWN`. A supported source reader can establish `MANUAL_READ_APPLY`, not Native loading.
+3. Use the existing [find-skills workflow](../find-skills/SKILL.md) for discovery and the pinned official Creator/specification references above for compatible authoring and validation. Record the exact tooling revision, applicable client profile and actual validation result. This procedure itself does not authorize downloading, executing or installing tooling, and a format-validator result is not discovery evidence. Preserve both explicit-only policies; do not remove the canonical Claude flag to silence a client-format warning.
+4. In each confirmed client, observe catalog discovery separately from an explicit read-only `$dev-main-flow` status call and quoted/status controls. Retain the tested Source revision and actual result for each observation; a source reader, descriptor, generated link or previous session's success cannot substitute for a Native call in this client.
+5. Resolve F4 and F1 checker dependencies through that same client or an approved source reader and record their revisions before claiming full workflow readiness. If only manual use is proven, use that approved subset and label it accordingly. Installation, invocation and end-to-end usability remain separate results. Use the [operations verification reference](../../docs/dev-ai-operations-verification.md) for the resulting behavior checks.
 
 No client installation, UI upload, marketplace publication, Native invocation, or remote Source change was performed for this profile.
