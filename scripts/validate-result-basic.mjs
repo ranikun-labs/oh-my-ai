@@ -107,7 +107,7 @@ function validate(markdown) {
   ).sections.get("Contract Metadata") ?? "";
   // These fields drive validation decisions. Never silently choose one of
   // several reported values, even when the repeated values happen to agree.
-  for (const name of ["execution_status", "receipt_status", "created_by"]) {
+  for (const name of ["execution_status", "receipt_status", "created_by", "source_handoff_ref"]) {
     if (metadataFields(meta, name).length > 1) {
       errors.push(`duplicate Contract Metadata field: ${name}`);
     }
@@ -147,6 +147,27 @@ function validate(markdown) {
     if (!scopeDeviationsEmpty) {
       errors.push("execution_status=complete but Scope Deviations is non-empty (Contract §23: complete requires no Material Scope Deviation)");
     }
+    // Owner decision: these are the required criteria of the currently
+    // approved completion unit. Do not infer extra criteria from validation
+    // failures, later deployment stages, or the fact that a PR is unmerged.
+    // Reuse the visible scanner so comments/examples are not status claims;
+    // keep the original bodies intact for the other evidence checks.
+    const criteria = splitVisibleSections(
+      `## Completion Criteria Results\n${sections["Completion Criteria Results"]}`,
+    ).sections.get("Completion Criteria Results") ?? "";
+    const entries = criteria.split("\n").map((line) => line.trim()).filter(Boolean);
+    if (entries.length === 0 || isNone(criteria)) {
+      errors.push("execution_status=complete requires explicit met Completion Criteria Results for the current approved completion unit");
+    } else {
+      for (const entry of entries) {
+        const criterion = /^-\s+`([^`]+)`:\s*`(met|unmet|partial|blocked)`\s*-\s*\S.*$/.exec(entry);
+        if (!criterion) {
+          errors.push("execution_status=complete requires Completion Criteria Results entries in the template format with status met (unrecognized criterion or status)");
+        } else if (criterion[2] !== "met") {
+          errors.push(`execution_status=complete contradicts Completion Criteria Results status=${criterion[2]} for ${criterion[1]}`);
+        }
+      }
+    }
   }
 
   if (executionStatus === "partial") {
@@ -172,6 +193,12 @@ function validate(markdown) {
 
   const createdBy = field(meta, "created_by");
   if (!createdBy) errors.push("Contract Metadata missing created_by");
+
+  // The existing manual template requires the Handoff reference. A returned
+  // Result without that reference cannot identify the task it reports on;
+  // this checks presence only, not task correlation or Handoff acceptance.
+  const sourceHandoffRef = field(meta, "source_handoff_ref");
+  if (!sourceHandoffRef) errors.push("Contract Metadata missing source_handoff_ref");
 
   const receiptStatus = field(meta, "receipt_status");
   if (receiptStatus !== "received") {
