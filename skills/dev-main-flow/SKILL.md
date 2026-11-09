@@ -57,6 +57,8 @@ Where update authority exists, batch ordinary PR-body, Jira, and F1 summary upda
 
 Do not create an issue by default, transition an issue to Done without proven acceptance, change assignee or ownership, or update unspecified fields. Treat any role/ownership metadata separately from implementation and require its own explicit authority. A missing Jira connector or policy check blocks only that Jira mutation; it does not block independent read-only review or approved repository work.
 
+For an existing Jira or Confluence record proposal or authorized update, compose [work-record-sync](../work-record-sync/SKILL.md) for its target, approval, concurrency, write, and readback gates. The reference grants no mutation authority and does not permit record creation.
+
 ### 4. Enter the existing F4 playbook without weakening its gates
 
 The full-wrapper request above is the explicit request to apply the existing adaptive-goal-closure playbook, so no second prompt is needed. Read the actual dependency through supported Skill discovery/catalog or an approved source reader; retain its source URI and revision and follow its current contract. If Native Skill discovery or Apply is unavailable but the approved source is readable and the existing authority permits manual use, label that evidence `MANUAL_READ_APPLY`; never report it as Native. Do not treat the copy in this Skill or a manually remembered procedure as proof that the dependency was loaded. If the source or required authority cannot be verified, mark only the F4 execution stage `BLOCKED/NOT_RUN`, report the actual limit and safe alternatives, and continue independent read-only review or other approved READY work.

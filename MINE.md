@@ -22,6 +22,7 @@
 - `skills/local-search/` — rg/find와 Jikji의 역할을 분리하는 로컬 파일·문서 탐색 플레이북
 - `skills/project-context/` — 세션 간 설계 배경과 작업 상태를 이어주는 컨텍스트 관리
 - `skills/release-note/` — Optional Jira/Confluence 릴리즈 노트 workflow
+- `skills/work-record-sync/` — 기존 Jira·Confluence 기록을 승인·동시성 확인·범위 읽기 후 제한적으로 갱신
 - `skills/work-start/` — 작업 시작 시 외부 맥락 회수 → repo 컨텍스트 수집 → 중간 점검 → 컨펌의 conversation-native 플레이북
 - `skills/worklog-note/` — Optional Notion 업무일지 정리 workflow
 
