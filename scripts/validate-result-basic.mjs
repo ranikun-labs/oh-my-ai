@@ -12,6 +12,7 @@
 // well-formed and does not contradict itself.
 
 import fs from "node:fs";
+import { splitSections as splitVisibleSections } from "./f1-report-advisory.mjs";
 
 const REQUIRED_HEADINGS = [
   "Contract Metadata",
@@ -41,22 +42,35 @@ const REQUIRED_HEADINGS = [
 
 const EXECUTION_STATUS_VALUES = new Set(["complete", "partial", "failed", "blocked"]);
 
-function splitSections(markdown) {
+function splitSections(markdown, errors = []) {
+  // Use the existing scanner to locate visible headings, but slice Result
+  // bodies from the original text: code blocks can contain actual evidence
+  // or deviations and must not disappear before cross-field validation.
   const lines = markdown.split("\n");
-  const sections = {};
-  let current = null;
-  let buf = [];
-  for (const line of lines) {
-    const m = /^##\s+(.+?)\s*$/.exec(line);
-    if (m) {
-      if (current) sections[current] = buf.join("\n").trim();
-      current = m[1];
-      buf = [];
-    } else if (current) {
-      buf.push(line);
+  let marker = "RESULT_SECTION_LINE_";
+  while (markdown.includes(marker)) marker += "_";
+  const marked = lines.map((line, index) => line.replace(
+    /^( {0,3}##[ \t]+)(.*)$/,
+    (_, prefix, heading) => `${prefix}${marker}${index}__${heading}`,
+  )).join("\n");
+  const boundaries = [];
+  for (const heading of splitVisibleSections(marked).sections.keys()) {
+    const match = new RegExp(`^${marker}(\\d+)__(.*)$`).exec(heading);
+    if (match && match[2].trim()) {
+      boundaries.push({ index: Number(match[1]), heading: match[2].trim() });
     }
   }
-  if (current) sections[current] = buf.join("\n").trim();
+  const sections = Object.create(null);
+  for (const [index, boundary] of boundaries.entries()) {
+    if (Object.hasOwn(sections, boundary.heading)) {
+      if (REQUIRED_HEADINGS.includes(boundary.heading)) {
+        errors.push(`duplicate required heading: ## ${boundary.heading}`);
+      }
+      continue;
+    }
+    const end = boundaries[index + 1]?.index ?? lines.length;
+    sections[boundary.heading] = lines.slice(boundary.index + 1, end).join("\n").trim();
+  }
   return sections;
 }
 
@@ -70,21 +84,35 @@ function isNone(body) {
 }
 
 function field(metadataBody, name) {
-  const re = new RegExp(`^-\\s*\`${name}\`:\\s*\`?([^\`\\n]*)\`?\\s*$`, "m");
-  const m = re.exec(metadataBody);
+  const m = metadataFields(metadataBody, name)[0];
   return m ? m[1].trim() : null;
+}
+
+function metadataFields(metadataBody, name) {
+  const re = new RegExp(`^-\\s*\`${name}\`:\\s*\`?([^\`\\n]*)\`?\\s*$`, "gm");
+  return [...metadataBody.matchAll(re)];
 }
 
 function validate(markdown) {
   const errors = [];
-  const sections = splitSections(markdown);
+  const sections = splitSections(markdown, errors);
 
   for (const heading of REQUIRED_HEADINGS) {
     if (!(heading in sections)) errors.push(`missing required heading: ## ${heading}`);
   }
   if (errors.length > 0) return errors; // structural failure; stop here
 
-  const meta = sections["Contract Metadata"];
+  const meta = splitVisibleSections(
+    `## Contract Metadata\n${sections["Contract Metadata"]}`,
+  ).sections.get("Contract Metadata") ?? "";
+  // These fields drive validation decisions. Never silently choose one of
+  // several reported values, even when the repeated values happen to agree.
+  for (const name of ["execution_status", "receipt_status", "created_by"]) {
+    if (metadataFields(meta, name).length > 1) {
+      errors.push(`duplicate Contract Metadata field: ${name}`);
+    }
+  }
+  if (errors.length > 0) return errors;
   const executionStatus = field(meta, "execution_status");
   if (!EXECUTION_STATUS_VALUES.has(executionStatus)) {
     errors.push(`execution_status must be one of complete/partial/failed/blocked, got: ${executionStatus}`);
