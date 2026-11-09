@@ -64,6 +64,24 @@ function expectInvalid(label, markdown, expectedMessage) {
 const ok = validateF1Report(validReport);
 assert.equal(ok.valid, true, ok.errors.join("; "));
 
+const conciseHumanSummary = `## 결과
+서비스별 F1 결과와 이번 변경을 요약한다.
+
+## 검증 및 남은 범위
+각 Gate의 상태와 남은 확인 사항을 요약한다.
+
+## 다음 행동
+목표와 첫 행동을 제시한다.
+
+## 결정 요청
+필요한 Owner 결정의 범위를 제시한다.
+`;
+expectInvalid(
+  "summary-only human F1 is not a canonical checker PASS",
+  conciseHumanSummary,
+  "missing required section: ## 문제"
+);
+
 const inlineCommandEvidence = validReport.replace(
   /- Native Test:[^\n]*/,
   "- Native Test: PASS — `node scripts/test-f1-report-advisory.mjs`"
@@ -536,7 +554,7 @@ const inlineValueResult = validateF1Report(inlineValueService);
 assert.equal(inlineValueResult.valid, true, inlineValueResult.errors.join("; "));
 console.log("f1 service report field fixtures passed: " + (serviceContractFields.length * 2 + hiddenFieldCases.length + 14) + "/46");
 
-console.log("f1 report advisory fixtures passed: 48/48");
+console.log("f1 report advisory fixtures passed: 49/49");
 
 
 // Preserve the original report pattern fixtures. Current master’s actual
