@@ -537,6 +537,56 @@
       }
     },
     {
+      "name": "work-record-sync",
+      "path": "skills/work-record-sync/SKILL.md",
+      "description": "Prepare and, only within existing approved scope, apply a minimal update to an existing Jira issue or Confluence page with current-record checks and scoped readback. Never creates records or writes by default.",
+      "summary": "기존 Jira·Confluence 기록을 승인·동시성 확인·범위 읽기 후 제한적으로 갱신",
+      "routing": {
+        "visibility": "contextual",
+        "risk_level": "medium",
+        "task_types": [
+          "jira_existing_record_update",
+          "confluence_existing_record_update"
+        ],
+        "triggers": [
+          {
+            "kind": "keyword",
+            "values": [
+              "update existing Jira issue",
+              "update existing Confluence page",
+              "기존 Jira 이슈 수정",
+              "기존 Confluence 페이지 수정"
+            ]
+          },
+          {
+            "kind": "intent",
+            "values": [
+              "update_existing_jira_record",
+              "update_existing_confluence_record"
+            ]
+          }
+        ],
+        "keywords": {
+          "ko": [
+            "기존 Jira 기록 업데이트",
+            "기존 Confluence 페이지 반영",
+            "기존 기록 수정"
+          ],
+          "en": [
+            "update existing Jira record",
+            "update existing Confluence record"
+          ]
+        },
+        "use_when": [
+          "Propose or apply a scoped change to one existing Jira issue or Confluence page."
+        ],
+        "do_not_use_when": [
+          "Create a new Jira issue or Confluence page; use the existing creation workflow.",
+          "Ask a general Jira or Confluence question without an existing-record update request."
+        ]
+      }
+    },
+    {
       "name": "worklog-note",
       "path": "skills/worklog-note/SKILL.md",
       "description": "Optional workflow skill for Notion-style worklogs, Todo roadmaps, and meeting notes. Use only when the user keeps worklogs in Notion or a similar workspace and wants verbose entries condensed for scanning.",
