@@ -299,6 +299,115 @@ fx_ambiguous_result() {
   echo "passed: FX-RS-ambiguous-result"
 }
 
+fx_completion_criteria_status() {
+  local src="$FIXTURE_ROOT/FX-RS-good-complete-validation-performed.md"
+  local d out status
+  d="$(sandbox)"; out="$d/criteria.md"
+  expect_valid "$src" "Complete-All-Criteria-Met"
+
+  for status in unmet partial blocked; do
+    mutate_result "$src" "$out" '`Typo corrected`: `met`' "\`Typo corrected\`: \`$status\`"
+    expect_invalid "$out" "Complete-Criterion-$status" "contradicts Completion Criteria Results status=$status"
+  done
+
+  for status in unknown not_met passed; do
+    mutate_result "$src" "$out" '`Typo corrected`: `met`' "\`Typo corrected\`: \`$status\`"
+    expect_invalid "$out" "Complete-Criterion-Unknown-$status" "unrecognized criterion or status"
+  done
+
+  mutate_result "$src" "$out" '- `Typo corrected`: `met` - verified by grep' '- Typo corrected: complete'
+  expect_invalid "$out" "Complete-Criterion-Malformed" "unrecognized criterion or status"
+  mutate_result "$src" "$out" '- `Typo corrected`: `met` - verified by grep' '- `None`'
+  expect_invalid "$out" "Complete-Criteria-Empty" "requires explicit met Completion Criteria Results"
+
+  expect_valid "$FIXTURE_ROOT/FX-RS-good-partial-validation-not-performed.md" "Partial-Criterion-Unmet"
+
+  mutate_result "$src" "$out" $'## Validation Not Performed\n\n- `None`' \
+    $'## Validation Not Performed\n\n- Optional deployment smoke check was not requested for this unit.'
+  mutate_result "$out" "$out" '## Validation Results' \
+    $'## Validation Results\n\n- `Optional deployment smoke check`: `not_run` - outside this approved unit'
+  expect_valid "$out" "Complete-Optional-Validation-Not-Run"
+
+  mutate_result "$src" "$out" '- `Typo corrected`: `met` - verified by grep' \
+    '- `User-approved candidate ready for review`: `met` - candidate diff and local checks available; merge is a later unit'
+  mutate_result "$out" "$out" $'## Open Issues\n\n- `None`' \
+    $'## Open Issues\n\n- PR is unmerged; merge is outside this user-approved candidate completion unit.'
+  expect_valid "$out" "Complete-Unmerged-Candidate-Own-AC-Met"
+
+  mutate_result "$src" "$out" '## Completion Criteria Results' \
+    $'## Completion Criteria Results\n\n<!--\n- `Example criterion`: `unmet` - example only\n-->\n\n```markdown\n- `Example criterion`: `blocked` - example only\n```'
+  expect_valid "$out" "Complete-Criteria-Comment-And-Fenced-Examples"
+
+  mutate_result "$src" "$out" '- `Typo corrected`: `met` - verified by grep' \
+    $'```markdown\n- `Typo corrected`: `met` - example only\n```'
+  expect_invalid "$out" "Complete-Only-Fenced-Criteria" "requires explicit met Completion Criteria Results"
+  echo "passed: FX-RS-completion-criteria-status"
+}
+
+fx_filled_current_template() {
+  local d out
+  d="$(sandbox)"; out="$d/filled-template.md"
+  # Fill the shipped template itself, retaining its prose. Replacing whole
+  # sections with old fixtures would hide template/parser incompatibilities.
+  node - "$out" <<'NODE'
+const fs = require("fs");
+let text = fs.readFileSync("templates/result-basic.md", "utf8");
+const replacements = new Map([
+  ["<result-YYYYMMDD-HHMMSS-short-slug>", "result-20261109-090000-template-fixture"],
+  ["<handoff_ref from the Structured Handoff Candidate>", "handoff-20261109-080000-template-fixture"],
+  ["<complete | partial | failed | blocked>", "complete"],
+  ["<none_detected | redacted | contains_sensitive_data | unknown>", "none_detected"],
+  ["<YYYY-MM-DDTHH:MM:SSZ>", "2026-11-09T09:00:00Z"],
+  ["<worker runtime or person>", "fixture-worker"],
+  ["<short result title>", "Approved candidate unit ready for review"],
+  ["<brief outcome summary>", "Prepared the user-approved unmerged candidate unit."],
+  ["<what was actually done>", "Prepared the candidate and checked its diff."],
+  ["<validation that was actually performed>", "Checked the candidate diff against its approved scope."],
+  ["<validation that was requested or expected but not performed, with reason>", "Optional deployment smoke check not run; deployment is outside this unit."],
+  ["- `<validation name>`: `<pass | fail | blocked | not_run>` - `<evidence or reason>`", "- `Optional deployment smoke check`: `not_run` - outside this approved candidate unit"],
+  ["- `<criterion>`: `<met | unmet | partial | blocked>` - `<evidence or reason>`", "- `Approved candidate prepared`: `met` - scoped candidate diff is available for review"],
+  ["<open issue or question>", "Candidate is unmerged; merge is outside this approved completion unit."],
+  ["<recommended next step for the human reviewer>", "Review the candidate and its evidence."],
+]);
+for (const [placeholder, value] of replacements) {
+  if (!text.includes(placeholder)) throw new Error(`template placeholder missing: ${placeholder}`);
+  text = text.split(placeholder).join(value);
+}
+// All unused optional examples are explicitly empty, rather than omitted.
+text = text.replace(/<[^>\n]+>/g, "None");
+text = text.split(/(?=^## )/m).map((section) => {
+  const lines = section.split("\n");
+  const hasContent = lines.some((line) => line.startsWith("- ") && line !== "- `None`");
+  return (hasContent ? lines.filter((line) => line !== "- `None`") : lines).join("\n");
+}).join("");
+fs.writeFileSync(process.argv[2], text);
+NODE
+  expect_valid "$out" "Filled-Current-Template-Complete-Optional-Not-Run"
+  echo "passed: FX-RS-filled-current-template"
+}
+
+fx_source_handoff_reference() {
+  local src="$FIXTURE_ROOT/FX-RS-good-complete-validation-performed.md"
+  local d out
+  d="$(sandbox)"; out="$d/reference.md"
+  expect_valid "$src" "Source-Handoff-Reference-positive"
+
+  mutate_result "$src" "$out" '- `source_handoff_ref`: `handoff-20260720-085000-fixture`' ''
+  expect_invalid "$out" "Source-Handoff-Reference-missing" "Contract Metadata missing source_handoff_ref"
+
+  mutate_result "$src" "$out" '- `source_handoff_ref`: `handoff-20260720-085000-fixture`' '- `source_handoff_ref`: ``'
+  expect_invalid "$out" "Source-Handoff-Reference-empty" "Contract Metadata missing source_handoff_ref"
+
+  mutate_result "$src" "$out" '- `source_handoff_ref`: `handoff-20260720-085000-fixture`' \
+    $'- `source_handoff_ref`: `handoff-20260720-085000-fixture`\n- `source_handoff_ref`: `handoff-other`'
+  expect_invalid "$out" "Source-Handoff-Reference-conflicting" "duplicate Contract Metadata field: source_handoff_ref"
+
+  mutate_result "$src" "$out" '- `source_handoff_ref`: `handoff-20260720-085000-fixture`' \
+    $'- `source_handoff_ref`: `handoff-20260720-085000-fixture`\n<!--\n- `source_handoff_ref`: `handoff-example`\n-->'
+  expect_valid "$out" "Source-Handoff-Reference-comment-example"
+  echo "passed: FX-RS-source-handoff-reference"
+}
+
 # --- run everything ----------------------------------------------------------
 
 require_file "$VALIDATOR"
@@ -314,5 +423,8 @@ fx_missing_result
 fx_partial_result
 fx_blocked_result
 fx_ambiguous_result
+fx_source_handoff_reference
+fx_completion_criteria_status
+fx_filled_current_template
 
 echo "all Result Basic fixtures passed"

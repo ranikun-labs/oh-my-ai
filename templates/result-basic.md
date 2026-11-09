@@ -8,6 +8,10 @@ Do not use this template as Managed Result Return, a Result Channel, automatic r
 
 If a field has no content, write `None`. Do not omit required fields.
 
+Every entry is a required criterion of the current approved completion unit referenced by `source_handoff_ref`. Report only that unit's approved AC and DoD. `execution_status: complete` requires every entry to be `met`; use the exact row format below, with evidence or a reason. An empty criteria section, unknown states, or malformed rows cannot support a complete claim. Comments and fenced examples do not count as criterion rows. The structural validator does not establish that every approved Handoff criterion was included.
+
+Keep optional checks and later work in Validation Results, Validation Not Performed, or Open Issues. Do not automatically add integration, deployment, or merge requirements. A user-approved unmerged candidate completion unit can be complete when its own AC and DoD are met. Treat an exclusion as valid only when the existing contract supports it. A reference or evidence link alone does not establish approval, scope agreement, or truth; Human Review still checks those claims against the approved Handoff.
+
 ## Contract Metadata
 
 - `schema_version`: `1.0`
