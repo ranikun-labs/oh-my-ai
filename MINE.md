@@ -12,6 +12,7 @@
 - `skills/completion-notify/` — Codex·Claude Turn 완료 알림을 opt-in으로 안전하게 설치·점검·제거하는 로컬 통합
 - `skills/daily-report/` — Optional Slack/Notion 일일보고 workflow
 - `skills/dev-main-flow/` — 기존 개발 기능·승인·실행·범용 인계·서비스별 보고를 연결하는 임시 진입 안내
+- `skills/engineering-communication-ko/` — 개발 결과를 사용자 관점과 검증 근거 중심으로 한국어 보고
 - `skills/execution-recovery/` — 도구·권한·샌드박스 장애의 재시도 폭주를 차단하고 안전하게 대피
 - `skills/git-work-preflight/` — Git Mutation 전 공통으로 소비하는 읽기 전용 Repository 안전 Gate
 - `skills/handoff-prompt/` — 세션 전환 시 다음 AI 세션에 붙여넣을 handoff prompt를 사람이 직접 작성하도록 안내
