@@ -1,0 +1,7 @@
+interface:
+  display_name: "Adaptive Goal Closure"
+  short_description: "Continue an approved objective with bounded F4 execution"
+  default_prompt: 'Use $adaptive-goal-closure for the approved objective; apply the invoked SKILL.md procedure, and distinguish actual runtime activation from manual file-read fallback.'
+
+policy:
+  allow_implicit_invocation: false
