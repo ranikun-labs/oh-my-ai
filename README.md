@@ -63,6 +63,14 @@ make install-shared
 make doctor-strict
 ```
 
+### Spec to Implementation Skill
+
+`spec-to-implementation` guides substantial feature and architecture work from requirements and acceptance criteria through Owner approval, implementation, independent review, and a PR gate. It is not intended for simple questions or small fixes.
+
+- **Codex Cloud:** the repository exposes it at `.agents/skills/spec-to-implementation`, linked to the canonical `skills/spec-to-implementation/SKILL.md`.
+- **Codex Local:** `make install-shared` links it at `~/.agents/skills/spec-to-implementation`; `make doctor-strict` checks the installed path. Existing user-owned skill paths are preserved and reported as conflicts.
+- **ChatGPT Web:** the repository Skill is not automatically loaded. Open the Skill file and paste its “ChatGPT Web 수동 대체 흐름” prompt when needed.
+
 ### Optional local completion notifications (macOS first)
 
 The completion notification management commands (`install-completion-notify`,

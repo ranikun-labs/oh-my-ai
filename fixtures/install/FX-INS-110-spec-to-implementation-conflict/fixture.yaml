@@ -1,0 +1,10 @@
+fixture_id: FX-INS-110
+title: Codex spec-to-implementation skill conflicts preserve user-owned files
+type: install
+subject: codex-skill-install
+expected:
+  conflict_fails_install: true
+  user_owned_skill_preserved: true
+status:
+  fixture_definition: active
+  runner: scripts/test-install-fixtures.sh
