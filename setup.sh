@@ -12,12 +12,16 @@ DRY_RUN=0
 STRICT=0
 DOCTOR_FAIL_COUNT=0
 INSTALL_FAILURE=0
+DEV_MAIN_WITH_HANDOFF=0
+DEV_MAIN_WITH_RECORD_SYNC=0
 
 usage() {
   cat <<'EOF'
 usage:
   setup.sh --doctor [--strict]
+  setup.sh --doctor-dev-main-flow
   setup.sh --install-shared [--dry-run]
+  setup.sh --install-dev-main-flow [--with-handoff] [--with-record-sync] [--dry-run]
   setup.sh --init-profile --profile <name> [--dry-run]
   setup.sh --install-profile --profile <name> [--dry-run]
 
@@ -40,7 +44,11 @@ EOF
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --doctor) MODE="doctor" ;;
+    --doctor-dev-main-flow) MODE="doctor-dev-main-flow" ;;
     --install-shared) MODE="install-shared" ;;
+    --install-dev-main-flow) MODE="install-dev-main-flow" ;;
+    --with-handoff) DEV_MAIN_WITH_HANDOFF=1 ;;
+    --with-record-sync) DEV_MAIN_WITH_RECORD_SYNC=1 ;;
     --init-profile) MODE="init-profile" ;;
     --install-profile) MODE="install-profile" ;;
     --profile) shift; PROFILE_NAME="${1:-}" ;;
@@ -51,6 +59,11 @@ while [ "$#" -gt 0 ]; do
   esac
   shift
 done
+
+if { [ "$DEV_MAIN_WITH_HANDOFF" -eq 1 ] || [ "$DEV_MAIN_WITH_RECORD_SYNC" -eq 1 ]; } && [ "$MODE" != "install-dev-main-flow" ]; then
+  echo "--with-handoff and --with-record-sync require --install-dev-main-flow" >&2
+  exit 2
+fi
 
 say() { printf '%s\n' "$*"; }
 run() {
@@ -525,6 +538,188 @@ install_shared() {
   say "Codex trust: unverified — review the installed hook in Codex /hooks before relying on execution."
 }
 
+dev_main_flow_root_status() {
+  if [ -L "$AGENT_DIR" ]; then
+    printf '%s\n' "conflict: AGENT_DIR is a symlink ($AGENT_DIR)"
+  elif [ -e "$AGENT_DIR" ] && [ ! -d "$AGENT_DIR" ]; then
+    printf '%s\n' "conflict: AGENT_DIR is not a directory ($AGENT_DIR)"
+  elif [ -L "$AGENT_DIR/skills" ]; then
+    printf '%s\n' "conflict: skills path is a symlink ($AGENT_DIR/skills)"
+  elif [ -e "$AGENT_DIR/skills" ] && [ ! -d "$AGENT_DIR/skills" ]; then
+    printf '%s\n' "conflict: skills path is not a directory ($AGENT_DIR/skills)"
+  else
+    printf '%s\n' "safe"
+  fi
+}
+
+dev_main_flow_skill_status() {
+  skill_name="$1"
+  source_path="$REPO/skills/$skill_name"
+  target_path="$AGENT_DIR/skills/$skill_name"
+  root_status="$(dev_main_flow_root_status)"
+
+  if [ "$root_status" != "safe" ]; then
+    printf '%s\n' "blocked: $root_status"
+  elif [ ! -d "$source_path" ] || [ ! -f "$source_path/SKILL.md" ]; then
+    printf '%s\n' "source-missing: $source_path/SKILL.md"
+  elif [ -L "$target_path" ]; then
+    if [ ! -e "$target_path" ]; then
+      printf '%s\n' "dangling: $(readlink "$target_path")"
+    elif [ "$(readlink "$target_path")" = "$source_path" ]; then
+      printf '%s\n' "ready"
+    else
+      printf '%s\n' "conflict: symlink points to $(readlink "$target_path")"
+    fi
+  elif [ -e "$target_path" ]; then
+    if [ -d "$target_path" ]; then
+      printf '%s\n' "conflict: existing directory"
+    else
+      printf '%s\n' "conflict: existing file"
+    fi
+  else
+    printf '%s\n' "missing"
+  fi
+}
+
+dev_main_flow_doctor() {
+  local root_status skill_name status source_path target_path core_failures
+  core_failures=0
+  say "=== dev-main-flow Codex skill paths (read-only) ==="
+  root_status="$(dev_main_flow_root_status)"
+  if [ "$root_status" = "safe" ]; then
+    say "Codex skills root: safe ($AGENT_DIR/skills)"
+  else
+    say "Codex skills root: $root_status"
+  fi
+
+  say "Core skills (required for this install):"
+  for skill_name in dev-main-flow adaptive-goal-closure engineering-communication-ko; do
+    source_path="$REPO/skills/$skill_name"
+    target_path="$AGENT_DIR/skills/$skill_name"
+    status="$(dev_main_flow_skill_status "$skill_name")"
+    say "  $skill_name: $status"
+    if [ "$status" != "ready" ]; then
+      core_failures=$((core_failures + 1))
+    fi
+  done
+
+  say "Optional skills (reported separately; install only when selected):"
+  for skill_name in handoff-prompt work-record-sync; do
+    status="$(dev_main_flow_skill_status "$skill_name")"
+    if [ "$status" = "missing" ]; then
+      status="not installed (optional)"
+    fi
+    say "  $skill_name: $status"
+  done
+  say "Native Skill loading/invocation: NOT_RUN (filesystem links do not prove runtime discovery or execution)"
+
+  if [ "$core_failures" -gt 0 ]; then
+    return 1
+  fi
+}
+
+dev_main_flow_install_one() {
+  local skill_name source_path target_path status root_status
+  skill_name="$1"
+  source_path="$REPO/skills/$skill_name"
+  target_path="$AGENT_DIR/skills/$skill_name"
+  status="$(dev_main_flow_skill_status "$skill_name")"
+
+  if [ "$status" = "ready" ]; then
+    say "ready: $skill_name already links to this source"
+    return 0
+  fi
+  case "$status" in
+    source-missing:*)
+      say "blocked: $skill_name source is missing; no target changed"
+      INSTALL_FAILURE=1
+      return 0
+      ;;
+    blocked:*)
+      say "blocked: $skill_name target root is unsafe; preserving all paths"
+      INSTALL_FAILURE=1
+      return 0
+      ;;
+    conflict:*|dangling:*)
+      say "conflict: $skill_name target is $status; preserving it"
+      INSTALL_FAILURE=1
+      return 0
+      ;;
+    missing) ;;
+    *)
+      say "blocked: unrecognized $skill_name state: $status"
+      INSTALL_FAILURE=1
+      return 0
+      ;;
+  esac
+
+  if [ "$DRY_RUN" -eq 1 ]; then
+    say "DRY-RUN: would link $target_path -> $source_path"
+    return 0
+  fi
+
+  root_status="$(dev_main_flow_root_status)"
+  if [ "$root_status" != "safe" ]; then
+    say "blocked: install root changed before linking $skill_name ($root_status)"
+    INSTALL_FAILURE=1
+    return 0
+  fi
+  if ! mkdir -p "$AGENT_DIR/skills"; then
+    say "failed: could not create $AGENT_DIR/skills; no link created for $skill_name"
+    INSTALL_FAILURE=1
+    return 0
+  fi
+  root_status="$(dev_main_flow_root_status)"
+  if [ "$root_status" != "safe" ]; then
+    say "blocked: install root changed while preparing $skill_name ($root_status)"
+    INSTALL_FAILURE=1
+    return 0
+  fi
+  if ln -s "$source_path" "$target_path"; then
+    status="$(dev_main_flow_skill_status "$skill_name")"
+    if [ "$status" = "ready" ]; then
+      say "linked: $skill_name -> $source_path"
+    else
+      say "failed: $skill_name link was not ready after creation ($status); existing paths preserved"
+      INSTALL_FAILURE=1
+    fi
+  else
+    status="$(dev_main_flow_skill_status "$skill_name")"
+    say "conflict: could not create $target_path ($status); existing paths preserved"
+    INSTALL_FAILURE=1
+  fi
+}
+
+install_dev_main_flow() {
+  local skill_name
+  say "=== install-dev-main-flow for Codex (explicit opt-in; non-destructive) ==="
+  say "Target: $AGENT_DIR/skills (no hooks, settings, Runtime discovery, or other installation)"
+  say "Core: dev-main-flow, adaptive-goal-closure, engineering-communication-ko"
+  say "Optional selection: handoff-prompt=$DEV_MAIN_WITH_HANDOFF, work-record-sync=$DEV_MAIN_WITH_RECORD_SYNC"
+  INSTALL_FAILURE=0
+
+  for skill_name in dev-main-flow adaptive-goal-closure engineering-communication-ko; do
+    dev_main_flow_install_one "$skill_name"
+  done
+  if [ "$DEV_MAIN_WITH_HANDOFF" -eq 1 ]; then
+    dev_main_flow_install_one handoff-prompt
+  fi
+  if [ "$DEV_MAIN_WITH_RECORD_SYNC" -eq 1 ]; then
+    dev_main_flow_install_one work-record-sync
+  fi
+
+  say "Native Skill loading/invocation: NOT_RUN"
+  if [ "$INSTALL_FAILURE" -ne 0 ]; then
+    say "=== incomplete: conflicting paths were preserved; successful links remain in place ==="
+    return 1
+  fi
+  if [ "$DRY_RUN" -eq 1 ]; then
+    say "=== dry-run complete: no directories or links were created ==="
+  else
+    say "=== done: selected Skill source links are ready; Runtime discovery remains unverified ==="
+  fi
+}
+
 init_profile() {
   if [ -z "$PROFILE_NAME" ]; then
     echo "PROFILE is required for init-profile" >&2
@@ -631,7 +826,9 @@ install_profile() {
 
 case "$MODE" in
   doctor) doctor ;;
+  doctor-dev-main-flow) dev_main_flow_doctor ;;
   install-shared) install_shared ;;
+  install-dev-main-flow) install_dev_main_flow ;;
   init-profile) init_profile ;;
   install-profile) install_profile ;;
   *) echo "invalid mode: $MODE" >&2; exit 2 ;;

@@ -5,13 +5,20 @@ PROFILE ?=
 #   make install-completion-notify PYTHON=/opt/homebrew/bin/python3.11
 PYTHON  ?= python3
 
-.PHONY: install install-shared install-completion-notify completion-notify-status test-completion-notify doctor-completion-notify uninstall-completion-notify init-profile install-profile doctor doctor-strict instructions update work-start test-install-fixtures test-completion-notify-fixtures test-routing-fixtures test-work-start-fixtures test-notice-fixtures test-capability-fixtures test-result-fixtures test-truthfulness-fixtures test-jira-ticket-fixtures test-jira-work-fixtures test-git-work-preflight-fixtures test-context-checkpoint-codex-fixtures test-context-checkpoint-fixtures test-pending-handoff-core-fixtures test-pending-handoff-identity-fixtures test-pending-handoff-secret-provider-fixtures test-pending-handoff-identity-composition-fixtures test-pending-handoff-candidate-fixtures test-pending-handoff-store-fixtures test-pending-handoff-integrity-fixtures test-pending-handoff-revision-cas-fixtures test-pending-handoff-claim-lease-fixtures test-pending-handoff-delivery-consumption-fixtures test-pending-handoff-session-resolution-fixtures test-pending-handoff-manual-resume-fixtures test-pending-handoff-codex-runtime-adapter-fixtures test-pending-handoff-claude-runtime-adapter-fixtures test-pending-handoff-manual-resume-runtime-composition-fixtures test-v1-fixtures test-v1x-fixtures
+.PHONY: install install-shared install-dev-main-flow doctor-dev-main-flow install-completion-notify completion-notify-status test-completion-notify doctor-completion-notify uninstall-completion-notify init-profile install-profile doctor doctor-strict instructions update work-start test-install-fixtures test-dev-main-flow-install-fixtures test-completion-notify-fixtures test-routing-fixtures test-work-start-fixtures test-notice-fixtures test-capability-fixtures test-result-fixtures test-truthfulness-fixtures test-jira-ticket-fixtures test-jira-work-fixtures test-git-work-preflight-fixtures test-context-checkpoint-codex-fixtures test-context-checkpoint-fixtures test-pending-handoff-core-fixtures test-pending-handoff-identity-fixtures test-pending-handoff-secret-provider-fixtures test-pending-handoff-identity-composition-fixtures test-pending-handoff-candidate-fixtures test-pending-handoff-store-fixtures test-pending-handoff-integrity-fixtures test-pending-handoff-revision-cas-fixtures test-pending-handoff-claim-lease-fixtures test-pending-handoff-delivery-consumption-fixtures test-pending-handoff-session-resolution-fixtures test-pending-handoff-manual-resume-fixtures test-pending-handoff-codex-runtime-adapter-fixtures test-pending-handoff-claude-runtime-adapter-fixtures test-pending-handoff-manual-resume-runtime-composition-fixtures test-v1-fixtures test-v1x-fixtures
 
 instructions:
 	./scripts/render-instructions.sh
 
 doctor:
 	./setup.sh --doctor
+
+doctor-dev-main-flow:
+	./setup.sh --doctor-dev-main-flow
+
+install-dev-main-flow:
+	$(if $(or $(filter-out 0 1,$(or $(DRY_RUN),0)),$(filter-out 1,$(words $(or $(DRY_RUN),0))),$(filter-out 0 1,$(or $(WITH_HANDOFF),0)),$(filter-out 1,$(words $(or $(WITH_HANDOFF),0))),$(filter-out 0 1,$(or $(WITH_RECORD_SYNC),0)),$(filter-out 1,$(words $(or $(WITH_RECORD_SYNC),0)))),$(error DRY_RUN, WITH_HANDOFF, and WITH_RECORD_SYNC must each be 0 or 1),)
+	./setup.sh --install-dev-main-flow $(if $(filter 1,$(WITH_HANDOFF)),--with-handoff) $(if $(filter 1,$(WITH_RECORD_SYNC)),--with-record-sync) $(if $(filter 1,$(DRY_RUN)),--dry-run)
 
 doctor-strict:
 	./setup.sh --doctor --strict
@@ -48,6 +55,9 @@ test-git-work-preflight-fixtures:
 
 test-install-fixtures:
 	./scripts/test-install-fixtures.sh
+
+test-dev-main-flow-install-fixtures:
+	./scripts/test-install-fixtures.sh --dev-main-flow-only
 
 test-context-checkpoint-codex-fixtures:
 	node ./scripts/test-context-checkpoint-codex-fixtures.mjs
