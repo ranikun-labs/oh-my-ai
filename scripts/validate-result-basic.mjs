@@ -198,7 +198,14 @@ function validate(markdown) {
   // Result without that reference cannot identify the task it reports on;
   // this checks presence only, not task correlation or Handoff acceptance.
   const sourceHandoffRef = field(meta, "source_handoff_ref");
-  if (!sourceHandoffRef) errors.push("Contract Metadata missing source_handoff_ref");
+  // Reject only explicit unfilled markers; the reference's actual format stays opaque.
+  const unfilledSourceHandoffRefs = new Set([
+    "none",
+    "<handoff_ref from the structured handoff candidate>",
+  ]);
+  if (!sourceHandoffRef || unfilledSourceHandoffRefs.has(sourceHandoffRef.toLowerCase())) {
+    errors.push("Contract Metadata missing source_handoff_ref");
+  }
 
   const receiptStatus = field(meta, "receipt_status");
   if (receiptStatus !== "received") {
