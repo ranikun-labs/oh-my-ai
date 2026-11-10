@@ -90,6 +90,10 @@ jobs:
           make test-truthfulness-fixtures
           make test-git-work-preflight-fixtures
 
+      - name: Run dev-main-flow install fixtures
+        run: make test-dev-main-flow-install-fixtures
+        timeout-minutes: 2
+
       - name: Check whitespace in the pull request diff
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}

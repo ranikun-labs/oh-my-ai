@@ -63,6 +63,29 @@ make install-shared
 make doctor-strict
 ```
 
+### Opt-in Codex workflow Skills
+
+These targets only link the three core workflow Skills into
+`${AGENT_DIR:-$HOME/.agents}/skills`; they do not run the shared installer,
+generate instructions, change hooks/settings, or prove that Codex loaded or
+invoked a Skill. The doctor is read-only and returns a nonzero status when a
+core source link is not ready.
+
+```bash
+make doctor-dev-main-flow
+make install-dev-main-flow DRY_RUN=1
+make install-dev-main-flow
+
+# Optional Skills are added only when named; each command also ensures core links.
+make install-dev-main-flow WITH_HANDOFF=1
+make install-dev-main-flow WITH_RECORD_SYNC=1
+```
+
+The optional Skills are `handoff-prompt` and `work-record-sync`. Existing files,
+directories, foreign links, and dangling links at a target are preserved and
+reported as conflicts; successful independent links may remain if another path
+blocks the batch. Review `make doctor-dev-main-flow` again after installation.
+
 ### Optional local completion notifications (macOS first)
 
 The completion notification management commands (`install-completion-notify`,

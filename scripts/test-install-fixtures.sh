@@ -40,7 +40,7 @@ clone_fixture_repo() {
   local clone="$TEMP_ROOT/$name/repo"
 
   mkdir -p "$(dirname "$clone")"
-  git clone --quiet --local "$REPO" "$clone"
+  git clone --quiet --local --no-hardlinks "$REPO" "$clone"
 
   # Let the runner validate the current working tree before its changes are committed.
   if ! git diff --quiet HEAD --; then
@@ -1216,8 +1216,142 @@ check_work_start_consent_boundary() {
   echo "passed: FX-WS-E2E-006 consent boundary"
 }
 
+check_dev_main_flow_codex_installer() {
+  local home_dir agents_dir output status target_root clone optional_flag option_home
+
+  home_dir="$TEMP_ROOT/dev-main-flow-install/home with spaces"
+  agents_dir="$TEMP_ROOT/dev-main-flow-install/agents root with spaces"
+
+  set +e
+  output="$(env HOME="$home_dir" AGENT_DIR="$agents_dir" make --no-print-directory -C "$REPO" doctor-dev-main-flow 2>&1)"
+  status=$?
+  set -e
+  [ "$status" -eq 2 ] || fail "fresh Codex Skill Make doctor exit was $status, expected make's nonzero status 2"
+  require_fixed "dev-main-flow: missing" "$output"
+  require_fixed "adaptive-goal-closure: missing" "$output"
+  require_fixed "engineering-communication-ko: missing" "$output"
+  require_fixed "Native Skill loading/invocation: NOT_RUN" "$output"
+  [ ! -e "$agents_dir" ] || fail "doctor created the Codex skills root"
+
+  output="$(env HOME="$home_dir" AGENT_DIR="$agents_dir" make --no-print-directory -C "$REPO" install-dev-main-flow 2>&1)" \
+    || fail "default dev-main-flow Make install failed: $output"
+  for skill_name in dev-main-flow adaptive-goal-closure engineering-communication-ko; do
+    assert_link "$agents_dir/skills/$skill_name" "$REPO/skills/$skill_name"
+  done
+  [ ! -e "$agents_dir/skills/handoff-prompt" ] || fail "optional Handoff Skill installed without opt-in"
+  [ ! -e "$agents_dir/skills/work-record-sync" ] || fail "optional record Skill installed without opt-in"
+  [ ! -e "$home_dir/.claude" ] && [ ! -e "$home_dir/.codex" ] && [ ! -e "$home_dir/.local/bin" ] \
+    || fail "dev-main-flow target performed shared Runtime or CLI installation"
+  printf '%s\n' "$output" | grep -q -F -- "render-instructions.sh" \
+    && fail "dev-main-flow Make target invoked instruction generation"
+  printf '%s\n' "$output" | grep -q -F -- "install-shared" \
+    && fail "dev-main-flow Make target invoked the shared installer"
+
+  output="$(env HOME="$home_dir" AGENT_DIR="$agents_dir" make --no-print-directory -C "$REPO" install-dev-main-flow 2>&1)" \
+    || fail "idempotent dev-main-flow Make install failed: $output"
+  require_fixed "ready: dev-main-flow already links to this source" "$output"
+  require_fixed "ready: adaptive-goal-closure already links to this source" "$output"
+
+  output="$(env HOME="$home_dir" AGENT_DIR="$agents_dir" make --no-print-directory -C "$REPO" doctor-dev-main-flow 2>&1)" \
+    || fail "doctor failed when required links were ready: $output"
+  require_fixed "dev-main-flow: ready" "$output"
+  require_fixed "handoff-prompt: not installed (optional)" "$output"
+  require_fixed "Native Skill loading/invocation: NOT_RUN" "$output"
+
+  target_root="$TEMP_ROOT/dev-main-flow-install/handoff-only agents"
+  output="$(env HOME="$home_dir" AGENT_DIR="$target_root" make --no-print-directory -C "$REPO" install-dev-main-flow WITH_HANDOFF=1 2>&1)" \
+    || fail "Handoff-only Skill install failed: $output"
+  assert_link "$target_root/skills/handoff-prompt" "$REPO/skills/handoff-prompt"
+  [ ! -e "$target_root/skills/work-record-sync" ] || fail "record-sync Skill installed with Handoff-only opt-in"
+
+  target_root="$TEMP_ROOT/dev-main-flow-install/record-sync-only agents"
+  output="$(env HOME="$home_dir" AGENT_DIR="$target_root" make --no-print-directory -C "$REPO" install-dev-main-flow WITH_RECORD_SYNC=1 2>&1)" \
+    || fail "record-sync-only Skill install failed: $output"
+  assert_link "$target_root/skills/work-record-sync" "$REPO/skills/work-record-sync"
+  [ ! -e "$target_root/skills/handoff-prompt" ] || fail "Handoff Skill installed with record-sync-only opt-in"
+
+  # These flags must be tied to the new explicit install mode. In particular,
+  # an option by itself must not fall through to the legacy default installer.
+  for optional_flag in --with-handoff --with-record-sync; do
+    option_home="$TEMP_ROOT/dev-main-flow-install/option alone ${optional_flag#--with-}"
+    set +e
+    output="$(run_setup "$REPO" "$option_home" "$optional_flag" 2>&1)"
+    status=$?
+    set -e
+    [ "$status" -eq 2 ] || fail "standalone $optional_flag exit was $status, expected 2"
+    require_fixed "require --install-dev-main-flow" "$output"
+    [ ! -e "$option_home/.claude" ] \
+      || fail "standalone $optional_flag fell through to legacy shared installation"
+    [ ! -e "$option_home/.agents" ] \
+      || fail "standalone $optional_flag created an Agent directory"
+  done
+
+  # A dry-run may report planned links, but must not create either parent or link.
+  target_root="$TEMP_ROOT/dev-main-flow-install/dry-run agents"
+  output="$(env HOME="$home_dir" AGENT_DIR="$target_root" make --no-print-directory -C "$REPO" install-dev-main-flow DRY_RUN=1 2>&1)" \
+    || fail "dev-main-flow dry-run failed: $output"
+  require_fixed "dry-run complete: no directories or links were created" "$output"
+  [ ! -e "$target_root" ] || fail "dry-run created its target root"
+
+  # Conflicts are preserved and do not roll back successful independent links.
+  target_root="$TEMP_ROOT/dev-main-flow-install/conflict agents"
+  mkdir -p "$target_root/skills/dev-main-flow" "$TEMP_ROOT/dev-main-flow-install/external"
+  printf '%s\n' "user content" >"$target_root/skills/dev-main-flow/keep.txt"
+  ln -s "$TEMP_ROOT/dev-main-flow-install/external/missing" "$target_root/skills/adaptive-goal-closure"
+  ln -s "$TEMP_ROOT/dev-main-flow-install/external" "$target_root/skills/handoff-prompt"
+  set +e
+  output="$(env HOME="$home_dir" AGENT_DIR="$target_root" "$REPO/setup.sh" --install-dev-main-flow --with-handoff 2>&1)"
+  status=$?
+  set -e
+  [ "$status" -eq 1 ] || fail "conflicting dev-main-flow install exit was $status, expected 1"
+  [ "$(cat "$target_root/skills/dev-main-flow/keep.txt")" = "user content" ] \
+    || fail "existing Skill directory content was changed"
+  [ "$(readlink "$target_root/skills/adaptive-goal-closure")" = "$TEMP_ROOT/dev-main-flow-install/external/missing" ] \
+    || fail "dangling Skill symlink was replaced"
+  [ "$(readlink "$target_root/skills/handoff-prompt")" = "$TEMP_ROOT/dev-main-flow-install/external" ] \
+    || fail "foreign Skill symlink was replaced"
+  [ -L "$target_root/skills/engineering-communication-ko" ] && [ "$(readlink "$target_root/skills/engineering-communication-ko")" = "$REPO/skills/engineering-communication-ko" ] \
+    || fail "partial install did not create the independent safe links"
+
+  target_root="$TEMP_ROOT/dev-main-flow-install/linked root"
+  mkdir -p "$TEMP_ROOT/dev-main-flow-install/real root"
+  ln -s "$TEMP_ROOT/dev-main-flow-install/real root" "$target_root"
+  set +e
+  output="$(env HOME="$home_dir" AGENT_DIR="$target_root" "$REPO/setup.sh" --install-dev-main-flow 2>&1)"
+  status=$?
+  set -e
+  [ "$status" -eq 1 ] || fail "symlinked Agent root install exit was $status, expected 1"
+  [ ! -e "$TEMP_ROOT/dev-main-flow-install/real root/skills" ] \
+    || fail "installer traversed a symlinked Agent root"
+  [ -L "$target_root" ] && [ "$(readlink "$target_root")" = "$TEMP_ROOT/dev-main-flow-install/real root" ] \
+    || fail "installer replaced the symlinked Agent root"
+
+  clone="$TEMP_ROOT/dev-main-flow-install/missing-source-repo"
+  mkdir -p "$clone"
+  cp -R "$REPO/skills" "$clone/skills"
+  cp "$REPO/setup.sh" "$clone/setup.sh"
+  rm -f -- "$clone/skills/work-record-sync/SKILL.md"
+  target_root="$TEMP_ROOT/dev-main-flow-install/missing-source-agents"
+  set +e
+  output="$(env HOME="$home_dir" AGENT_DIR="$target_root" "$clone/setup.sh" --install-dev-main-flow --with-record-sync 2>&1)"
+  status=$?
+  set -e
+  [ "$status" -eq 1 ] || fail "selected missing optional Source exit was $status, expected 1"
+  require_fixed "work-record-sync source is missing" "$output"
+  assert_link "$target_root/skills/dev-main-flow" "$clone/skills/dev-main-flow"
+  [ ! -e "$target_root/skills/work-record-sync" ] || fail "missing optional source created a target link"
+  echo "passed: Codex dev-main-flow opt-in install, doctor, dry-run, and conflict preservation"
+}
+
 require_file "setup.sh"
 require_file "Makefile"
+
+if [ "${1:-}" = "--dev-main-flow-only" ]; then
+  run_isolated_check check_dev_main_flow_codex_installer
+  echo "dev-main-flow install fixtures passed"
+  exit 0
+fi
+
 for fixture in "$FIXTURE_ROOT"/FX-INS-*; do
   [ -d "$fixture" ] || fail "no install fixtures found"
   check_fixture_metadata "$fixture"
