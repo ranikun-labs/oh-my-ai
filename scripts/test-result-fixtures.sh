@@ -398,13 +398,37 @@ fx_source_handoff_reference() {
   mutate_result "$src" "$out" '- `source_handoff_ref`: `handoff-20260720-085000-fixture`' '- `source_handoff_ref`: ``'
   expect_invalid "$out" "Source-Handoff-Reference-empty" "Contract Metadata missing source_handoff_ref"
 
+  mutate_result "$src" "$out" '- `source_handoff_ref`: `handoff-20260720-085000-fixture`' '- `source_handoff_ref`: `None`'
+  expect_invalid "$out" "Source-Handoff-Reference-none" "Contract Metadata missing source_handoff_ref"
+
+  mutate_result "$src" "$out" '- `source_handoff_ref`: `handoff-20260720-085000-fixture`' \
+    '- `source_handoff_ref`: `<handoff_ref from the Structured Handoff Candidate>`'
+  expect_invalid "$out" "Source-Handoff-Reference-template-placeholder" "Contract Metadata missing source_handoff_ref"
+
   mutate_result "$src" "$out" '- `source_handoff_ref`: `handoff-20260720-085000-fixture`' \
     $'- `source_handoff_ref`: `handoff-20260720-085000-fixture`\n- `source_handoff_ref`: `handoff-other`'
   expect_invalid "$out" "Source-Handoff-Reference-conflicting" "duplicate Contract Metadata field: source_handoff_ref"
 
   mutate_result "$src" "$out" '- `source_handoff_ref`: `handoff-20260720-085000-fixture`' \
-    $'- `source_handoff_ref`: `handoff-20260720-085000-fixture`\n<!--\n- `source_handoff_ref`: `handoff-example`\n-->'
+    '- `source_handoff_ref`: `opaque ref value (manual candidate)`'
+  expect_valid "$out" "Source-Handoff-Reference-opaque-value"
+
+  mutate_result "$src" "$out" '- `source_handoff_ref`: `handoff-20260720-085000-fixture`' \
+    $'- `source_handoff_ref`: `handoff-20260720-085000-fixture`\n<!--\n- `source_handoff_ref`: `<handoff_ref from the Structured Handoff Candidate>`\n-->'
   expect_valid "$out" "Source-Handoff-Reference-comment-example"
+
+  mutate_result "$src" "$out" '- `source_handoff_ref`: `handoff-20260720-085000-fixture`' \
+    $'- `source_handoff_ref`: `handoff-20260720-085000-fixture`\n```markdown\n- `source_handoff_ref`: `<handoff_ref from the Structured Handoff Candidate>`\n```'
+  expect_valid "$out" "Source-Handoff-Reference-fenced-placeholder-example"
+
+  local status_src status_name
+  for status_src in FX-RS-good-partial-validation-not-performed FX-RS-good-blocked; do
+    status_name="${status_src#FX-RS-good-}"
+    mutate_result "$FIXTURE_ROOT/$status_src.md" "$out" \
+      '- `source_handoff_ref`: `handoff-20260720-085000-fixture`' \
+      '- `source_handoff_ref`: `None`'
+    expect_invalid "$out" "Source-Handoff-Reference-$status_name-none" "Contract Metadata missing source_handoff_ref"
+  done
   echo "passed: FX-RS-source-handoff-reference"
 }
 
