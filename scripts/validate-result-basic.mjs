@@ -41,6 +41,15 @@ const REQUIRED_HEADINGS = [
 ];
 
 const EXECUTION_STATUS_VALUES = new Set(["complete", "partial", "failed", "blocked"]);
+const REQUIRED_METADATA_UNFILLED_VALUES = new Map([
+  ["schema_version", []],
+  ["artifact_version", []],
+  ["result_ref", ["<result-YYYYMMDD-HHMMSS-short-slug>"]],
+  ["sensitive_data_status", ["<none_detected | redacted | contains_sensitive_data | unknown>"]],
+  ["created_at", ["<YYYY-MM-DDTHH:MM:SSZ>"]],
+  ["created_by", ["<worker runtime or person>"]],
+  ["review_state", []],
+]);
 
 function splitSections(markdown, errors = []) {
   // Use the existing scanner to locate visible headings, but slice Result
@@ -91,6 +100,12 @@ function field(metadataBody, name) {
 function metadataFields(metadataBody, name) {
   const re = new RegExp(`^-\\s*\`${name}\`:\\s*\`?([^\`\\n]*)\`?\\s*$`, "gm");
   return [...metadataBody.matchAll(re)];
+}
+
+function normalizeInlineCode(value) {
+  const trimmed = value.trim();
+  const inlineCode = /^`([^`]*)`$/.exec(trimmed);
+  return (inlineCode ? inlineCode[1] : trimmed).trim();
 }
 
 function validate(markdown) {
@@ -160,11 +175,21 @@ function validate(markdown) {
       errors.push("execution_status=complete requires explicit met Completion Criteria Results for the current approved completion unit");
     } else {
       for (const entry of entries) {
-        const criterion = /^-\s+`([^`]+)`:\s*`(met|unmet|partial|blocked)`\s*-\s*\S.*$/.exec(entry);
+        const criterion = /^-\s+`([^`]+)`:\s*`(met|unmet|partial|blocked)`\s*-\s*(\S.*)$/.exec(entry);
         if (!criterion) {
           errors.push("execution_status=complete requires Completion Criteria Results entries in the template format with status met (unrecognized criterion or status)");
-        } else if (criterion[2] !== "met") {
-          errors.push(`execution_status=complete contradicts Completion Criteria Results status=${criterion[2]} for ${criterion[1]}`);
+        } else {
+          const criterionName = criterion[1].trim();
+          const criterionEvidence = normalizeInlineCode(criterion[3]);
+          if (criterionName.toLowerCase() === "none" || criterionName === "<criterion>") {
+            errors.push("execution_status=complete requires a filled Completion Criteria Results criterion name");
+          }
+          if (criterionEvidence.toLowerCase() === "none" || criterionEvidence === "<evidence or reason>") {
+            errors.push("execution_status=complete requires Completion Criteria Results evidence or a reason");
+          }
+          if (criterion[2] !== "met") {
+            errors.push(`execution_status=complete contradicts Completion Criteria Results status=${criterion[2]} for ${criterion[1]}`);
+          }
         }
       }
     }
@@ -210,6 +235,18 @@ function validate(markdown) {
   const receiptStatus = field(meta, "receipt_status");
   if (receiptStatus !== "received") {
     errors.push(`receipt_status must be 'received' for a Result Basic that was actually returned, got: ${receiptStatus}`);
+  }
+
+  // The shipped template marks these metadata fields as required. Reject only
+  // explicit None values and each field's exact unfilled template placeholder;
+  // keep all other values opaque and do not add format or truth checks here.
+  for (const [name, placeholders] of REQUIRED_METADATA_UNFILLED_VALUES) {
+    const value = field(meta, name);
+    if (value === null) continue; // Missing-field behavior is outside this check.
+    const normalized = value.trim();
+    if (normalized.toLowerCase() === "none" || placeholders.includes(normalized)) {
+      errors.push(`Contract Metadata has unfilled required field: ${name}`);
+    }
   }
 
   return errors;
