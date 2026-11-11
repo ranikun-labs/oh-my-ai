@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { validateF1Report } from "./f1-report-advisory.mjs";
+import { validateAiStatus, validateF1Report } from "./f1-report-advisory.mjs";
 import { matchSkillCandidatesWithStatus } from "./lib/routing-status.mjs";
 
 const validReport = `# F1 보고 구조 검사기
@@ -55,6 +55,29 @@ Skill Index 경로가 충돌 없이 열리면 생성물을 갱신하고 해당 H
 - Script: scripts/f1-report-advisory.mjs
 `;
 
+const mainOnlyAiStatus = `## AI 실행 현황
+- 관측 범위: complete
+- 확인된 참여자 수: 1
+- 전체 참여자 수: 1
+| Agent ID | 실제 역할 | 실제 참여 | spawn events | resume events | continue events | 요청 Model/Reasoning/Fast·출처 | 운영 선호·출처 | 실효 Model/Reasoning/Fast·출처 | 실제 작업·상태 | 공식 토큰·비용·구간·출처 |
+|---|---|---|---:|---:|---:|---|---|---|---|---|
+| Main | Main | YES | 0 | 0 | 1 | UNKNOWN — 이번 경로에서 생성 요청 없음 | Terra High — 운영 요청, 대화 근거 | UNKNOWN — Runtime 설정 근거 없음 | 요청 분석과 결과 취합을 수행 | UNKNOWN — 완료 후 공식 수치 없음 |
+`;
+
+const multiAgentAiStatus = `## AI 실행 현황
+- 관측 범위: partial
+- 확인된 참여자 수: 4
+- 전체 참여자 수: UNKNOWN
+| Agent ID | 실제 역할 | 실제 참여 | spawn events | resume events | continue events | 요청 Model/Reasoning/Fast·출처 | 운영 선호·출처 | 실효 Model/Reasoning/Fast·출처 | 실제 작업·상태 | 공식 토큰·비용·구간·출처 |
+|---|---|---|---:|---:|---:|---|---|---|---|---|
+| Main | Main | YES | 0 | 0 | 1 | UNKNOWN — 현재 턴에서 생성 요청 없음 | Terra High — 운영 요청 | UNKNOWN — 실효 설정 근거 없음 | Objective와 결과 취합 | UNKNOWN — 공식 계측 미제공 |
+| writer-a | Writer | YES | 1 | 0 | 0 | Luna Max — 생성 요청 metadata | Luna Max — 운영 선호 | UNKNOWN — Runtime attestation 미제공 | Advisory 수정, 완료 | UNKNOWN — 해당 구간 수치 없음 |
+| writer-b | Writer | YES | 1 | 0 | 0 | Luna Max — 생성 요청 metadata | Luna Max — 운영 선호 | UNKNOWN — Runtime attestation 미제공 | 회귀 fixture 수정, 완료 | UNKNOWN — 해당 구간 수치 없음 |
+| reviewer-a | Reviewer | YES | 1 | 0 | 0 | Sol Medium — 생성 요청 metadata | Sol Medium — 운영 선호 | UNKNOWN — Runtime attestation 미제공 | 고정 HEAD 검토, 완료 | UNKNOWN — 해당 구간 수치 없음 |
+| spawned-no-work | Helper | NO | 1 | 0 | 0 | UNKNOWN — 요청 metadata 없음 | UNKNOWN — 운영 선호 미관측 | UNKNOWN — Runtime attestation 미제공 | 생성됐으나 실제 작업에 참여하지 않음 | UNKNOWN — 참여·사용량 구간 없음 |
+`;
+const fullReportWithMainOnly = validReport.replace("## 아직 안 되는 것", `${mainOnlyAiStatus}\n## 아직 안 되는 것`);
+
 function expectInvalid(label, markdown, expectedMessage) {
   const result = validateF1Report(markdown);
   assert.equal(result.valid, false, `${label}: expected invalid report`);
@@ -63,6 +86,96 @@ function expectInvalid(label, markdown, expectedMessage) {
 
 const ok = validateF1Report(validReport);
 assert.equal(ok.valid, true, ok.errors.join("; "));
+
+const legacyMissingAiStatus = validateF1Report(validReport);
+assert.equal(legacyMissingAiStatus.valid, true, "default F1 validation must stay backward compatible when AI status is not requested");
+
+const mainOnlyRequired = validateF1Report(fullReportWithMainOnly, {
+  requireAiStatus: true,
+  observedParticipants: ["Main"],
+  observationCoverage: "complete",
+});
+assert.equal(mainOnlyRequired.valid, true, mainOnlyRequired.errors.join("; "));
+
+const mainOnlyPartial = validateAiStatus(mainOnlyAiStatus, {
+  observedParticipants: [{ id: "Main" }],
+  observationCoverage: "complete",
+});
+assert.equal(mainOnlyPartial.valid, true, mainOnlyPartial.errors.join("; "));
+assert.equal(mainOnlyPartial.scope, "AI_STATUS_ONLY");
+const unknownCoverage = validateAiStatus(
+  mainOnlyAiStatus.replace("관측 범위: complete", "관측 범위: unknown").replace("전체 참여자 수: 1", "전체 참여자 수: UNKNOWN"),
+  { observationCoverage: "unknown" },
+);
+assert.equal(unknownCoverage.valid, true, unknownCoverage.errors.join("; "));
+assert.equal(
+  validateF1Report(mainOnlyAiStatus, { requireAiStatus: true, observedParticipants: ["Main"], observationCoverage: "complete" }).valid,
+  false,
+  "a partial AI-status check cannot stand in for the canonical eight-section report",
+);
+
+const requiredWithoutStatus = validateF1Report(validReport, { requireAiStatus: true, observationCoverage: "unknown" });
+assert.equal(requiredWithoutStatus.valid, false);
+assert.ok(requiredWithoutStatus.errors.some((error) => error.includes("missing required section: ## AI 실행 현황")));
+
+const completeMultiAgent = validateAiStatus(multiAgentAiStatus, {
+  observedParticipants: ["Main", "writer-a", "writer-b", "reviewer-a"],
+  observationCoverage: "partial",
+});
+assert.equal(completeMultiAgent.valid, true, completeMultiAgent.errors.join("; "));
+
+const nonParticipantWithoutLifecycleEvent = validateAiStatus(
+  multiAgentAiStatus.replace("| spawned-no-work | Helper | NO | 1 | 0 | 0 |", "| spawned-no-work | Helper | NO | 0 | 0 | 0 |"),
+  { observedParticipants: ["Main", "writer-a", "writer-b", "reviewer-a"], observationCoverage: "partial" },
+);
+assert.equal(nonParticipantWithoutLifecycleEvent.valid, false);
+assert.ok(nonParticipantWithoutLifecycleEvent.errors.some((error) => error.includes("must have an observed spawn, resume, or continue event")));
+
+const nonParticipantWithUnknownLifecycleEvents = validateAiStatus(
+  multiAgentAiStatus.replace("| spawned-no-work | Helper | NO | 1 | 0 | 0 |", "| spawned-no-work | Helper | NO | UNKNOWN | UNKNOWN | UNKNOWN |"),
+  { observedParticipants: ["Main", "writer-a", "writer-b", "reviewer-a"], observationCoverage: "partial" },
+);
+assert.equal(nonParticipantWithUnknownLifecycleEvents.valid, false);
+assert.ok(nonParticipantWithUnknownLifecycleEvents.errors.some((error) => error.includes("must have an observed spawn, resume, or continue event with a positive count")));
+
+const missingObservedParticipant = validateAiStatus(multiAgentAiStatus, {
+  observedParticipants: ["Main", "writer-a", "writer-b", "reviewer-a", "writer-c"],
+  observationCoverage: "partial",
+});
+assert.equal(missingObservedParticipant.valid, false);
+assert.ok(missingObservedParticipant.errors.some((error) => error.includes("does not confirm observed participant: writer-c")));
+
+const incompleteCoverageClaim = validateAiStatus(
+  multiAgentAiStatus.replace("전체 참여자 수: UNKNOWN", "전체 참여자 수: 3"),
+  { observedParticipants: ["Main", "writer-a", "writer-b", "reviewer-a"], observationCoverage: "partial" },
+);
+assert.equal(incompleteCoverageClaim.valid, false);
+assert.ok(incompleteCoverageClaim.errors.some((error) => error.includes("partial or unknown AI status coverage")));
+
+const completeCoverageMismatch = validateAiStatus(
+  multiAgentAiStatus.replace("관측 범위: partial", "관측 범위: complete").replace("전체 참여자 수: UNKNOWN", "전체 참여자 수: 3"),
+  { observedParticipants: ["Main", "writer-a"], observationCoverage: "complete" },
+);
+assert.equal(completeCoverageMismatch.valid, false);
+assert.ok(completeCoverageMismatch.errors.some((error) => error.includes("participant is absent from observedParticipants: reviewer-a")));
+const partialCoverageMismatch = validateAiStatus(multiAgentAiStatus, {
+  observedParticipants: ["Main", "writer-a", "reviewer-a"],
+  observationCoverage: "partial",
+});
+assert.equal(partialCoverageMismatch.valid, false);
+assert.ok(partialCoverageMismatch.errors.some((error) => error.includes("participant is absent from observedParticipants: writer-b")));
+const completeWithoutObservedList = validateAiStatus(
+  mainOnlyAiStatus,
+  { observationCoverage: "complete" },
+);
+assert.equal(completeWithoutObservedList.valid, false);
+assert.ok(completeWithoutObservedList.errors.some((error) => error.includes("complete AI status coverage requires observedParticipants")));
+
+const quotedSkillMention = validReport.replace("## 근거", "## 근거\n- `$dev-main-flow`라는 Skill 이름을 인용한 문장일 뿐 실제 호출은 아니다.");
+assert.equal(validateF1Report(quotedSkillMention).valid, true, "quoted Skill names must not implicitly enable AI-status checks");
+const quotedSkillCannotSatisfyRequiredStatus = validateF1Report(quotedSkillMention, { requireAiStatus: true });
+assert.equal(quotedSkillCannotSatisfyRequiredStatus.valid, false, "quoted Skill names must not prove execution or participant coverage");
+assert.ok(quotedSkillCannotSatisfyRequiredStatus.errors.some((error) => error.includes("missing required section: ## AI 실행 현황")));
 
 const conciseHumanSummary = `## 결과
 서비스별 F1 결과와 이번 변경을 요약한다.
@@ -554,7 +667,7 @@ const inlineValueResult = validateF1Report(inlineValueService);
 assert.equal(inlineValueResult.valid, true, inlineValueResult.errors.join("; "));
 console.log("f1 service report field fixtures passed: " + (serviceContractFields.length * 2 + hiddenFieldCases.length + 14) + "/46");
 
-console.log("f1 report advisory fixtures passed: 49/49");
+console.log("f1 report advisory fixtures passed: 50/50");
 
 
 // Preserve the original report pattern fixtures. Current master’s actual
@@ -641,6 +754,7 @@ const absoluteSourceRootCli = spawnSync(process.execPath, [checkerPath, exampleP
   cwd: os.tmpdir(),
   encoding: "utf8",
   env: { ...process.env, OH_MY_AI_HOME: repoRoot },
+  timeout: 5000,
 });
 if (absoluteSourceRootCli.error?.code === "EPERM") {
   console.log("f1 source-root advisory CLI child-process fixture NOT_RUN: sandbox spawnSync EPERM");
@@ -651,4 +765,50 @@ if (absoluteSourceRootCli.error?.code === "EPERM") {
   assert.match(absoluteSourceRootCli.stdout, /f1_report_structure_valid:/);
   assert.match(absoluteSourceRootCli.stdout, /advisory_only:/);
   console.log("f1 source-root advisory CLI child-process fixture passed: 1/1");
+}
+
+const aiStatusFixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "f1-ai-status-cli-"));
+try {
+  const fullF1Path = path.join(aiStatusFixtureDir, "full-f1.md");
+  const conciseStatusPath = path.join(aiStatusFixtureDir, "ai-status.md");
+  fs.writeFileSync(fullF1Path, fullReportWithMainOnly);
+  fs.writeFileSync(conciseStatusPath, mainOnlyAiStatus);
+
+  const fullAiStatusCli = spawnSync(process.execPath, [
+    checkerPath,
+    fullF1Path,
+    "--require-ai-status",
+    "--observed-participants-json",
+    '["Main"]',
+    "--observation-coverage",
+    "complete",
+  ], { cwd: os.tmpdir(), encoding: "utf8", timeout: 5000 });
+  if (fullAiStatusCli.error?.code === "EPERM") {
+    console.log("f1 AI status CLI fixtures NOT_RUN: sandbox spawnSync EPERM");
+  } else {
+    assert.equal(fullAiStatusCli.error, undefined, fullAiStatusCli.error?.message);
+    assert.equal(fullAiStatusCli.signal, null, fullAiStatusCli.stderr);
+    assert.equal(fullAiStatusCli.status, 0, fullAiStatusCli.stderr);
+    assert.match(fullAiStatusCli.stdout, /f1_report_structure_valid:/);
+    assert.doesNotMatch(fullAiStatusCli.stdout, /partial/);
+
+    const partialAiStatusCli = spawnSync(process.execPath, [
+      checkerPath,
+      conciseStatusPath,
+      "--ai-status-only",
+      "--observed-participants-json",
+      '["Main"]',
+      "--observation-coverage",
+      "complete",
+    ], { cwd: os.tmpdir(), encoding: "utf8", timeout: 5000 });
+    assert.equal(partialAiStatusCli.error, undefined, partialAiStatusCli.error?.message);
+    assert.equal(partialAiStatusCli.signal, null, partialAiStatusCli.stderr);
+    assert.equal(partialAiStatusCli.status, 0, partialAiStatusCli.stderr);
+    assert.match(partialAiStatusCli.stdout, /f1_ai_status_structure_valid_partial:/);
+    assert.match(partialAiStatusCli.stdout, /does not mean the full eight-section F1 is valid/i);
+    assert.doesNotMatch(partialAiStatusCli.stdout, /f1_report_structure_valid:/);
+    console.log("f1 AI status CLI fixtures passed: 2/2");
+  }
+} finally {
+  fs.rmSync(aiStatusFixtureDir, { recursive: true, force: true });
 }
