@@ -64,6 +64,18 @@ mutate_result() {
   ' "$src" "$out" "$find_str" "$replace_str"
 }
 
+expect_unfilled_metadata() {
+  local src="$1" out="$2" field="$3" old_value="$4" replacement="$5" label="$6"
+  mutate_result "$src" "$out" "- \`$field\`: \`$old_value\`" "- \`$field\`: \`$replacement\`"
+  expect_invalid "$out" "$label" "Contract Metadata has unfilled required field: $field"
+}
+
+expect_none_metadata_compatible() {
+  local src="$1" out="$2" field="$3" old_value="$4" label="$5"
+  mutate_result "$src" "$out" "- \`$field\`: \`$old_value\`" "- \`$field\`: \`None\`"
+  expect_valid "$out" "$label"
+}
+
 has_exact_files_read_changed_headings() {
   local file="$1"
   local files_read_count files_changed_count heading_count
@@ -315,6 +327,27 @@ fx_completion_criteria_status() {
     expect_invalid "$out" "Complete-Criterion-Unknown-$status" "unrecognized criterion or status"
   done
 
+  mutate_result "$src" "$out" '`Typo corrected`: `met`' '`Typo corrected`: `None`'
+  expect_invalid "$out" "Complete-Criterion-Status-None" "unrecognized criterion or status"
+  mutate_result "$src" "$out" '`Typo corrected`: `met`' '`Typo corrected`: `<met | unmet | partial | blocked>`'
+  expect_invalid "$out" "Complete-Criterion-Status-Placeholder" "unrecognized criterion or status"
+
+  mutate_result "$src" "$out" '- `Typo corrected`: `met` - verified by grep' '- `None`: `met` - verified by grep'
+  expect_invalid "$out" "Complete-Criterion-Name-None" "requires a filled Completion Criteria Results criterion name"
+  mutate_result "$src" "$out" '- `Typo corrected`: `met` - verified by grep' '- `<criterion>`: `met` - verified by grep'
+  expect_invalid "$out" "Complete-Criterion-Name-Placeholder" "requires a filled Completion Criteria Results criterion name"
+  mutate_result "$src" "$out" '- `Typo corrected`: `met` - verified by grep' '- `Typo corrected`: `met` - None'
+  expect_invalid "$out" "Complete-Criterion-Evidence-None" "requires Completion Criteria Results evidence or a reason"
+  mutate_result "$src" "$out" '- `Typo corrected`: `met` - verified by grep' '- `Typo corrected`: `met` - `None`'
+  expect_invalid "$out" "Complete-Criterion-Evidence-None-Inline-Code" "requires Completion Criteria Results evidence or a reason"
+  mutate_result "$src" "$out" '- `Typo corrected`: `met` - verified by grep' \
+    '- `Typo corrected`: `met` - `<evidence or reason>`'
+  expect_invalid "$out" "Complete-Criterion-Evidence-Placeholder" "requires Completion Criteria Results evidence or a reason"
+
+  mutate_result "$src" "$out" '- `Typo corrected`: `met` - verified by grep' \
+    '- `criterion / label?`: `met` - arbitrary opaque evidence text'
+  expect_valid "$out" "Complete-Criterion-Opaque-Name-And-Evidence"
+
   mutate_result "$src" "$out" '- `Typo corrected`: `met` - verified by grep' '- Typo corrected: complete'
   expect_invalid "$out" "Complete-Criterion-Malformed" "unrecognized criterion or status"
   mutate_result "$src" "$out" '- `Typo corrected`: `met` - verified by grep' '- `None`'
@@ -335,13 +368,65 @@ fx_completion_criteria_status() {
   expect_valid "$out" "Complete-Unmerged-Candidate-Own-AC-Met"
 
   mutate_result "$src" "$out" '## Completion Criteria Results' \
-    $'## Completion Criteria Results\n\n<!--\n- `Example criterion`: `unmet` - example only\n-->\n\n```markdown\n- `Example criterion`: `blocked` - example only\n```'
+    $'## Completion Criteria Results\n\n<!--\n- `<criterion>`: `met` - `<evidence or reason>`\n-->\n\n```markdown\n- `None`: `met` - None\n```'
   expect_valid "$out" "Complete-Criteria-Comment-And-Fenced-Examples"
 
   mutate_result "$src" "$out" '- `Typo corrected`: `met` - verified by grep' \
     $'```markdown\n- `Typo corrected`: `met` - example only\n```'
   expect_invalid "$out" "Complete-Only-Fenced-Criteria" "requires explicit met Completion Criteria Results"
   echo "passed: FX-RS-completion-criteria-status"
+}
+
+fx_required_metadata_unfilled() {
+  local src="$FIXTURE_ROOT/FX-RS-good-complete-validation-performed.md"
+  local d out
+  d="$(sandbox)"; out="$d/metadata.md"
+  expect_valid "$src" "Required-Metadata-Complete-positive"
+
+  expect_unfilled_metadata "$src" "$out" schema_version 1.0 None "Required-Metadata-schema-version-none"
+  expect_unfilled_metadata "$src" "$out" artifact_version 1 None "Required-Metadata-artifact-version-none"
+  expect_unfilled_metadata "$src" "$out" result_ref result-20260720-090000-fixture None "Required-Metadata-result-ref-none"
+  expect_none_metadata_compatible "$src" "$out" contract_validation_status valid "Required-Metadata-contract-validation-status-none-compatible"
+  expect_none_metadata_compatible "$src" "$out" parse_status not_applicable "Required-Metadata-parse-status-none-compatible"
+  expect_none_metadata_compatible "$src" "$out" artifact_write_status written "Required-Metadata-artifact-write-status-none-compatible"
+
+  local status_src status_name
+  for status_src in FX-RS-good-partial-validation-not-performed FX-RS-good-blocked; do
+    status_name="${status_src#FX-RS-good-}"
+    expect_none_metadata_compatible "$FIXTURE_ROOT/$status_src.md" "$out" contract_validation_status valid "Required-Metadata-$status_name-contract-validation-status-none-compatible"
+    expect_none_metadata_compatible "$FIXTURE_ROOT/$status_src.md" "$out" parse_status not_applicable "Required-Metadata-$status_name-parse-status-none-compatible"
+    expect_none_metadata_compatible "$FIXTURE_ROOT/$status_src.md" "$out" artifact_write_status written "Required-Metadata-$status_name-artifact-write-status-none-compatible"
+  done
+  expect_unfilled_metadata "$src" "$out" sensitive_data_status none_detected None "Required-Metadata-sensitive-data-status-none"
+  expect_unfilled_metadata "$src" "$out" created_at 2026-07-20T09:00:00Z None "Required-Metadata-created-at-none"
+  expect_unfilled_metadata "$src" "$out" created_by fixture-worker None "Required-Metadata-created-by-none"
+  expect_unfilled_metadata "$src" "$out" review_state not_reviewed None "Required-Metadata-review-state-none"
+
+  mutate_result "$src" "$out" '- `execution_status`: `complete`' '- `execution_status`: `None`'
+  expect_invalid "$out" "Required-Metadata-execution-status-none" "execution_status must be one of complete/partial/failed/blocked"
+  mutate_result "$src" "$out" '- `execution_status`: `complete`' '- `execution_status`: `<complete | partial | failed | blocked>`'
+  expect_invalid "$out" "Required-Metadata-execution-status-placeholder" "execution_status must be one of complete/partial/failed/blocked"
+  mutate_result "$src" "$out" '- `receipt_status`: `received`' '- `receipt_status`: `None`'
+  expect_invalid "$out" "Required-Metadata-receipt-status-none" "receipt_status must be 'received'"
+
+  expect_unfilled_metadata "$src" "$out" result_ref result-20260720-090000-fixture \
+    '<result-YYYYMMDD-HHMMSS-short-slug>' "Required-Metadata-result-ref-placeholder"
+  expect_unfilled_metadata "$src" "$out" sensitive_data_status none_detected \
+    '<none_detected | redacted | contains_sensitive_data | unknown>' "Required-Metadata-sensitive-data-status-placeholder"
+  expect_unfilled_metadata "$src" "$out" created_at 2026-07-20T09:00:00Z \
+    '<YYYY-MM-DDTHH:MM:SSZ>' "Required-Metadata-created-at-placeholder"
+  expect_unfilled_metadata "$src" "$out" created_by fixture-worker \
+    '<worker runtime or person>' "Required-Metadata-created-by-placeholder"
+
+  mutate_result "$src" "$out" '- `result_ref`: `result-20260720-090000-fixture`' \
+    '- `result_ref`: `opaque result reference / arbitrary wording`'
+  mutate_result "$out" "$out" '- `created_by`: `fixture-worker`' '- `created_by`: `opaque worker label`'
+  expect_valid "$out" "Required-Metadata-Opaque-Values"
+
+  mutate_result "$src" "$out" '- `created_by`: `fixture-worker`' \
+    $'- `created_by`: `fixture-worker`\n<!--\n- `result_ref`: `<result-YYYYMMDD-HHMMSS-short-slug>`\n- `created_at`: `<YYYY-MM-DDTHH:MM:SSZ>`\n-->\n```markdown\n- `sensitive_data_status`: `<none_detected | redacted | contains_sensitive_data | unknown>`\n```'
+  expect_valid "$out" "Required-Metadata-Comment-And-Fenced-Examples"
+  echo "passed: FX-RS-required-metadata-unfilled"
 }
 
 fx_filled_current_template() {
@@ -448,6 +533,7 @@ fx_partial_result
 fx_blocked_result
 fx_ambiguous_result
 fx_source_handoff_reference
+fx_required_metadata_unfilled
 fx_completion_criteria_status
 fx_filled_current_template
 
