@@ -5,7 +5,7 @@
     {
       "name": "daily-report",
       "path": "skills/daily-report/SKILL.md",
-      "description": "Optional workflow skill for Slack-style daily reports. Use only when the user works with Slack daily reports and, optionally, Notion worklogs/Todo pages; it summarizes today's work by project with progress percentages.",
+      "description": "Optional workflow skill for Slack-style daily or weekly reports. Use only when the user works with Slack-style daily reports, weekly reports, or asks to merge several dated work logs into concise project-based lines with progress percentages; optionally use Notion worklogs/Todo pages as input.",
       "summary": "Optional Slack/Notion 일일보고 workflow",
       "routing": {
         "visibility": "contextual",
@@ -18,31 +18,37 @@
             "kind": "keyword",
             "values": [
               "일일보고",
+              "주간보고",
               "데일리 리포트",
+              "weekly report",
               "daily report"
             ]
           },
           {
             "kind": "intent",
             "values": [
-              "summarize_work_for_slack"
+              "summarize_work_for_slack",
+              "summarize_weekly_work"
             ]
           }
         ],
         "keywords": {
           "ko": [
             "일일보고",
+            "주간보고",
             "보고",
             "진척률"
           ],
           "en": [
             "daily report",
+            "weekly report",
             "slack report",
             "progress"
           ]
         },
         "use_when": [
-          "회사 Slack 일일보고 형식으로 오늘 작업을 프로젝트별 진척률과 함께 정리해야 하는 경우"
+          "회사 Slack 일일보고나 주간보고 형식으로 작업을 프로젝트별 진척률과 함께 정리해야 하는 경우",
+          "날짜별 업무 로그 여러 개를 하나의 주간보고로 합치되, 입력처럼 한 줄 위주로 유지해야 하는 경우"
         ],
         "do_not_use_when": [
           "Notion 업무일지나 Done/Todo 형식으로 스캔 가능한 개인 기록을 작성하는 경우"
