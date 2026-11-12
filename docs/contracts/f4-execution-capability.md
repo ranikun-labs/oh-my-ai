@@ -1,0 +1,423 @@
+# F4 Execution Capability Candidate
+
+> Candidate contract for RPL-120. This document and its fixtures describe a
+> deterministic evaluator only. They do not probe a host, create a Worker,
+> dispatch a Runner, resume a Task, or prove Runtime E2E.
+
+The integration candidate is based on public master
+`6d2a93893c0c7a40e1d0b99b691a8f950aa17969`.
+
+## Boundary
+
+The evaluator consumes task requirements and observations from a trusted
+environment adapter. No such adapter is implemented here. Fixture-provided
+observations and verifier callbacks are synthetic and cannot be promoted to
+environment or Runtime evidence.
+
+The existing F4 Skill remains an explicit operational playbook. Reading or
+invoking it does not grant approval or create a dispatcher. The existing
+work-start Human Review boundary remains unchanged. The RPL-116 agent manifest
+guard remains a standalone preflight contract, not an agent-spawn API.
+
+Approval is a separate authorization gate. It is not a technical Capability
+and cannot be inferred from a passing environment check. Public code does not
+encode private model settings, install or merge anything, write Jira, or alter
+private policy.
+
+## Task and environment inputs
+
+Task input has a non-empty capability list and an explicit approval requirement:
+
+    {
+      "task_id": "RPL-120-slice",
+      "scope_ref": "owner-approved-scope-reference",
+      "requirements": {
+        "capabilities": ["git", "jvm", "github_api"],
+        "capability_scopes": {
+          "git": { "operation": "read", "resource": "repo:org/example" },
+          "jvm": { "operation": "run-build", "resource": "repo:org/example" },
+          "github_api": { "operation": "read", "resource": "repo:org/example" }
+        },
+        "approval_required": true
+      },
+      "authorization": {
+        "status": "approved",
+        "verified": true,
+        "evidence_ref": "trusted-approval-record",
+        "scope_ref": "owner-approved-scope-reference"
+      }
+    }
+
+The current capability vocabulary is:
+
+| Capability | Example need |
+| --- | --- |
+| git | Local repository and Git operations |
+| git_proxy | Git remote traffic through a configured proxy |
+| jvm | JVM-based build or test |
+| socket | Required local or service socket access |
+| github_api | GitHub API read or write access |
+| actions | GitHub Actions read or dispatch access |
+| cross_repo | Work spanning more than one repository |
+| private_repo_checkout | Authorized checkout of a private repository |
+| artifact_handoff | Required artifact transfer and retrieval |
+| e2e | A real end-to-end target environment |
+
+The environment adapter supplies a stable fingerprint, provider ID, runtime ID,
+and one observation per required capability. An observation includes status
+(available, unavailable, or unknown), a verification flag, provider ID,
+runtime ID, capability, task ID, task scope reference, operation, resource,
+environment fingerprint, timestamp, and evidence reference. The observation's
+runtime ID must match its environment's runtime ID. `planRunnerRouting` also
+requires that environment runtime ID to equal the selected runner ID and passes
+that identity to the trusted capability verifier. A mismatch blocks routing
+before a capability evidence verifier can approve the observation. Every
+required capability must have a concrete operation/resource scope; missing
+scopes and extra unrequested scopes are invalid. Operation tokens use the
+canonical lowercase grammar
+^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$. Tokens all, any, unknown, unspecified, none,
+default, and wildcard are reserved and rejected as whole operation tokens or
+hyphen-delimited segments; read-all and unknown-run are invalid. Explicit verbs
+such as read, run-build, publish-and-fetch, connect, and checkout remain valid.
+Resource identifiers use a lowercase type prefix followed by a concrete path:
+the type matches ^[a-z][a-z0-9-]*$, and path segments contain only lowercase
+ASCII letters, digits, period, underscore, or hyphen, separated by slash or
+plus. Empty segments and segments equal to period or double-period are invalid.
+Wildcard/glob characters *, ?, [, ], {, }, and % are rejected. For example,
+repo:org/name and
+workspace:oh-my-ai+finance-harness are valid; repo:*, repo:org/*, and
+repo:org/../other are invalid. An observation for GitHub read or repo A cannot
+satisfy GitHub write or repo B.
+
+Each observation fingerprint must equal the current environment fingerprint.
+Preflight rejects observations older than five minutes or more than 30 seconds
+in the future. It passes task ID/scope, the exact requested operation/resource,
+the environment fingerprint, observed/check timestamps, and both freshness
+bounds to a trusted verifier callback. The callback must verify those values
+and provenance. A boolean flag alone is not proof. Missing, stale-shaped,
+mismatched, replayed, or unverified observations block preflight.
+
+When approval is required, the task scope and approval scope must match, the
+approval must be explicitly approved, and a trusted approval verifier must
+confirm its evidence. Without that verifier, preflight remains blocked.
+
+## Preflight and routing plan
+
+preflightExecution(task, environment) returns one of:
+
+| Status / code | Meaning |
+| --- | --- |
+| READY / CAPABILITIES_VERIFIED | All requested capability observations and approval evidence pass their trusted verifiers |
+| BLOCKED / ENVIRONMENT_BLOCKED | A capability is unavailable, unknown, missing, or lacks provenance |
+| BLOCKED / APPROVAL_BLOCKED | Approval is missing, pending, denied, unverified, or for another scope |
+| BLOCKED / PREFLIGHT_INVALID | Task requirements are malformed |
+| BLOCKED / ENVIRONMENT_UNIDENTIFIED | No stable environment fingerprint was supplied |
+
+planRunnerRouting(task, runners) evaluates each runner independently and
+selects the highest-priority compatible candidate, preserving input order for
+ties. A runner is compatible only when each observation and its environment are
+bound to that runner's exact ID. It returns ROUTE_PLANNED with dispatch_status:
+NOT_RUN. If no runner
+meets every task requirement, it returns BLOCKED / NO_COMPATIBLE_RUNNER.
+
+The routing result is a plan only. This module never calls a Runner or Runtime
+Adapter, and never returns a dispatch success. Capability evidence is scoped to
+the selected environment; it is not a static support declaration.
+
+## Failure separation and retry bound
+
+Callers classify a failure as environment or code:
+
+- An environment-blocked attempt may be reconsidered only after the stable
+  environment fingerprint changes. The same blocker under the same fingerprint
+  stops immediately. A changed environment allows at most one bounded
+  re-evaluation per failure fingerprint.
+- A code failure may be reconsidered only after the Git tree SHA changes. The
+  same failure on the same tree stops immediately. One changed-tree retry is
+  allowed per failure fingerprint.
+- A missing fingerprint or tree SHA blocks retry evaluation. Environment
+  failure is never rewritten as a code defect, and vice versa.
+
+These are decisions about whether a retry is useful. They do not run the retry.
+`decideRetry` also requires an `attempt_boundary` that records
+`claim_status: "NOT_ACQUIRED"` and `dispatch_status: "NOT_RUN"`. A missing,
+claimed, dispatched, or unknown boundary stops with `RETRY_BOUNDARY_UNSAFE`.
+This keeps a changed tree or environment from authorizing a second action after
+Claim or an ambiguous Runtime result.
+
+`decideRetry` is intentionally not called by
+`createPendingHandoffManualResumeRuntimeComposition`. The composition handles
+one explicit action request and makes at most one `resolveAndResume` call per
+invocation. It does not own durable failure history or classify sanitized
+executor failures into environment/code fingerprints. `decideRetry` alone does
+not authorize another call: after Claim, the composition's early revision guard
+rejects the original expected revision, while the service rejects the claimed
+revision as a replay mismatch. Thus the current composition has no supported
+second invocation after Claim, even with the same attempt ID. A future RPL-120
+recovery path must first reconcile the durable Claim and establish runtime
+deduplication for that attempt; only then may a caller use `decideRetry` to
+consider changed environment/tree evidence. Until that recovery contract exists,
+do not retry a post-Claim or ambiguous action result. `resume_accepted` and a
+generic action failure alone never authorize an automatic retry.
+
+The composition reserves a candidate/attempt pair before its first await, so
+concurrent calls through composition instances in the same Node process return
+`manual_resume_attempt_in_progress` without a second Claim or Runtime call.
+Before dispatch it also calls the Store-backed
+`claimLease.acquireClaimForDispatch` operation. The existing Store arbitrates
+mutations with a per-record filesystem lock and revision CAS. This operation
+rejects an already-persisted same-owner/same-attempt Claim instead of replaying
+it as a fresh acquisition. Two independent processes racing the same attempt
+therefore cannot both receive dispatch authority: one CAS may publish the
+Claim, and the other call sees either the revision conflict or the persisted
+Claim replay and fails closed. The generic `acquireClaim` operation retains its
+existing idempotent replay behavior for non-dispatch callers.
+
+The current composition reports `manual_resume_claim_outcome_unknown` when a
+Claim may have persisted but no validated action request is available. Once the
+executor is invoked, a thrown, malformed, or non-accepted result is reported as
+`manual_resume_action_outcome_unknown`, except for the adapter's explicit
+unsupported-runtime response. A persisted active Claim blocks a sequential
+restart from acquiring dispatch authority again, including after lease expiry
+until explicit clearing occurs. The current Claim schema has no durable
+resume-outcome tombstone. Both `recoverClaimLease` and
+`releaseClaimBeforeDelivery` can clear a Claim back to pending without knowing
+whether Manual Resume dispatched or the Runtime accepted the action. A later
+call with the new revision could then acquire fresh dispatch authority for the
+same UNKNOWN outcome. The Manual Resume composition neither exposes nor calls
+these clearing operations, and callers must not clear an UNKNOWN Runtime
+outcome. That caller rule is not enforced by the shared Claim service, so M1
+remains open for explicit Claim clearing followed by redispatch. Safe
+post-clear recovery, authoritative outcome reconciliation, and result/checkpoint
+CAS remain blocked on an owned durable Attempt/Outcome contract.
+
+## Checkpoint evidence reuse
+
+assessCheckpointResume(checkpoint, current, verifier) is eligible only when:
+
+1. The checkpoint belongs to the same repository and is interrupted or blocked.
+2. Full commit SHA and tree SHA exactly match the current target.
+3. Environment fingerprint exactly matches.
+4. A non-empty next step exists.
+5. A passing test record matches the same SHA, tree, environment, test-plan ID,
+   test-plan digest, and repository.
+6. A trusted verifier confirms the test record while receiving the expected
+   repository, SHA, tree, environment fingerprint, and test-plan ID/digest.
+
+It returns RESUME_ELIGIBLE and resume_status: ELIGIBLE_ONLY; execution remains
+NOT_RUN. Missing or stale evidence fails closed. A fixture callback is not a
+trusted production verifier.
+
+## Required regression blockers
+
+| Case | Required observation | Expected result |
+| --- | --- | --- |
+| Finance JVM | jvm: unavailable | Environment block; no Runner selected; same-fingerprint retry stopped |
+| Carelog Socket | socket: unavailable | Environment block; no Runner selected; same-fingerprint retry stopped |
+| Git Proxy | git_proxy: unavailable | Environment block; no Runner selected; same-fingerprint retry stopped |
+| Artifact Handoff | artifact_handoff: unavailable | Environment block; no Runner selected; same-fingerprint retry stopped |
+| Private Repo Checkout | private_repo_checkout: unavailable | Environment block; no Runner selected; same-fingerprint retry stopped |
+| Actual E2E not ready | e2e: unavailable | Environment block; no Runner selected; same-fingerprint retry stopped |
+
+The native fixtures use only synthetic observations. They validate evaluator
+behavior, not Finance/Carelog connectivity, Git Proxy, private repository
+authorization, Artifact transfer, Actions, E2E readiness, or Runtime dispatch.
+Run the candidate fixtures directly with:
+
+    node scripts/test-f4-execution-capability-fixtures.mjs
+
+Additional fixtures reject operation/resource mismatches, task/scope replay,
+observations reused across environment fingerprints, stale observations,
+future timestamps outside the skew bound, and checkpoint test evidence from a
+different repository even when SHA, tree, and test plan match.
+
+## Integration gates
+
+- The existing RPL-120 `createPendingHandoffManualResumeRuntimeComposition`
+  boundary now requires an injected `capabilityContext` port. Its
+  `resolveManualResumeContext({ candidate_id, runtime_id,
+  persisted_candidate })` call receives a frozen, validated snapshot of the
+  persisted candidate ID, revision, source runtime, source session identity,
+  repository identity, and worktree identity. The result must provide runtime
+  bound environment evidence, a task scope, and explicit checkpoint/current/
+  test-plan evidence. The required `verifyManualResumeBinding` callback must
+  attest that the task resource/scope and checkpoint/current/test evidence map
+  to that exact snapshot; SHA/tree/test verification also receives the expected
+  repository/worktree identities and revision. The composition runs RPL-118 routing and
+  `assessCheckpointResume` before constructing the manual-resume service,
+  acquiring a Claim, or calling the existing executor. Missing, malformed,
+  blocked, or mismatched evidence returns the stable sanitized
+  `manual_resume_capability_preflight_blocked` result.
+- The capability scope snapshot preserves every own key, including an own
+  `__proto__` property. Such an extra scope remains visible to validation and
+  is rejected as an unrequested scope rather than disappearing during copying.
+- The persisted handoff schema does not contain the SHA/tree/test-plan proof
+  needed for checkpoint reuse. The composition does not derive it from
+  `verification` text. A context provider must supply and verify that evidence;
+  otherwise preflight fails closed. No production context provider or runtime
+  probe is supplied by this candidate.
+- The composition fixtures use synthetic evidence and a fake executor. They
+  verify gate ordering and that a verified fixture can reach that fake
+  executor; they cover repository, worktree, revision, and Codex/Claude runtime
+  cross-binding failures. They do not demonstrate Runtime dispatch, a real
+  resume, or E2E.
+- A future adapter must collect current evidence, validate its provenance, and
+  supply a stable fingerprint before this evaluator can make an environment
+  decision.
+- RPL-116's real-dispatch trust boundary must remain in force for Writer or
+  Reviewer creation. Requested and effective model settings remain distinct;
+  unknown settings do not become Reviewer PASS.
+- Runtime dispatch, production checkpoint persistence, actual resume,
+  Writer-to-Reviewer E2E, and 30–60 minute unattended execution remain
+  NOT_IMPLEMENTED and NOT_RUN until a supported, controllable Runtime Adapter
+  exists.
+- Owner approval, Jira status changes, PR creation, Source Merge, global
+  installation, deployment, and private policy changes are outside this
+  candidate.
+
+## Manual Resume Attempt / Outcome aggregate
+
+The current pending-handoff Claim record is not an RPL-120 Attempt/Outcome
+record. It has only owner, Claim timestamps, and `claim_attempt_id`; the
+filesystem Store exposes candidate-state CAS, not result/checkpoint CAS. A
+Claim lease expiry therefore does not prove that a Runtime action was never
+sent. `recoverClaimLease` and `releaseClaimBeforeDelivery` must not authorize a
+Manual Resume retry based on lease expiry, caller assertion, or Claim revision
+alone. Existing Claim and Delivery contracts are unchanged.
+
+RPL-120 has a separate domain service in
+`scripts/lib/pending-handoff-manual-resume-attempt-outcome.mjs` and a provider
+adapter in `scripts/lib/pending-handoff-manual-resume-attempt-outcome-store-adapter.mjs`.
+The adapter derives a stable path-safe key from `(candidate_id, action_kind)`,
+maps create-if-absent/revision CAS to the domain Store port, and rejects
+scope-mismatched or malformed records. It is wired at the Composition boundary
+through the Attempt/Outcome Store dependency.
+
+```js
+identity = {
+  candidate_id,
+  action_kind: "manual_resume",
+  attempt_id,
+  runtime_id,
+  actor_identity,
+  scope_ref,
+  repository_identity,
+  worktree_identity,
+  candidate_revision,
+}
+
+attemptOutcomePort = {
+  readAttempt({ candidate_id, action_kind }),
+  compareAndSetAttempt({ candidate_id, action_kind, expected_revision, next_record }),
+}
+
+atomicRecordProvider = {
+  readRecord({ namespace, record_key }),
+  compareAndSetRecord({ namespace, record_key, expected_revision, next_record }),
+}
+```
+
+`atomicRecordProvider` is the RPL-120 side of the adapter contract; this does
+not claim that RPL-95 exports this API. A `null` expected revision must mean
+atomic create-if-absent. Numeric revisions must compare and replace one record
+atomically across processes. The provider owns user-local root resolution,
+physical locking, durable publication, and unavailable-root errors. The current
+public Pending Handoff Store only CASes its signed candidate/Claim/Delivery
+record and cannot store arbitrary Attempt records. Jira RPL-95 is still in
+progress; no canonical RPL-95 source branch or provider API is published on
+the verified public base. The fixtures use a test-only generic provider and do
+not stand in for that production integration.
+
+The domain service writes one active attempt record with an aggregate revision
+and these transitions:
+
+1. `reserved`: written after current session resolution and before Claim.
+2. `claim_bound`: stores the Claim revision after the Claim CAS succeeds.
+3. `dispatch_unknown`: written by CAS before the Runtime call. Crash or lost
+   response after this transition remains ambiguous.
+4. `accepted`: written only after the Composition validates the adapter's
+   exact `resume_accepted` receipt. Accepted is not task completion.
+
+The aggregate key is candidate plus action kind; the attempt ID is part of the
+record. A second attempt ID cannot bypass an active `reserved`, `claim_bound`,
+`dispatch_unknown`, or `accepted` record. The API currently exposes no reset,
+reconciliation, completion, result/checkpoint CAS, or Claim release operation.
+Those recovery transitions remain blocked until their authoritative providers
+and storage transaction contract are supplied. No current method can clear an
+UNKNOWN state using lease expiry or a caller-provided assertion.
+
+All records bind candidate, action, attempt, runtime semantic ID, opaque actor,
+candidate scope, repository/worktree identities, candidate revision, Claim
+revision, and aggregate revision. The current candidate scope is the
+pending-handoff candidate ID; it is not an RPL-94 Association ID. No native
+session ID, prompt, transcript, response, or tool output is stored.
+
+Stale CAS, missing records, unavailable storage, write-response loss, or
+unknown Runtime state fail closed. The service is designed to consume a Store
+that provides these semantics; it does not itself prove the injected Store is
+durable, atomic, or cross-process.
+
+### Approved Recovery invariants
+
+The following safety invariants are approved for Manual Resume:
+
+* An UNKNOWN Runtime outcome does not authorize a new Runtime dispatch.
+* `accepted` is not `completed` and is not proof of a completed task result.
+* Claim lease expiry or Claim release alone does not establish whether the
+  Runtime action executed or what its outcome was.
+
+These invariants require fail-closed handling when execution or persistence is
+ambiguous. They do not define a Result/Checkpoint schema, a recovery API, or a
+retry procedure. In particular, no caller assertion, Candidate revision
+change, or lease transition may be treated as authoritative Runtime outcome
+evidence.
+
+### Current Attempt gate behavior and evidence limits
+
+The existing Attempt gate records `reserved`, `claim_bound`,
+`dispatch_unknown`, and `accepted` states. Its current implementation refuses a
+new Attempt for an active Candidate/action record. This is implementation
+behavior covered by the existing fixtures; it is not evidence that the injected
+Attempt Store is physically durable or that a legacy Claim release is
+transactionally coupled to that record.
+
+The Composition fixtures contain two model-only failure cases: UNKNOWN after
+simulated legacy Claim release plus a Candidate revision change, and an
+accepted Attempt with simulated Result success followed by Checkpoint CAS
+failure and process restart. They verify only that the current Attempt gate
+refuses a second Claim/Runtime call. They do not exercise a Result or
+Checkpoint Port, checkpoint-only retry, physical persistence, or production
+recovery. The separate process-contention fixtures use a test provider and do
+not establish cross-process production durability.
+
+### Owner Decision required — Result and Checkpoint contract
+
+No Result/Checkpoint production contract or implementation is authorized by
+the invariants above. The following decisions remain open and must be supplied
+by the product owner before production behavior is added:
+
+* Result and Checkpoint record shapes, Port signatures, identity/scope, and
+  revision/CAS ownership.
+* Whether and how one Attempt's Runtime result is immutable, durably stored,
+  and safely reprocessed after restart, including duplicate callbacks.
+* The exact evidence and authorization required for a Checkpoint-only retry.
+* Reconciliation behavior after partial or ambiguous Result/Checkpoint writes,
+  including the authority that can resolve an ambiguous state.
+* Retention, lifecycle/terminal states, and which actor may recover or clear
+  records.
+
+Until those decisions and their canonical APIs exist, Result/Checkpoint
+persistence and retry remain unimplemented. A simulated saved Result is not
+durability evidence; a failed or ambiguous write remains blocked.
+`resume_accepted` cannot be promoted into a completed Result or used to infer a
+Checkpoint.
+
+No concrete RPL-95 physical-state provider, RPL-94 Association API, RPL-93 M5
+Task Context/Fresh Observation/Resume entrypoint, or supported Runtime Result
+provider is available on this PR's public base. RPL-120 must consume those
+published contracts when available; it must not write parallel RPL-95 state
+or redefine RPL-94 Association lifecycle. The RPL-120 provider adapter is
+implemented and fixture-tested, but has no approved physical provider
+connection; M1 remains OPEN. Cross-process production Claim arbitration, safe
+UNKNOWN recovery, result/checkpoint persistence, and product Manual Resume E2E
+remain separate, unverified gates.
