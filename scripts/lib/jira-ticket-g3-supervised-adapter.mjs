@@ -6,7 +6,7 @@
  * policy revision, live metadata and Owner approval using external sources.
  * Until then this is an offline integration seam, not production activation.
  */
-export function createG3SupervisedAdapter({ jira, ledger, verifyGate, siteOrigin, runtime = "codex" }) {
+export function createG3SupervisedAdapter({ jira, ledger, verifyGate, siteOrigin, capabilityEvidence, runtime = "codex" }) {
   if (!jira || !ledger || typeof verifyGate !== "function"
     || typeof jira.search !== "function" || typeof jira.create !== "function"
     || typeof jira.read !== "function" || typeof ledger.persistIntent !== "function"
@@ -14,6 +14,24 @@ export function createG3SupervisedAdapter({ jira, ledger, verifyGate, siteOrigin
     || typeof ledger.readClassificationAuthority !== "function")
     throw new Error("G3 requires explicit trusted Jira, authorization and durable Ledger integrations");
   if (!/^https:\/\/[^/]+$/.test(siteOrigin ?? "")) throw new Error("verified Jira site origin required");
+  // Capability claims must come from a trusted runtime integration, not from
+  // the presence of dependency-injected methods. Mock callers supply explicit
+  // synthetic evidence in fixtures. The G3 reference never authenticates
+  // evidence_ref itself; production connectors must do that before injection.
+  const requiredCapabilities = [
+    "jira.search", "jira.create", "jira.read", "jira.intent.persist", "jira.origin.persist",
+  ];
+  const capabilities = {};
+  for (const name of requiredCapabilities) {
+    const proof = capabilityEvidence?.[name];
+    if (proof?.available !== true || proof?.connection_verified !== true
+      || typeof proof?.evidence_ref !== "string" || !proof.evidence_ref.trim()
+      || (["jira.search", "jira.create", "jira.read"].includes(name)
+        && proof.jira_site_origin !== siteOrigin))
+      throw new Error("missing verified capability evidence: " + name);
+    capabilities[name] = { available: true, connection_verified: true,
+      evidence_ref: proof.evidence_ref };
+  }
   let active = null;
   let intentReserved = false;
   let createReserved = false;
@@ -73,9 +91,7 @@ export function createG3SupervisedAdapter({ jira, ledger, verifyGate, siteOrigin
   return {
     runtime,
     runtime_evidence: { jira_site_origin: siteOrigin },
-    capabilities: Object.fromEntries([
-      "jira.search", "jira.create", "jira.read", "jira.intent.persist", "jira.origin.persist",
-    ].map(k => [k, { available: true, connection_verified: true }])),
+    capabilities,
     async search(request) {
       await gate("search", request);
       const result = await jira.search(request);
