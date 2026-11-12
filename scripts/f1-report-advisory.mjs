@@ -16,6 +16,21 @@ const REQUIRED_SECTIONS = [
   "다음 행동",
   "근거",
 ];
+const AI_STATUS_SECTION = "AI 실행 현황";
+const AI_STATUS_HEADERS = [
+  "agent id",
+  "실제 역할",
+  "실제 참여",
+  "spawn events",
+  "resume events",
+  "continue events",
+  "요청 model/reasoning/fast·출처",
+  "운영 선호·출처",
+  "실효 model/reasoning/fast·출처",
+  "실제 작업·상태",
+  "공식 토큰·비용·구간·출처",
+];
+const OBSERVATION_COVERAGES = new Set(["complete", "partial", "unknown"]);
 
 const EVIDENCE_STATUSES = new Set(["PASS", "FAIL", "NOT_RUN", "BLOCKED", "UNKNOWN"]);
 const OWNER_STATUSES = new Set(["APPROVED", "PENDING", "BLOCKED", "UNKNOWN", "NOT_REQUIRED"]);
@@ -385,6 +400,201 @@ function validateRequiredReportFields(sectionScan) {
   return errors;
 }
 
+function splitMarkdownTableRow(line) {
+  const trimmed = String(line).trim();
+  if (!trimmed.startsWith("|") || !trimmed.endsWith("|")) return null;
+
+  const cells = [];
+  let cell = "";
+  let escaped = false;
+  for (const character of trimmed.slice(1, -1)) {
+    if (character === "|" && !escaped) {
+      cells.push(cell.trim());
+      cell = "";
+    } else {
+      cell += character;
+    }
+    if (character === "\\" && !escaped) escaped = true;
+    else escaped = false;
+  }
+  cells.push(cell.trim());
+  return cells;
+}
+
+function normalizeTableHeader(value) {
+  return String(value)
+    .replaceAll("`", "")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .toLocaleLowerCase();
+}
+
+function findAiStatusTable(sectionBody) {
+  const lines = String(sectionBody).split(/\r?\n/u);
+  for (let index = 0; index < lines.length - 1; index += 1) {
+    const headers = splitMarkdownTableRow(lines[index]);
+    const separators = splitMarkdownTableRow(lines[index + 1]);
+    if (!headers || !separators || headers.length !== separators.length) continue;
+    if (!separators.every((cell) => /^:?-{3,}:?$/u.test(cell))) continue;
+
+    const normalizedHeaders = headers.map(normalizeTableHeader);
+    if (!AI_STATUS_HEADERS.every((header) => normalizedHeaders.includes(header))) continue;
+
+    const rows = [];
+    for (let rowIndex = index + 2; rowIndex < lines.length; rowIndex += 1) {
+      const cells = splitMarkdownTableRow(lines[rowIndex]);
+      if (!cells) break;
+      rows.push(cells);
+    }
+    return { headers: normalizedHeaders, rows };
+  }
+  return null;
+}
+
+function findAiStatusLabel(sectionBody, label) {
+  const pattern = new RegExp(`^[ \\t]*(?:[-*][ \\t]*)?${label}[ \\t]*:[ \\t]*(.*)$`, "gimu");
+  return [...String(sectionBody).matchAll(pattern)].map((match) => match[1].trim().replaceAll("`", ""));
+}
+
+function normalizeParticipantId(participant) {
+  if (typeof participant === "string") return participant.trim();
+  if (participant && typeof participant === "object" && typeof participant.id === "string") {
+    return participant.id.trim();
+  }
+  return null;
+}
+
+function validateAiStatus(markdown, options = {}) {
+  const errors = [];
+  const sectionScan = splitSections(markdown);
+  if (sectionScan.duplicates.has(AI_STATUS_SECTION)) {
+    errors.push(`duplicate AI status section: ## ${AI_STATUS_SECTION}`);
+  }
+
+  const section = sectionScan.sections.get(AI_STATUS_SECTION);
+  if (section === undefined) {
+    errors.push(`missing required section: ## ${AI_STATUS_SECTION}`);
+    return { valid: false, errors, scope: "AI_STATUS_ONLY" };
+  }
+
+  const coverage = options.observationCoverage ?? "unknown";
+  if (typeof coverage !== "string" || !OBSERVATION_COVERAGES.has(coverage)) {
+    errors.push("observationCoverage must be complete, partial, or unknown");
+  }
+
+  const coverageLabels = findAiStatusLabel(section, "관측 범위");
+  if (coverageLabels.length !== 1) {
+    errors.push("AI status must have exactly one observation coverage line");
+  } else if (coverageLabels[0].toLowerCase() !== String(coverage).toLowerCase()) {
+    errors.push(`AI status observation coverage must match the supplied value: ${coverage}`);
+  }
+
+  const table = findAiStatusTable(section);
+  if (!table) {
+    errors.push("AI status must contain the required participant table");
+    return { valid: false, errors, scope: "AI_STATUS_ONLY" };
+  }
+
+  const headerIndexes = new Map(table.headers.map((header, index) => [header, index]));
+  const indexOf = (header) => headerIndexes.get(header);
+  const malformedRows = table.rows.filter((row) => row.length !== table.headers.length).length;
+  if (malformedRows > 0) errors.push("AI status table rows must match the header column count");
+  const rows = table.rows.filter((row) => row.length === table.headers.length);
+  if (rows.length === 0) errors.push("AI status participant table must contain at least one participant row");
+
+  const agentIds = [];
+  const participantIds = [];
+  let mainParticipantFound = false;
+  let unknownParticipationCount = 0;
+  for (const row of rows) {
+    const participantId = row[indexOf("agent id")].replaceAll("`", "").trim();
+    const role = row[indexOf("실제 역할")].replaceAll("`", "").trim();
+    const participation = row[indexOf("실제 참여")].replaceAll("`", "").trim();
+    if (!participantId) errors.push("AI status participant row must include an Agent ID");
+    else agentIds.push(participantId);
+    if (!role) errors.push(`AI status participant ${participantId || "UNKNOWN"} must include an actual role`);
+    const isParticipant = /^(?:yes|true|1|예|참여)$/iu.test(participation);
+    const isNonParticipant = /^(?:no|false|0|아니오|미참여)$/iu.test(participation);
+    const isUnknownParticipation = /^unknown$/iu.test(participation);
+    if (!isParticipant && !isNonParticipant && !isUnknownParticipation) {
+      errors.push(`AI status participant ${participantId || "UNKNOWN"} must mark participation yes, no, or UNKNOWN`);
+    }
+    if (isParticipant) participantIds.push(participantId);
+    if (isUnknownParticipation) unknownParticipationCount += 1;
+    if (/\bmain\b/iu.test(role) && isParticipant) mainParticipantFound = true;
+
+    for (const header of AI_STATUS_HEADERS.slice(6)) {
+      const value = row[indexOf(header)].trim();
+      if (!value) errors.push(`AI status ${header} must be explicit; use UNKNOWN when unavailable`);
+    }
+    const lifecycleCounts = [];
+    for (const header of ["spawn events", "resume events", "continue events"]) {
+      const value = row[indexOf(header)].trim();
+      if (!/^(?:\d+|UNKNOWN)$/iu.test(value)) {
+        errors.push(`AI status ${header} must be a non-negative count or UNKNOWN`);
+      }
+      lifecycleCounts.push(value.toUpperCase());
+    }
+    const hasObservedLifecycleEvent = lifecycleCounts.some((count) => /^\d+$/u.test(count) && /[1-9]/u.test(count));
+    if (isNonParticipant && !hasObservedLifecycleEvent) {
+      errors.push(`AI status nonparticipant ${participantId || "UNKNOWN"} must have an observed spawn, resume, or continue event with a positive count`);
+    }
+  }
+
+  if (!mainParticipantFound) errors.push("AI status must include the participating Main row, including Main-only runs");
+  if (new Set(agentIds).size !== agentIds.length) {
+    errors.push("AI status must contain one row per unique Agent ID");
+  }
+  if (coverage === "complete" && unknownParticipationCount > 0) {
+    errors.push("complete AI status coverage cannot include UNKNOWN participation rows");
+  }
+
+  const confirmedCounts = findAiStatusLabel(section, "확인된 참여자 수");
+  if (confirmedCounts.length !== 1 || !/^\d+$/u.test(confirmedCounts[0])) {
+    errors.push("AI status must have one numeric confirmed participant count");
+  } else if (Number(confirmedCounts[0]) !== participantIds.length) {
+    errors.push("AI status confirmed participant count must match participant table rows");
+  }
+
+  const totalCounts = findAiStatusLabel(section, "전체 참여자 수");
+  if (totalCounts.length !== 1) {
+    errors.push("AI status must have exactly one total participant count");
+  } else if (coverage === "complete") {
+    if (!/^\d+$/u.test(totalCounts[0]) || Number(totalCounts[0]) !== participantIds.length) {
+      errors.push("complete AI status coverage must report the table row count as the total participant count");
+    }
+  } else if (totalCounts[0].toUpperCase() !== "UNKNOWN") {
+    errors.push("partial or unknown AI status coverage must report total participants as UNKNOWN");
+  }
+
+  if (options.observedParticipants !== undefined) {
+    if (!Array.isArray(options.observedParticipants)) {
+      errors.push("observedParticipants must be an array when supplied");
+    } else {
+      const observedIds = options.observedParticipants.map(normalizeParticipantId);
+      if (observedIds.some((id) => id === null || id.length === 0)) {
+        errors.push("observedParticipants entries must be Agent IDs or objects with an id");
+      }
+      const validObservedIds = observedIds.filter((id) => id !== null && id.length > 0);
+      if (new Set(validObservedIds).size !== validObservedIds.length) {
+        errors.push("observedParticipants must not contain duplicate Agent IDs");
+      }
+      const observedSet = new Set(validObservedIds);
+      const reportedSet = new Set(participantIds);
+      for (const id of validObservedIds) {
+        if (!reportedSet.has(id)) errors.push(`AI status does not confirm observed participant: ${id}`);
+      }
+      for (const id of participantIds) {
+        if (!observedSet.has(id)) errors.push(`AI status participant is absent from observedParticipants: ${id}`);
+      }
+    }
+  } else if (coverage === "complete") {
+    errors.push("complete AI status coverage requires observedParticipants");
+  }
+
+  return { valid: errors.length === 0, errors, scope: "AI_STATUS_ONLY" };
+}
+
 function hasUsableContent(body) {
   if (!body) return false;
   const lines = body.split("\n").map((line) => line.trim()).filter(Boolean);
@@ -407,8 +617,14 @@ function parseStatusLines(markdown) {
   return found;
 }
 
-function validateF1Report(markdown) {
+function validateF1Report(markdown, options = {}) {
   const errors = [];
+  const requireAiStatus = options?.requireAiStatus ?? false;
+  if (typeof requireAiStatus !== "boolean") {
+    errors.push("requireAiStatus must be a boolean");
+  } else if (requireAiStatus) {
+    errors.push(...validateAiStatus(markdown, options).errors);
+  }
   const sectionScan = splitSections(markdown);
   const sections = sectionScan.sections;
   for (const duplicate of sectionScan.duplicates) {
@@ -484,10 +700,55 @@ function validateF1Report(markdown) {
   return { valid: errors.length === 0, errors };
 }
 
+function parseCliArguments(args) {
+  const parsed = { file: null, options: {}, aiStatusOnly: false };
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index];
+    if (argument === "--require-ai-status") {
+      parsed.options.requireAiStatus = true;
+    } else if (argument === "--ai-status-only") {
+      parsed.aiStatusOnly = true;
+      parsed.options.requireAiStatus = true;
+    } else if (argument === "--observed-participants-json" || argument === "--observation-coverage") {
+      const value = args[index + 1];
+      if (!value || value.startsWith("--")) throw new Error(`missing value for ${argument}`);
+      index += 1;
+      if (argument === "--observation-coverage") {
+        parsed.options.observationCoverage = value;
+      } else {
+        try {
+          parsed.options.observedParticipants = JSON.parse(value);
+        } catch {
+          throw new Error("--observed-participants-json must contain valid JSON");
+        }
+      }
+    } else if (argument.startsWith("--")) {
+      throw new Error(`unknown option: ${argument}`);
+    } else if (parsed.file === null) {
+      parsed.file = argument;
+    } else {
+      throw new Error(`unexpected argument: ${argument}`);
+    }
+  }
+  if ((parsed.options.observedParticipants !== undefined || parsed.options.observationCoverage !== undefined)
+    && !parsed.options.requireAiStatus) {
+    throw new Error("participant options require --require-ai-status or --ai-status-only");
+  }
+  return parsed;
+}
+
 function main() {
-  const file = process.argv[2];
+  let parsed;
+  try {
+    parsed = parseCliArguments(process.argv.slice(2));
+  } catch (error) {
+    console.error(`usage: node scripts/f1-report-advisory.mjs <report.md> [--require-ai-status] [--observed-participants-json '<json>'] [--observation-coverage complete|partial|unknown] [--ai-status-only]`);
+    console.error(`invalid_arguments: ${error.message}`);
+    process.exit(2);
+  }
+  const { file } = parsed;
   if (!file) {
-    console.error("usage: node scripts/f1-report-advisory.mjs <report.md>");
+    console.error("usage: node scripts/f1-report-advisory.mjs <report.md> [--require-ai-status] [--observed-participants-json '<json>'] [--observation-coverage complete|partial|unknown] [--ai-status-only]");
     process.exit(2);
   }
   if (!fs.existsSync(file)) {
@@ -495,13 +756,21 @@ function main() {
     process.exit(3);
   }
 
-  const result = validateF1Report(fs.readFileSync(file, "utf8"));
+  const markdown = fs.readFileSync(file, "utf8");
+  const result = parsed.aiStatusOnly
+    ? validateAiStatus(markdown, parsed.options)
+    : validateF1Report(markdown, parsed.options);
   if (!result.valid) {
     for (const error of result.errors) console.error(`invalid: ${error}`);
     console.error("advisory_only: report facts, URLs, SHAs, and review independence are not verified");
     process.exit(1);
   }
-  console.log(`f1_report_structure_valid: ${file}`);
+  if (parsed.aiStatusOnly) {
+    console.log(`f1_ai_status_structure_valid_partial: ${file}`);
+    console.log("advisory_scope: AI_STATUS_ONLY; this does not mean the full eight-section F1 is valid");
+  } else {
+    console.log(`f1_report_structure_valid: ${file}`);
+  }
   console.log("advisory_only: report facts, URLs, SHAs, and review independence are not verified");
 }
 
@@ -509,4 +778,4 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   main();
 }
 
-export { REQUIRED_SECTIONS, validateF1Report, splitSections };
+export { AI_STATUS_SECTION, REQUIRED_SECTIONS, validateAiStatus, validateF1Report, splitSections };
