@@ -5,6 +5,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { matchSkillCandidatesWithStatus } from "./lib/routing-status.mjs";
+import { needsJiraFirstDevelopmentPreflight } from "./lib/jira-first-development-intent.mjs";
 import {
   hasRecentWorkStartExecution,
   workStartSuggestionStatePath,
@@ -114,6 +115,10 @@ function buildPromptRoutingPayload(prompt, options = {}) {
 
   const notes = [];
   let workStartSuggestion = null;
+
+  if (needsJiraFirstDevelopmentPreflight(prompt)) {
+    notes.push("- Jira-first development preflight (advisory only): check for an existing RPL Primary Issue and reuse it when appropriate before implementation. If no issue exists, use the approved Ticket Contract/duplicate/preview/approval procedure. Inspect applicable Skill contracts; do not implicitly invoke jira-work or work-start. This hint never approves Jira Create/Update or Git Write.");
+  }
 
   if (hasToilSignal(prompt, normalized)) {
     appendAutomationCandidate(prompt);
