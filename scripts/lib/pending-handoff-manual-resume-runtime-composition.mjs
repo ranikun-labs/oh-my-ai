@@ -1,6 +1,11 @@
 import { types as utilTypes } from "node:util";
 import { createPendingHandoffManualResumeService } from "./pending-handoff-manual-resume.mjs";
+import { createPendingHandoffManualResumeAttemptOutcomeService } from "./pending-handoff-manual-resume-attempt-outcome.mjs";
 import { validateOpaqueIdentity } from "./pending-handoff-identity.mjs";
+import {
+  assessCheckpointResume,
+  planRunnerRouting,
+} from "./f4-execution-capability.mjs";
 
 const RUNTIME_ID_PATTERN = /^[a-z][a-z0-9-]{0,31}$/;
 const UUID_V4_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -11,11 +16,23 @@ const REQUEST_KEYS = Object.freeze([
   "claim_attempt_id",
 ]);
 const STORE_KEYS = Object.freeze(["readState"]);
-const CLAIM_LEASE_KEYS = Object.freeze(["acquireClaim"]);
+const CLAIM_LEASE_KEYS = Object.freeze(["acquireClaimForDispatch"]);
+const ATTEMPT_OUTCOME_STORE_KEYS = Object.freeze(["readAttempt", "compareAndSetAttempt"]);
 const RUNTIME_ENTRY_KEYS = Object.freeze(["runtime_id", "sessionResolution", "manualResumeAction"]);
 const SESSION_RESOLUTION_KEYS = Object.freeze(["resolveCurrentSession", "resolveTargetSession"]);
 const ACTION_KEYS = Object.freeze(["supported", "executor"]);
 const EXECUTOR_KEYS = Object.freeze(["resolveAndResume"]);
+const ACTIVE_MANUAL_RESUME_ATTEMPTS = new Set();
+const CAPABILITY_CONTEXT_KEYS = Object.freeze(["resolveManualResumeContext"]);
+const CAPABILITY_CONTEXT_RESULT_KEYS = Object.freeze([
+  "task",
+  "environment",
+  "evidenceVerifiers",
+  "verifyManualResumeBinding",
+  "checkpoint",
+  "current",
+  "verifyTestEvidence",
+]);
 const STATE_KEYS = Object.freeze(["candidate", "state_revision", "claim"]);
 const RECEIPT_KEYS = Object.freeze([
   "action_kind",
@@ -30,10 +47,6 @@ const RECEIPT_KEYS = Object.freeze([
 const TARGET_KEYS = Object.freeze(["runtime_id", "session_identity"]);
 const SUPPORTED_EXECUTOR_FAILURES = new Map([
   ["codex_action_runtime_unsupported", "manual_resume_runtime_unsupported"],
-  ["codex_action_not_found", "manual_resume_target_not_found"],
-  ["codex_action_ambiguous", "manual_resume_target_ambiguous"],
-  ["codex_action_stale", "manual_resume_target_stale"],
-  ["codex_action_denied", "manual_resume_denied"],
 ]);
 
 export function createPendingHandoffManualResumeRuntimeComposition(options) {
@@ -51,24 +64,85 @@ async function executeManualResume(dependencies, request) {
   const inspectedRequest = inspectRequest(request);
   if (!inspectedRequest.ok) return failure("manual_resume_input_invalid");
   const input = inspectedRequest.value;
+  const attemptKey = JSON.stringify([input.candidateId, input.claimAttemptId]);
+  if (ACTIVE_MANUAL_RESUME_ATTEMPTS.has(attemptKey)) {
+    return failure("manual_resume_attempt_in_progress");
+  }
+  ACTIVE_MANUAL_RESUME_ATTEMPTS.add(attemptKey);
+  try {
+    return await executeReservedManualResume(dependencies, input);
+  } finally {
+    ACTIVE_MANUAL_RESUME_ATTEMPTS.delete(attemptKey);
+  }
+}
 
+async function executeReservedManualResume(dependencies, input) {
   const stateResult = await readState(dependencies.store, input.candidateId);
   if (!stateResult.ok) return failure(stateResult.reason);
   const runtimeResult = inspectPersistedRuntime(stateResult.value, input.candidateId);
   if (!runtimeResult.ok) return failure(runtimeResult.reason);
+  const persistedCandidate = runtimeResult.value;
+  if (persistedCandidate.state_revision !== input.expectedRevision) {
+    return failure("manual_resume_revision_conflict");
+  }
 
-  const entry = dependencies.runtimeEntries.get(runtimeResult.value);
+  const entry = dependencies.runtimeEntries.get(persistedCandidate.source_runtime);
   if (entry === undefined || !entry.actionSupported || entry.executor === null) {
     return failure("manual_resume_runtime_unsupported");
   }
 
-  const sessionResolution = createBoundSessionResolution(entry.runtimeId, entry.sessionResolution);
+  const capabilityReady = await preflightManualResumeCapability(
+    dependencies.capabilityContext,
+    persistedCandidate,
+  );
+  if (!capabilityReady) return failure("manual_resume_capability_preflight_blocked");
+
+  const attemptBoundary = {
+    claimStatus: "NOT_ACQUIRED",
+    dispatchStatus: "NOT_RUN",
+    attemptIdentity: null,
+    attemptRevision: null,
+    claimRevision: null,
+    outcomeFailure: null,
+  };
+  const sessionResolution = createBoundSessionResolution(
+    entry.runtimeId,
+    entry.sessionResolution,
+    async currentSession => {
+      const identity = Object.freeze({
+        candidate_id: persistedCandidate.candidate_id,
+        action_kind: "manual_resume",
+        attempt_id: input.claimAttemptId,
+        runtime_id: entry.runtimeId,
+        actor_identity: currentSession.session_identity,
+        // This is the pending-handoff candidate scope. It is not an RPL-94 Association ID.
+        scope_ref: persistedCandidate.candidate_id,
+        repository_identity: persistedCandidate.repository_identity,
+        worktree_identity: persistedCandidate.worktree_identity,
+        candidate_revision: persistedCandidate.state_revision,
+      });
+      const reserved = await dependencies.attemptOutcome.reserveAttempt({ identity });
+      if (!reserved.ok) {
+        attemptBoundary.outcomeFailure = reserved.reason;
+        return false;
+      }
+      attemptBoundary.attemptIdentity = identity;
+      attemptBoundary.attemptRevision = reserved.value.revision;
+      return true;
+    },
+  );
+  const trackedClaimLease = createTrackedClaimLease(dependencies.claimLease, attemptBoundary);
+  const durableClaimLease = createOutcomeBoundClaimLease(
+    trackedClaimLease,
+    dependencies.attemptOutcome,
+    attemptBoundary,
+  );
   let serviceResult;
   try {
     serviceResult = dependencies.manualResumeServiceFactory({
       store: dependencies.store,
       sessionResolution,
-      claimLease: dependencies.claimLease,
+      claimLease: durableClaimLease,
     });
   } catch {
     return failure("manual_resume_action_request_unavailable");
@@ -78,37 +152,166 @@ async function executeManualResume(dependencies, request) {
 
   let prepared;
   try {
-    prepared = await settleMaybe(service.value.prepareManualResume(request));
+    prepared = await settleMaybe(service.value.prepareManualResume({
+      candidate_id: input.candidateId,
+      expected_revision: input.expectedRevision,
+      current_runtime_id: input.currentRuntimeId,
+      claim_attempt_id: input.claimAttemptId,
+    }));
   } catch {
-    return failure("manual_resume_action_request_unavailable");
+    return attemptBoundary.claimStatus === "NOT_ACQUIRED"
+      ? failure("manual_resume_action_request_unavailable")
+      : failure("manual_resume_claim_outcome_unknown");
   }
   const inspectedPrepared = inspectCoreResult(prepared);
-  if (!inspectedPrepared.ok) return failure("manual_resume_action_request_unavailable");
-  if (inspectedPrepared.kind === "failure") return failure(inspectedPrepared.reason);
+  if (!inspectedPrepared.ok) {
+    return attemptBoundary.claimStatus === "NOT_ACQUIRED"
+      ? failure("manual_resume_action_request_unavailable")
+      : failure("manual_resume_claim_outcome_unknown");
+  }
+  if (inspectedPrepared.kind === "failure") {
+    return attemptBoundary.claimStatus === "NOT_ACQUIRED"
+      ? failure(attemptBoundary.outcomeFailure ?? inspectedPrepared.reason)
+      : failure("manual_resume_claim_outcome_unknown");
+  }
+  if (attemptBoundary.claimStatus !== "ACQUIRED") {
+    return failure("manual_resume_claim_outcome_unknown");
+  }
 
-  const actionRequest = inspectActionRequest(inspectedPrepared.value, runtimeResult.value);
-  if (!actionRequest.ok) return failure("manual_resume_runtime_unsupported");
+  const actionRequest = inspectActionRequest(inspectedPrepared.value, persistedCandidate.source_runtime);
+  if (!actionRequest.ok) return failure("manual_resume_claim_outcome_unknown");
+  const attemptIdentity = attemptBoundary.attemptIdentity;
+  if (attemptIdentity === null
+    || attemptBoundary.attemptRevision === null
+    || attemptIdentity.candidate_id !== actionRequest.value.candidate_id
+    || attemptIdentity.action_kind !== actionRequest.value.action_kind
+    || attemptIdentity.attempt_id !== actionRequest.value.claim_attempt_id
+    || attemptIdentity.runtime_id !== actionRequest.value.target.runtime_id
+    || attemptIdentity.actor_identity !== actionRequest.value.current_session_identity
+    || attemptIdentity.candidate_revision !== input.expectedRevision
+    || attemptBoundary.claimRevision !== actionRequest.value.state_revision
+    || actionRequest.value.claim_attempt_id !== input.claimAttemptId) {
+    return failure("manual_resume_claim_outcome_unknown");
+  }
 
+  const dispatchStarted = await dependencies.attemptOutcome.markDispatchStarted({
+    identity: attemptBoundary.attemptIdentity,
+    expected_attempt_revision: attemptBoundary.attemptRevision,
+    claim_revision: attemptBoundary.claimRevision,
+  });
+  if (!dispatchStarted.ok) {
+    attemptBoundary.outcomeFailure = dispatchStarted.reason;
+    return failure("manual_resume_attempt_outcome_unknown");
+  }
+  attemptBoundary.attemptRevision = dispatchStarted.value.revision;
+
+  attemptBoundary.dispatchStatus = "UNKNOWN";
   let rawReceipt;
   try {
     rawReceipt = await settleMaybe(entry.executor.resolveAndResume(actionRequest.value));
   } catch {
-    return failure("manual_resume_action_request_unavailable");
+    return failure("manual_resume_action_outcome_unknown");
   }
-  return normalizeExecutorResult(rawReceipt, actionRequest.value);
+  const normalized = normalizeExecutorResult(rawReceipt, actionRequest.value, attemptBoundary);
+  if (!normalized.ok) return normalized;
+  const accepted = await dependencies.attemptOutcome.recordValidatedAdapterAcceptance({
+    identity: attemptBoundary.attemptIdentity,
+    expected_attempt_revision: attemptBoundary.attemptRevision,
+    adapter_version: normalized.value.adapter_version,
+  });
+  if (!accepted.ok) {
+    attemptBoundary.outcomeFailure = accepted.reason;
+    return failure("manual_resume_action_outcome_unknown");
+  }
+  attemptBoundary.attemptRevision = accepted.value.revision;
+  return normalized;
+}
+
+function createTrackedClaimLease(claimLease, attemptBoundary) {
+  return Object.freeze({
+    acquireClaim: async request => {
+      attemptBoundary.claimStatus = "UNKNOWN";
+      let raw;
+      try {
+        raw = await settleMaybe(claimLease.acquireClaimForDispatch(request));
+      } catch {
+        return failure("claim_publish_failed");
+      }
+      const inspected = inspectCoreResult(raw);
+      if (inspected.ok && inspected.kind === "success") {
+        attemptBoundary.claimStatus = "ACQUIRED";
+      }
+      return raw;
+    },
+  });
+}
+
+function createOutcomeBoundClaimLease(claimLease, attemptOutcome, attemptBoundary) {
+  return Object.freeze({
+    acquireClaim: async request => {
+      const raw = await claimLease.acquireClaim(request);
+      const inspected = inspectCoreResult(raw);
+      if (!inspected.ok || inspected.kind !== "success") return raw;
+      const claimRevision = inspected.value?.state_revision;
+      if (!Number.isSafeInteger(claimRevision) || claimRevision < 0
+        || attemptBoundary.attemptIdentity === null
+        || attemptBoundary.attemptRevision === null) {
+        attemptBoundary.outcomeFailure = "manual_resume_attempt_claim_conflict";
+        return failure("claim_publish_failed");
+      }
+      const bound = await attemptOutcome.bindClaim({
+        identity: attemptBoundary.attemptIdentity,
+        expected_attempt_revision: attemptBoundary.attemptRevision,
+        claim_revision: claimRevision,
+      });
+      if (!bound.ok) {
+        attemptBoundary.outcomeFailure = bound.reason;
+        return failure("claim_publish_failed");
+      }
+      attemptBoundary.attemptRevision = bound.value.revision;
+      attemptBoundary.claimRevision = claimRevision;
+      return raw;
+    },
+  });
 }
 
 function inspectDependencies(options) {
   try {
     if (utilTypes.isProxy(options) || !isPlainObject(options)) return failure("manual_resume_runtime_dependency_invalid");
     const ownKeys = Reflect.ownKeys(options);
-    const allowed = new Set(["store", "claimLease", "runtimeEntries", "manualResumeServiceFactory"]);
+    const allowed = new Set([
+      "store",
+      "claimLease",
+      "attemptOutcomeStore",
+      "runtimeEntries",
+      "manualResumeServiceFactory",
+      "capabilityContext",
+    ]);
     if (ownKeys.some(key => typeof key !== "string" || !allowed.has(key))) {
       return failure("manual_resume_runtime_dependency_invalid");
     }
     const store = snapshotFacade(options.store, STORE_KEYS);
     const claimLease = snapshotFacade(options.claimLease, CLAIM_LEASE_KEYS);
-    if (store === null || claimLease === null) return failure("manual_resume_runtime_dependency_invalid");
+    const attemptOutcomeStore = snapshotFacade(
+      options.attemptOutcomeStore,
+      ATTEMPT_OUTCOME_STORE_KEYS,
+    );
+    if (store === null || claimLease === null || attemptOutcomeStore === null) {
+      return failure("manual_resume_runtime_dependency_invalid");
+    }
+    const attemptOutcomeResult = createPendingHandoffManualResumeAttemptOutcomeService({
+      store: attemptOutcomeStore,
+    });
+    const attemptOutcome = inspectCoreResult(attemptOutcomeResult);
+    if (!attemptOutcome.ok || attemptOutcome.kind !== "success") {
+      return failure("manual_resume_runtime_dependency_invalid");
+    }
+
+    const capabilityContext = snapshotExactFacade(
+      options.capabilityContext,
+      CAPABILITY_CONTEXT_KEYS,
+    );
+    if (capabilityContext === null) return failure("manual_resume_runtime_dependency_invalid");
 
     const entries = inspectRuntimeEntries(options.runtimeEntries);
     if (!entries.ok) return failure("manual_resume_runtime_dependency_invalid");
@@ -124,6 +327,8 @@ function inspectDependencies(options) {
     return success(Object.freeze({
       store,
       claimLease,
+      attemptOutcome: attemptOutcome.value,
+      capabilityContext,
       runtimeEntries: entries.value,
       manualResumeServiceFactory,
     }));
@@ -194,18 +399,40 @@ function inspectAction(value) {
   return success({ supported: true, executor });
 }
 
-function createBoundSessionResolution(runtimeId, resolution) {
+function createBoundSessionResolution(runtimeId, resolution, onCurrentSession) {
+  let currentSession = null;
   return Object.freeze({
     resolveCurrentSession: request => boundResolutionCall(
       resolution.resolveCurrentSession,
       runtimeId,
       request,
-    ),
+    ).then(result => {
+      const inspected = inspectCoreResult(result);
+      if (!inspected.ok || inspected.kind !== "success") return result;
+      const session = inspectExactDataObject(inspected.value, ["runtime_id", "session_identity"]);
+      if (!session.ok || session.values.runtime_id !== runtimeId
+        || !isSessionIdentity(session.values.session_identity)) return result;
+      currentSession = session.values;
+      return result;
+    }),
     resolveTargetSession: request => boundResolutionCall(
       resolution.resolveTargetSession,
       runtimeId,
       request,
-    ),
+    ).then(async result => {
+      const inspected = inspectCoreResult(result);
+      if (!inspected.ok || inspected.kind !== "success" || currentSession === null) return result;
+      const target = inspectExactDataObject(inspected.value, ["runtime_id", "session_identity"]);
+      if (!target.ok || target.values.runtime_id !== runtimeId
+        || !isSessionIdentity(target.values.session_identity)) return result;
+      let reserved = false;
+      try {
+        reserved = await onCurrentSession(currentSession);
+      } catch {
+        reserved = false;
+      }
+      return reserved ? result : failure("session_resolution_unavailable");
+    }),
   });
 }
 
@@ -266,24 +493,378 @@ async function readState(store, candidateId) {
   return success(inspected.value);
 }
 
+async function preflightManualResumeCapability(capabilityContext, persistedCandidate) {
+  const runtimeId = persistedCandidate.source_runtime;
+  let raw;
+  try {
+    raw = await settleMaybe(capabilityContext.resolveManualResumeContext(Object.freeze({
+      candidate_id: persistedCandidate.candidate_id,
+      runtime_id: runtimeId,
+      persisted_candidate: persistedCandidate,
+    })));
+  } catch {
+    return false;
+  }
+
+  const inspected = inspectManualResumeCapabilityContext(raw, persistedCandidate);
+  if (!inspected.ok) return false;
+  const context = inspected.value;
+  if (context.current.environment_fingerprint !== context.environment.fingerprint
+      || context.environment.runtime_id !== runtimeId) return false;
+
+  try {
+    const routing = planRunnerRouting(
+      context.task,
+      [{ id: runtimeId, environment: context.environment }],
+      context.evidenceVerifiers,
+    );
+    if (routing.status !== "ROUTE_PLANNED" || routing.runner_id !== runtimeId) return false;
+
+    const resume = assessCheckpointResume(
+      context.checkpoint,
+      context.current,
+      (evidence, expected) => context.verifyTestEvidence(evidence, Object.freeze({
+        ...expected,
+        candidate_id: persistedCandidate.candidate_id,
+        state_revision: persistedCandidate.state_revision,
+        runtime_id: runtimeId,
+        repository_identity: persistedCandidate.repository_identity,
+        worktree_identity: persistedCandidate.worktree_identity,
+      })),
+    );
+    return resume.status === "RESUME_ELIGIBLE";
+  } catch {
+    return false;
+  }
+}
+
+function inspectManualResumeCapabilityContext(value, persistedCandidate) {
+  const result = inspectExactDataObject(value, CAPABILITY_CONTEXT_RESULT_KEYS);
+  if (!result.ok) return failure("invalid");
+
+  const task = snapshotCapabilityTask(result.values.task);
+  if (!task.ok || task.value.scope_ref !== persistedCandidate.candidate_id) return failure("invalid");
+
+  const environment = snapshotCapabilityEnvironment(
+    result.values.environment,
+    task.value.requirements.capabilities,
+  );
+  if (!environment.ok) return failure("invalid");
+
+  const evidenceVerifiers = snapshotExactFacade(
+    result.values.evidenceVerifiers,
+    ["verifyApproval", "verifyCapabilityEvidence"],
+  );
+  if (evidenceVerifiers === null) return failure("invalid");
+  const verifyManualResumeBinding = result.values.verifyManualResumeBinding;
+  if (!isCallable(verifyManualResumeBinding)) return failure("invalid");
+
+  const checkpoint = snapshotCheckpoint(result.values.checkpoint);
+  const current = snapshotCurrentCheckpointTarget(result.values.current);
+  const verifyTestEvidence = result.values.verifyTestEvidence;
+  if (!checkpoint.ok || !current.ok || !isCallable(verifyTestEvidence)) return failure("invalid");
+
+  if (!matchesPersistedCandidateBinding(
+    persistedCandidate,
+    task.value,
+    checkpoint.value,
+    current.value,
+  )) return failure("invalid");
+
+  const testEvidence = checkpoint.value.test_evidence;
+  const bindingContext = Object.freeze({
+    persisted_candidate: persistedCandidate,
+    task: Object.freeze({
+      task_id: task.value.task_id,
+      scope_ref: task.value.scope_ref,
+      capability_scopes: task.value.requirements.capability_scopes,
+    }),
+    checkpoint: checkpointBinding(checkpoint.value),
+    current: checkpointBinding(current.value),
+    test_evidence: checkpointBinding(testEvidence),
+  });
+  try {
+    if (verifyManualResumeBinding(bindingContext) !== true) return failure("invalid");
+  } catch {
+    return failure("invalid");
+  }
+
+  return success(Object.freeze({
+    task: task.value,
+    environment: environment.value,
+    evidenceVerifiers,
+    checkpoint: checkpoint.value,
+    current: current.value,
+    verifyTestEvidence,
+    verifyManualResumeBinding,
+  }));
+}
+
+function matchesPersistedCandidateBinding(persistedCandidate, task, checkpoint, current) {
+  const expected = persistedCandidate;
+  const bindings = [checkpoint, current, checkpoint.test_evidence];
+  return task.scope_ref === expected.candidate_id
+    && bindings.every(binding => (
+      binding.candidate_id === expected.candidate_id
+        && binding.state_revision === expected.state_revision
+        && binding.repository_identity === expected.repository_identity
+        && binding.worktree_identity === expected.worktree_identity
+    ));
+}
+
+function checkpointBinding(value) {
+  return Object.freeze({
+    candidate_id: value.candidate_id,
+    state_revision: value.state_revision,
+    repo: value.repo,
+    repository_identity: value.repository_identity,
+    worktree_identity: value.worktree_identity,
+  });
+}
+
+function snapshotCapabilityTask(value) {
+  const taskResult = inspectExactDataObject(value, [
+    "task_id",
+    "scope_ref",
+    "requirements",
+  ], { optional: ["authorization"] });
+  if (!taskResult.ok) return failure("invalid");
+
+  const requirements = inspectExactDataObject(taskResult.values.requirements, [
+    "capabilities",
+    "approval_required",
+    "capability_scopes",
+  ]);
+  if (!requirements.ok) return failure("invalid");
+  const capabilities = snapshotStringArray(requirements.values.capabilities);
+  const capabilityScopes = snapshotCapabilityScopes(
+    requirements.values.capability_scopes,
+  );
+  if (!capabilities.ok || !capabilityScopes.ok) return failure("invalid");
+  const scopedCapabilities = Object.keys(capabilityScopes.value);
+  if (scopedCapabilities.length !== capabilities.value.length
+      || capabilities.value.some(capability => !Object.hasOwn(capabilityScopes.value, capability))) {
+    return failure("invalid");
+  }
+
+  const taskSnapshot = {
+    task_id: taskResult.values.task_id,
+    scope_ref: taskResult.values.scope_ref,
+    requirements: Object.freeze({
+      capabilities: capabilities.value,
+      approval_required: requirements.values.approval_required,
+      capability_scopes: capabilityScopes.value,
+    }),
+  };
+  if (Object.hasOwn(taskResult.values, "authorization")) {
+    const authorization = inspectExactDataObject(taskResult.values.authorization, [
+      "status",
+      "verified",
+      "evidence_ref",
+      "scope_ref",
+    ]);
+    if (!authorization.ok) return failure("invalid");
+    taskSnapshot.authorization = Object.freeze(authorization.values);
+  }
+  return success(Object.freeze(taskSnapshot));
+}
+
+function snapshotStringArray(value) {
+  try {
+    if (utilTypes.isProxy(value)
+      || !Array.isArray(value)
+      || Object.getPrototypeOf(value) !== Array.prototype) return failure("invalid");
+    const lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
+    if (!lengthDescriptor
+      || !Object.hasOwn(lengthDescriptor, "value")
+      || !Number.isSafeInteger(lengthDescriptor.value)
+      || lengthDescriptor.value < 0) return failure("invalid");
+    const keys = Reflect.ownKeys(value);
+    if (keys.length !== lengthDescriptor.value + 1 || keys.at(-1) !== "length") {
+      return failure("invalid");
+    }
+    const items = [];
+    for (let index = 0; index < lengthDescriptor.value; index += 1) {
+      if (keys[index] !== String(index)) return failure("invalid");
+      const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+      if (!isEnumerableDataDescriptor(descriptor) || typeof descriptor.value !== "string") {
+        return failure("invalid");
+      }
+      items.push(descriptor.value);
+    }
+    return success(Object.freeze(items));
+  } catch {
+    return failure("invalid");
+  }
+}
+
+function snapshotCapabilityScopes(value) {
+  return snapshotPlainMap(value, (_key, scopeValue) => {
+    const scope = inspectExactDataObject(scopeValue, ["operation", "resource"]);
+    return scope.ok ? success(Object.freeze(scope.values)) : failure("invalid");
+  });
+}
+
+function snapshotCapabilityEnvironment(value, requestedCapabilities) {
+  const environment = inspectExactDataObject(value, [
+    "provider_id",
+    "fingerprint",
+    "runtime_id",
+    "capabilities",
+  ]);
+  if (!environment.ok) return failure("invalid");
+  const requested = new Set(requestedCapabilities);
+  const capabilities = snapshotPlainMap(environment.values.capabilities, (key, item) => {
+    if (!requested.has(key)) return failure("invalid");
+    const observation = inspectExactDataObject(item, [
+      "status",
+      "verified",
+      "evidence_ref",
+      "observed_at",
+      "provider_id",
+      "runtime_id",
+      "environment_fingerprint",
+      "capability",
+      "task_id",
+      "scope_ref",
+      "operation",
+      "resource",
+    ], { optional: ["reason"] });
+    return observation.ok ? success(Object.freeze(observation.values)) : failure("invalid");
+  });
+  if (!capabilities.ok) return failure("invalid");
+  return success(Object.freeze({
+    provider_id: environment.values.provider_id,
+    fingerprint: environment.values.fingerprint,
+    runtime_id: environment.values.runtime_id,
+    capabilities: capabilities.value,
+  }));
+}
+
+function snapshotCheckpoint(value) {
+  const checkpoint = inspectExactDataObject(value, [
+    "candidate_id",
+    "state_revision",
+    "status",
+    "repo",
+    "repository_identity",
+    "worktree_identity",
+    "sha",
+    "tree_sha",
+    "environment_fingerprint",
+    "next_step",
+    "test_evidence",
+  ]);
+  if (!checkpoint.ok) return failure("invalid");
+  const evidence = inspectExactDataObject(checkpoint.values.test_evidence, [
+    "candidate_id",
+    "state_revision",
+    "status",
+    "evidence_ref",
+    "repo",
+    "repository_identity",
+    "worktree_identity",
+    "plan_id",
+    "plan_digest",
+    "sha",
+    "tree_sha",
+    "environment_fingerprint",
+  ]);
+  if (!evidence.ok) return failure("invalid");
+  return success(Object.freeze({
+    ...checkpoint.values,
+    test_evidence: Object.freeze(evidence.values),
+  }));
+}
+
+function snapshotCurrentCheckpointTarget(value) {
+  const current = inspectExactDataObject(value, [
+    "candidate_id",
+    "state_revision",
+    "repo",
+    "repository_identity",
+    "worktree_identity",
+    "sha",
+    "tree_sha",
+    "environment_fingerprint",
+    "test_plan",
+  ]);
+  if (!current.ok) return failure("invalid");
+  const testPlan = inspectExactDataObject(current.values.test_plan, ["id", "digest"]);
+  if (!testPlan.ok) return failure("invalid");
+  return success(Object.freeze({
+    ...current.values,
+    test_plan: Object.freeze(testPlan.values),
+  }));
+}
+
+function snapshotPlainMap(value, snapshotEntry) {
+  try {
+    if (utilTypes.isProxy(value) || !isPlainObject(value)) return failure("invalid");
+    const entries = new Map();
+    for (const key of Reflect.ownKeys(value)) {
+      if (typeof key !== "string") return failure("invalid");
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (!isEnumerableDataDescriptor(descriptor)) return failure("invalid");
+      const entry = snapshotEntry(key, descriptor.value);
+      if (!entry.ok) return failure("invalid");
+      entries.set(key, entry.value);
+    }
+    return success(Object.freeze(Object.fromEntries(entries)));
+  } catch {
+    return failure("invalid");
+  }
+}
+
 function inspectPersistedRuntime(value, candidateId) {
   const inspected = inspectExactDataObject(value, STATE_KEYS, { optional: ["delivery"] });
-  if (!inspected.ok || !Number.isSafeInteger(inspected.values.state_revision)) {
+  if (!inspected.ok
+      || !Number.isSafeInteger(inspected.values.state_revision)
+      || inspected.values.state_revision < 0) {
     return failure("manual_resume_persisted_state_invalid");
   }
   const candidate = inspected.values.candidate;
   if (utilTypes.isProxy(candidate) || !isPlainObject(candidate)) {
     return failure("manual_resume_persisted_state_invalid");
   }
-  const candidateIdDescriptor = Object.getOwnPropertyDescriptor(candidate, "candidate_id");
-  const runtimeDescriptor = Object.getOwnPropertyDescriptor(candidate, "source_runtime");
-  if (!isEnumerableDataDescriptor(candidateIdDescriptor)
-    || candidateIdDescriptor.value !== candidateId
-    || !isEnumerableDataDescriptor(runtimeDescriptor)
-    || !isSafeRuntimeId(runtimeDescriptor.value)) {
+  const fieldNames = [
+    "candidate_id",
+    "source_runtime",
+    "source_session_identity",
+    "repository_identity",
+    "worktree_identity",
+  ];
+  const fields = {};
+  for (const field of fieldNames) {
+    const descriptor = Object.getOwnPropertyDescriptor(candidate, field);
+    if (!isEnumerableDataDescriptor(descriptor)) {
+      return failure("manual_resume_persisted_state_invalid");
+    }
+    fields[field] = descriptor.value;
+  }
+  const sourceSession = inspectOpaqueIdentity(fields.source_session_identity, "session");
+  const repository = inspectOpaqueIdentity(fields.repository_identity, "repository");
+  const worktree = inspectOpaqueIdentity(fields.worktree_identity, "worktree");
+  const identityNamespace = sourceSession.ok
+    && repository.ok
+    && worktree.ok
+    && sourceSession.value.version === repository.value.version
+    && sourceSession.value.version === worktree.value.version
+    && sourceSession.value.key_id === repository.value.key_id
+    && sourceSession.value.key_id === worktree.value.key_id;
+  if (fields.candidate_id !== candidateId
+    || !isSafeRuntimeId(fields.source_runtime)
+    || !identityNamespace) {
     return failure("manual_resume_persisted_state_invalid");
   }
-  return success(runtimeDescriptor.value);
+  return success(Object.freeze({
+    candidate_id: fields.candidate_id,
+    state_revision: inspected.values.state_revision,
+    source_runtime: fields.source_runtime,
+    source_session_identity: fields.source_session_identity,
+    repository_identity: fields.repository_identity,
+    worktree_identity: fields.worktree_identity,
+  }));
 }
 
 function inspectRequest(value) {
@@ -351,11 +932,14 @@ function inspectActionRequest(value, expectedRuntime) {
   }));
 }
 
-function normalizeExecutorResult(value, preparedAction) {
+function normalizeExecutorResult(value, preparedAction, attemptBoundary) {
+  if (attemptBoundary.dispatchStatus !== "UNKNOWN") {
+    return failure("manual_resume_action_outcome_unknown");
+  }
   const inspected = inspectCoreResult(value);
-  if (!inspected.ok) return failure("manual_resume_action_request_unavailable");
+  if (!inspected.ok) return failure("manual_resume_action_outcome_unknown");
   if (inspected.kind === "failure") {
-    return failure(SUPPORTED_EXECUTOR_FAILURES.get(inspected.reason) ?? "manual_resume_action_request_unavailable");
+    return failure(SUPPORTED_EXECUTOR_FAILURES.get(inspected.reason) ?? "manual_resume_action_outcome_unknown");
   }
   const receipt = inspectExactDataObject(inspected.value, RECEIPT_KEYS);
   const target = receipt.ok ? inspectExactDataObject(receipt.values.target, TARGET_KEYS) : failure("invalid");
@@ -381,8 +965,9 @@ function normalizeExecutorResult(value, preparedAction) {
     || receipt.values.claim_attempt_id !== preparedAction.claim_attempt_id
     || target.values.runtime_id !== expectedTarget.runtime_id
     || target.values.session_identity !== expectedTarget.session_identity) {
-    return failure("manual_resume_action_request_unavailable");
+    return failure("manual_resume_action_outcome_unknown");
   }
+  attemptBoundary.dispatchStatus = "ACCEPTED";
   return success(Object.freeze({
     action_kind: "manual_resume",
     candidate_id: preparedAction.candidate_id,
@@ -461,6 +1046,20 @@ function snapshotFacade(value, requiredKeys) {
   }
 }
 
+function snapshotExactFacade(value, expectedKeys) {
+  try {
+    if (utilTypes.isProxy(value) || !isPlainObject(value)) return null;
+    const ownKeys = Reflect.ownKeys(value);
+    if (ownKeys.length !== expectedKeys.length
+      || ownKeys.some(key => typeof key !== "string" || !expectedKeys.includes(key))) {
+      return null;
+    }
+    return snapshotFacade(value, expectedKeys);
+  } catch {
+    return null;
+  }
+}
+
 async function settleMaybe(value) {
   if (utilTypes.isProxy(value)) throw new Error("invalid");
   if (utilTypes.isPromise(value)) return await value;
@@ -492,6 +1091,16 @@ function isSessionIdentity(value) {
     return result.ok === true && result.kind === "session";
   } catch {
     return false;
+  }
+}
+
+function inspectOpaqueIdentity(value, expectedKind) {
+  try {
+    const identity = validateOpaqueIdentity(value);
+    if (identity.ok !== true || identity.kind !== expectedKind) return failure("invalid");
+    return success(Object.freeze({ version: identity.version, key_id: identity.key_id }));
+  } catch {
+    return failure("invalid");
   }
 }
 
