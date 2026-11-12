@@ -103,6 +103,19 @@ const mainOnlyPartial = validateAiStatus(mainOnlyAiStatus, {
 });
 assert.equal(mainOnlyPartial.valid, true, mainOnlyPartial.errors.join("; "));
 assert.equal(mainOnlyPartial.scope, "AI_STATUS_ONLY");
+for (const duplicateValue of ["YES", "NO"]) {
+  const duplicateHeader = mainOnlyAiStatus.split("\n").map((line) => {
+    if (line.startsWith("| Agent ID |")) return line + " 실제 참여 |";
+    if (line.startsWith("|---|")) return line + "---|";
+    if (line.startsWith("| Main |")) return line + ` ${duplicateValue} |`;
+    return line;
+  }).join("\n");
+  const result = validateAiStatus(duplicateHeader, {
+    observedParticipants: ["Main"], observationCoverage: "complete",
+  });
+  assert.equal(result.valid, false, "duplicate required headers must be rejected");
+  assert.ok(result.errors.some((error) => error.includes("must not repeat required header: 실제 참여")));
+}
 const unknownCoverage = validateAiStatus(
   mainOnlyAiStatus.replace("관측 범위: complete", "관측 범위: unknown").replace("전체 참여자 수: 1", "전체 참여자 수: UNKNOWN"),
   { observationCoverage: "unknown" },
