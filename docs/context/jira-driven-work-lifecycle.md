@@ -108,6 +108,20 @@ Digest and durable machine-verifiable evidence handoff remain out of scope.
   recommended, not mandatory; once invoked, every gate claim remains
   fail-closed.
 
+## Work-item hierarchy direction (implementation pending)
+
+The requested work-item structure and current Jira limitation are documented in
+[FX Jira Work-item Hierarchy](../architecture/jira-work-item-hierarchy.md).
+The target is an Epic with an optional Story grouping and independently
+trackable Features; a Feature may sit directly under the Epic when a Story
+adds no useful grouping. This clarification does not change the existing
+explicit Jira-write approval or make ticket creation automatic.
+
+The RPL metadata currently places Story and Feature at the same hierarchy
+level, so a Story-to-Feature Parent relationship is not available. The design
+document describes the required behavior and the unsupported case; Jira
+configuration and Runtime implementation remain separate work.
+
 ## Common Ticket Contract
 
 Both skills use the following fixed contract. `jira-ticket` previews and writes
