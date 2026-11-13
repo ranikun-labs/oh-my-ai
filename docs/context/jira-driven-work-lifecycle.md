@@ -117,10 +117,13 @@ trackable Features; a Feature may sit directly under the Epic when a Story
 adds no useful grouping. This clarification does not change the existing
 explicit Jira-write approval or make ticket creation automatic.
 
-The RPL metadata currently places Story and Feature at the same hierarchy
-level, so a Story-to-Feature Parent relationship is not available. The design
-document describes the required behavior and the unsupported case; Jira
-configuration and Runtime implementation remain separate work.
+The RPL Issue Type metadata reports Story and Feature at the same default
+hierarchy level, but this does not establish the Project's Work Type Scheme
+parent order. Atlassian documents scheme ordering as a way to define parent
+relationships between work types. RPL's assigned scheme and exact order have
+not been inspected, so Story-to-Feature support is currently UNKNOWN. The
+design document records this verification gap; Jira configuration and Runtime
+implementation remain separate work.
 
 ## Common Ticket Contract
 
