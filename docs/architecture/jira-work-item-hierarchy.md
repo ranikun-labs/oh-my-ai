@@ -47,14 +47,15 @@ Epic
 
 ## 현재 Jira와의 차이
 
-2026-11-13에 확인한 RPL Issue Type 메타데이터에서 Epic은 계층 1, Story·Feature는 계층 0, Sub-task는 계층 -1이다.
+2026-11-13 RPL Issue Type 메타데이터에서 Epic은 기본 단계 1, Story·Feature는 0, Sub-task는 -1로 확인됐다. 이 메타데이터만으로 Story→Feature 지원 여부는 결정되지 않는다. Jira의 Work Type Scheme 순서가 실제 Parent 구조에 영향을 줄 수 있지만, RPL의 연결 Scheme과 순서는 아직 확인되지 않았다. 따라서 현행 지원 여부는 **UNKNOWN**이다.
 
-따라서 현재 RPL은 Epic→Story 또는 Epic→Feature를 표현할 수 있지만 Story→Feature Parent는 지원하지 않는다.
-
-- 계층에 맞는 직접 Epic→Feature는 실제 Parent로 기록한다.
-- Story→Feature가 필요한 경우 Issue Link나 Sub-task로 가장하지 않는다.
-- 실제 계층이 필요한 티켓은 Jira 설정이 지원되거나 Owner가 대체 방식을 승인할 때까지 관계를 미지원으로 표시한다.
+- RPL Scheme과 실제 Parent 편집·재조회 가능성을 읽기 전용으로 확인하기 전에는 지원 또는 미지원으로 단정하지 않는다.
+- 확인되지 않은 Parent를 Issue Link나 Sub-task로 가장하지 않는다.
+- Scheme이 목표 구조를 지원하면 정확한 Parent로 생성·재조회하는 경로를 구현한다.
+- 지원하지 않는 경우에는 왜곡 없는 직접 Epic→Feature 사용 가능성과 관리자 변경 영향을 비교해 Owner 결정으로 올린다.
 - Jira 전역 설정 변경은 이 설계 문서나 Skill 호출로 승인되지 않는다.
+
+공식 참고: [Work Type Schemes](https://support.atlassian.com/jira-cloud-administration/docs/add-edit-and-delete-an-issue-type-scheme/) · [Work Type hierarchy](https://support.atlassian.com/jira-cloud-administration/docs/configure-the-issue-type-hierarchy/)
 
 ## 구현 상태와 필요한 Runtime 연결
 
@@ -65,7 +66,7 @@ Epic
 1. FX가 새 기능 제안을 기존 Jira 업무에 연결할 때, 중복 검색과 Parent 후보를 함께 고른다.
 2. `jira-ticket` 미리보기가 Issue Type과 실제 Parent 후보를 필수 표시한다.
 3. Jira Writer가 해당 Project·Issue Type 조합에서 Parent를 저장할 수 있는지 메타데이터로 검증한다.
-4. 지원되지 않는 관계는 생성 전에 분명하게 표시하고, 연결 도구가 허용하는 관계로 위장하지 않는다.
+4. Project Scheme을 확인하지 못했으면 지원 여부를 UNKNOWN으로 표시한다. 확인된 지원 관계만 사용하고, 연결 도구가 허용하지 않는 관계로 위장하지 않는다.
 5. 생성 후 실제 Issue Type·Parent·본문을 다시 조회해 미리보기와 대조한다.
 6. 각 Feature가 독립 수락 기준과 검증 증거를 갖는지 확인한다.
 
