@@ -74,6 +74,125 @@ jobs:
           console.log('Explicit-only metadata and relative source link are valid. This check does not establish Native discovery or Apply.');
           NODE
 
+      - name: Validate .claude/skills links (dynamic enumeration)
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+
+          const root = process.cwd();
+          const claudeSkillsDir = path.join(root, '.claude', 'skills');
+          const sourceSkillsDir = path.join(root, 'skills');
+
+          // 링크 구조 검사 실패는 LinkError로 던지고, 최상위에서 원인 메시지만 출력한다.
+          class LinkError extends Error {}
+          const fail = (name, reason) => new LinkError(`[.claude/skills/${name}] ${reason}`);
+
+          // 대상이 없으면(댕글링) null을 돌려주고, 그 밖의 예외는 그대로 올린다.
+          const statOrNull = (target) => {
+            try {
+              return fs.statSync(target);
+            } catch (error) {
+              if (error.code === 'ENOENT') return null;
+              throw error;
+            }
+          };
+
+          const frontmatterLines = (file) => {
+            const match = fs.readFileSync(file, 'utf8').match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+            return match ? match[1].split(/\r?\n/) : null;
+          };
+          const topValue = (lines, key) => {
+            const line = lines.find((item) => !/^\s/.test(item) && item.startsWith(`${key}:`));
+            return line ? line.slice(key.length + 1).trim() : '';
+          };
+
+          const checkLink = (name) => {
+            const linkPath = path.join(claudeSkillsDir, name);
+            let info;
+            try {
+              info = fs.lstatSync(linkPath);
+            } catch (error) {
+              throw fail(name, `lstat 실패(${error.code ?? error.message})`);
+            }
+
+            // (a) 심볼릭 링크여야 한다. 일반 파일·실제 디렉터리 복사는 실패.
+            if (!info.isSymbolicLink()) {
+              if (info.isDirectory()) {
+                throw fail(name, '실제 디렉터리 복사본입니다. 심볼릭 링크여야 합니다.');
+              }
+              throw fail(name, '일반 파일입니다(심볼릭 링크 아님). core.symlinks=false 체크아웃이거나 링크가 깨진 상태입니다.');
+            }
+
+            // (b) 정확히 상대 경로 ../../skills/<name> 이어야 한다.
+            const target = fs.readlinkSync(linkPath);
+            const expected = `../../skills/${name}`;
+            if (path.isAbsolute(target)) {
+              throw fail(name, `절대 경로 링크입니다(${target}). 상대 경로 ${expected} 이어야 합니다.`);
+            }
+            if (target !== expected) {
+              throw fail(name, `대상이 다른 Skill을 가리킵니다(${target}). 기대값: ${expected}`);
+            }
+
+            // (c) 대상 skills/<name>이 존재하는 디렉터리여야 한다. 댕글링은 실패.
+            const sourceDir = path.join(sourceSkillsDir, name);
+            const sourceDirStat = statOrNull(sourceDir);
+            if (!sourceDirStat || !sourceDirStat.isDirectory()) {
+              throw fail(name, `댕글링 링크입니다. 대상 skills/${name} 디렉터리가 없습니다.`);
+            }
+
+            // (d) 링크를 통과한 SKILL.md가 원본과 같은 실체(realpath)여야 한다.
+            const linkedSkill = path.join(linkPath, 'SKILL.md');
+            const linkedStat = statOrNull(linkedSkill);
+            if (!linkedStat || !linkedStat.isFile()) {
+              throw fail(name, '링크 경로에서 SKILL.md를 읽을 수 없습니다.');
+            }
+            const sourceSkill = path.join(sourceDir, 'SKILL.md');
+            if (fs.realpathSync(linkedSkill) !== fs.realpathSync(sourceSkill)) {
+              throw fail(name, `SKILL.md realpath가 원본 skills/${name}/SKILL.md와 다릅니다.`);
+            }
+
+            // (e) frontmatter name이 항목 이름과 같고 description이 있어야 한다.
+            const lines = frontmatterLines(linkedSkill);
+            if (!lines) {
+              throw fail(name, 'SKILL.md에 frontmatter가 없습니다.');
+            }
+            const declaredName = topValue(lines, 'name');
+            if (declaredName !== name) {
+              throw fail(name, `frontmatter name 불일치(${declaredName || '없음'} ≠ ${name}).`);
+            }
+            if (!topValue(lines, 'description')) {
+              throw fail(name, 'frontmatter description이 없습니다.');
+            }
+          };
+
+          let entries;
+          try {
+            entries = fs.readdirSync(claudeSkillsDir);
+          } catch (error) {
+            console.error(`FAIL: .claude/skills 디렉터리를 읽을 수 없습니다(${error.code ?? error.message}).`);
+            process.exit(1);
+          }
+          // 검사 대상이 0개면 디렉터리 유실을 통과시키지 않도록 실패로 처리한다.
+          if (entries.length === 0) {
+            console.error('FAIL: .claude/skills에 검사할 링크가 없습니다. 디렉터리가 비었거나 유실되었습니다.');
+            process.exit(1);
+          }
+
+          try {
+            for (const name of entries.sort()) {
+              checkLink(name);
+            }
+          } catch (error) {
+            if (!(error instanceof LinkError)) throw error;
+            console.error(`FAIL: ${error.message}`);
+            process.exit(1);
+          }
+
+          console.log(`검사한 링크 수: ${entries.length}`);
+          console.log('이 검사는 링크 구조만 검증하며 Claude의 Native Skill 발견·호출 성공을 증명하지 않는다.');
+          NODE
+
       - name: Regenerate instructions and check generated diffs
         run: |
           make instructions
