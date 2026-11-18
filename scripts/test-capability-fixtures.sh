@@ -27,10 +27,8 @@ require_file() {
 }
 
 sandbox() {
-  local d
-  d="$(mktemp -d "${TMPDIR:-/tmp}/oh-my-ai-capability-fixture.XXXXXX")"
-  cleanup_dirs+=("$d")
-  printf '%s\n' "$d"
+  SANDBOX_DIR="$(mktemp -d "${TMPDIR:-/tmp}/oh-my-ai-capability-fixture.XXXXXX")"
+  cleanup_dirs+=("$SANDBOX_DIR")
 }
 
 # mutate REAL_FILE with a jq-free node one-liner and write to a temp file
@@ -132,7 +130,7 @@ NODE
 
 fx_canonical_session_capability_invariants() {
   local d out
-  d="$(sandbox)"
+  sandbox; d="$SANDBOX_DIR"
 
   mutate 'doc.runtimes.claude.capabilities = doc.runtimes.claude.capabilities.filter(c => c.capability_id !== "capability.session.resolve");' "$d/missing-claude-resolve.json"
   expect_invalid "$d/missing-claude-resolve.json" "canonical-missing-claude-resolve" "canonical session capability"
@@ -183,7 +181,7 @@ fx_canonical_session_capability_invariants() {
 
 fx_cap_010() {
   local d out
-  d="$(sandbox)"; out="$d/mutated.json"
+  sandbox; d="$SANDBOX_DIR"; out="$d/mutated.json"
   mutate '
     const cap = doc.runtimes.claude.capabilities.find(c => c.capability_id === "capability.result.structured");
     cap.conditions = ["Human Approval granted for this action"];
@@ -196,7 +194,7 @@ fx_cap_010() {
 
 fx_cap_011() {
   local d out
-  d="$(sandbox)"; out="$d/mutated.json"
+  sandbox; d="$SANDBOX_DIR"; out="$d/mutated.json"
   mutate '
     const cap = doc.runtimes.claude.capabilities.find(c => c.capability_id === "capability.file.read");
     cap.declared_status = "unsupported";
@@ -214,7 +212,7 @@ fx_cap_011() {
 
 fx_cap_012() {
   local d out
-  d="$(sandbox)"; out="$d/mutated.json"
+  sandbox; d="$SANDBOX_DIR"; out="$d/mutated.json"
   mutate '
     const cap = doc.runtimes.claude.capabilities.find(c => c.capability_id === "capability.workspace.worktree");
     cap.source = { type: "not_verified", reference: null };
@@ -228,7 +226,7 @@ fx_cap_012() {
 
 fx_cap_013() {
   local d out
-  d="$(sandbox)"; out="$d/mutated.json"
+  sandbox; d="$SANDBOX_DIR"; out="$d/mutated.json"
   mutate '
     const cap = doc.runtimes.codex.capabilities.find(c => c.capability_id === "capability.session.resolve");
     cap.declared_status = "unknown";
@@ -248,7 +246,7 @@ fx_cap_013() {
 
 fx_cap_014() {
   local d out
-  d="$(sandbox)"; out="$d/mutated.json"
+  sandbox; d="$SANDBOX_DIR"; out="$d/mutated.json"
   mutate '
     doc.runtimes.claude.drift_status = "stale";
   ' "$out"
@@ -260,7 +258,7 @@ fx_cap_014() {
 
 fx_cap_015() {
   local d out
-  d="$(sandbox)"; out="$d/mutated.json"
+  sandbox; d="$SANDBOX_DIR"; out="$d/mutated.json"
   mutate '
     const freeform = doc.runtimes.claude.capabilities.find(c => c.capability_id === "capability.result.freeform");
     freeform.declared_status = "unknown";
@@ -280,7 +278,7 @@ fx_cap_015() {
 
 fx_cap_016() {
   local d out
-  d="$(sandbox)"; out="$d/mutated.json"
+  sandbox; d="$SANDBOX_DIR"; out="$d/mutated.json"
   mutate '
     const cap = doc.runtimes.claude.capabilities.find(c => c.capability_id === "capability.shell.execute");
     cap.declared_status = "unsupported";
@@ -298,7 +296,7 @@ fx_cap_016() {
 
 fx_supplementary_duplicate_id() {
   local d out
-  d="$(sandbox)"; out="$d/mutated.json"
+  sandbox; d="$SANDBOX_DIR"; out="$d/mutated.json"
   mutate '
     const first = doc.runtimes.claude.capabilities[0];
     doc.runtimes.claude.capabilities.push({ ...first });
@@ -311,7 +309,7 @@ fx_supplementary_duplicate_id() {
 
 fx_supplementary_unknown_with_evidence() {
   local d out
-  d="$(sandbox)"; out="$d/mutated.json"
+  sandbox; d="$SANDBOX_DIR"; out="$d/mutated.json"
   mutate '
     const cap = doc.runtimes.codex.capabilities.find(c => c.capability_id === "capability.session.resolve");
     cap.declared_status = "unknown";
