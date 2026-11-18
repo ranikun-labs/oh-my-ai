@@ -463,7 +463,7 @@ if [ "$base_gate_status" = 'READY' ]; then
   fi
 fi
 
-if status_output="$(git -C "$repository" status --short --ignored 2>/dev/null)"; then
+if status_output="$(git --no-optional-locks -C "$repository" status --short --ignored 2>/dev/null)"; then
   working_tree_gate_status='READY'
 else
   status_output=''
