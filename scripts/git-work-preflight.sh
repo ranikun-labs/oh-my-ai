@@ -489,7 +489,7 @@ while IFS= read -r line; do
       esac
       ;;
     '!!') ignored_count=$((ignored_count + 1)) ;;
-    *U*|UU) unmerged_count=$((unmerged_count + 1)) ;;
+    *U*|AA|DD) unmerged_count=$((unmerged_count + 1)) ;;
     *)
       [ "${code:0:1}" = ' ' ] || staged_count=$((staged_count + 1))
       [ "${code:1:1}" = ' ' ] || tracked_count=$((tracked_count + 1))
@@ -511,13 +511,11 @@ if [ "$unmerged_count" -gt 0 ]; then
   working_tree_status='UNMERGED_CONFLICT'
   working_tree_gate_status='BLOCKED_DIRTY_TREE'
   working_tree_gate_blocking_item='Unmerged conflict is present'
-fi
-if [ "$staged_count" -gt 0 ]; then
+elif [ "$staged_count" -gt 0 ]; then
   working_tree_status='STAGED_DIRTY'
   working_tree_gate_status='BLOCKED_DIRTY_TREE'
   working_tree_gate_blocking_item='Staged modification is present'
-fi
-if [ "$tracked_count" -gt 0 ]; then
+elif [ "$tracked_count" -gt 0 ]; then
   working_tree_status='TRACKED_DIRTY'
   working_tree_gate_status='BLOCKED_DIRTY_TREE'
   working_tree_gate_blocking_item='Tracked modification is present'
@@ -529,6 +527,8 @@ if [ "$unknown_untracked_count" -gt 0 ]; then
 fi
 if [ "$working_tree_gate_status" = 'NOT_VERIFIABLE' ]; then
   working_tree_status='NOT_VERIFIABLE'
+elif [ "$working_tree_gate_status" = 'BLOCKED_DIRTY_TREE' ]; then
+  : # Preserve the specific dirty state selected above.
 elif [ "$local_state_count" -gt 0 ]; then
   working_tree_status='UNTRACKED_LOCAL_STATE'
 else

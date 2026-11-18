@@ -207,7 +207,7 @@ const fixture = JSON.parse(fs.readFileSync(fixturePath, "utf8"));
 assert.equal(fixture.contract, "git-work-preflight-runtime-fixtures-v2");
 assert.deepEqual(
   fixture.scenarios.map(({ id }) => id),
-  ["actual-pushurl-aligned", "canonical-repository-identity", "redirect-alias-repository-identity", "verified-fork-repository-identity", "draft-pr-verified-fork", "unrelated-repository-identity", "malformed-feature-branch", "malformed-base-branch", "multiple-pushurls", "canonical-push-remote-split", "local-only-base-tip", "local-only-unique-commit", "canonical-base-push-cache-mismatch", "canonical-pr-collision", "draft-pr-key-order", "draft-pr-head-repository-mismatch", "draft-pr-head-repository-missing", "draft-pr-base-mismatch", "draft-pr-head-oid-mismatch", "merged-pr", "merged-pr-after-base-advanced", "merged-pr-association-mismatch", "merged-pr-feature-tip-advanced", "merged-pr-base-mismatch", "aligned", "tracked-dirty-original", "local-ahead", "remote-ahead", "diverged", "candidate-ancestor", "expected-canonical-base-mismatch", "github-unavailable", "multiple-prs", "report-newline-injection", "malformed-pr-json", "jira-association-unavailable", "jira-association-conflict", "remote-ahead-local-tip-already-in-base", "jira-association-unavailable-ancestor", "jira-association-matched-ancestor", "jira-association-conflicted-ancestor", "manual-review-ancestor", "stale-cached-feature-remote-ahead", "jira-work-missing-issue-key", "jira-work-valid-issue-key"],
+  ["actual-pushurl-aligned", "canonical-repository-identity", "redirect-alias-repository-identity", "verified-fork-repository-identity", "draft-pr-verified-fork", "unrelated-repository-identity", "malformed-feature-branch", "malformed-base-branch", "multiple-pushurls", "canonical-push-remote-split", "local-only-base-tip", "local-only-unique-commit", "canonical-base-push-cache-mismatch", "canonical-pr-collision", "draft-pr-key-order", "draft-pr-head-repository-mismatch", "draft-pr-head-repository-missing", "draft-pr-base-mismatch", "draft-pr-head-oid-mismatch", "merged-pr", "merged-pr-after-base-advanced", "merged-pr-association-mismatch", "merged-pr-feature-tip-advanced", "merged-pr-base-mismatch", "aligned", "tracked-dirty-original", "staged-dirty-status", "unmerged-dirty-status", "unmerged-both-added", "unmerged-both-deleted", "unmerged-and-tracked", "local-ahead", "remote-ahead", "diverged", "candidate-ancestor", "expected-canonical-base-mismatch", "github-unavailable", "multiple-prs", "report-newline-injection", "malformed-pr-json", "jira-association-unavailable", "jira-association-conflict", "remote-ahead-local-tip-already-in-base", "jira-association-unavailable-ancestor", "jira-association-matched-ancestor", "jira-association-conflicted-ancestor", "manual-review-ancestor", "stale-cached-feature-remote-ahead", "jira-work-missing-issue-key", "jira-work-valid-issue-key"],
 );
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "git-work-preflight-runtime-"));
@@ -236,6 +236,44 @@ const originalHead = fs.readFileSync(path.join(repo, ".git", "HEAD"), "utf8");
 const originalCommit = fixtureGit(["rev-parse", "HEAD"]).trim();
 const originalIndex = fs.readFileSync(path.join(repo, ".git", "index"));
 assert.equal(fixtureGit(["--no-optional-locks", "status", "--short", "--ignored"]), " M existing-writer-source.txt\n", "disposable fixture must contain a real tracked dirty file");
+
+// Reproduce AA with a real merge conflict and DD using a real unmerged Git
+// index with a stage-1 entry. Both live under the disposable fixture root.
+function fixtureConflict(kind) {
+  const conflictRepo = path.join(root, `conflict-${kind}`);
+  fs.mkdirSync(conflictRepo);
+  function git(args, input) {
+    return spawnSync(systemGit, ["-C", conflictRepo, ...args], { encoding: "utf8", env: setupEnv, input });
+  }
+  function ok(args, input) {
+    const result = git(args, input);
+    assert.equal(result.status, 0, `${kind}: git ${args.join(" ")}: ${result.stderr}`);
+    return result.stdout;
+  }
+  ok(["init", "-q"]);
+  if (kind === "AA") {
+    fs.writeFileSync(path.join(conflictRepo, "seed"), "seed\n");
+    ok(["add", "seed"]);
+    ok(["-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-qm", "base"]);
+    ok(["checkout", "-qb", "fixture-other"]);
+    fs.writeFileSync(path.join(conflictRepo, "conflict.txt"), "other\n");
+    ok(["add", "conflict.txt"]);
+    ok(["-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-qm", "other"]);
+    ok(["checkout", "-q", "-"]);
+    fs.writeFileSync(path.join(conflictRepo, "conflict.txt"), "main\n");
+    ok(["add", "conflict.txt"]);
+    ok(["-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-qm", "main"]);
+    assert.equal(git(["-c", "core.hooksPath=/dev/null", "merge", "--no-edit", "fixture-other"]).status, 1);
+  } else {
+    const blob = ok(["hash-object", "-w", "--stdin"], "base\n").trim();
+    ok(["update-index", "--index-info"], `100644 ${blob} 1\tconflict.txt\n`);
+  }
+  const status = ok(["status", "--short"]).trim();
+  assert.equal(status, `${kind} conflict.txt`);
+  return status;
+}
+const actualBothAdded = fixtureConflict("AA");
+const actualBothDeleted = fixtureConflict("DD");
 
 const fakeGit = String.raw`#!/usr/bin/env bash
 set -euo pipefail
@@ -356,9 +394,14 @@ case "$command" in
     esac
     ;;
   status)
-    if [ "$scenario" = 'tracked-dirty-original' ]; then
-      "$PREFLIGHT_SYSTEM_GIT" --no-optional-locks -C "$repo" status --short --ignored
-    fi
+    case "$scenario" in
+      tracked-dirty-original) "$PREFLIGHT_SYSTEM_GIT" --no-optional-locks -C "$repo" status --short --ignored ;;
+      staged-dirty-status) printf '%s\n' 'M  staged-file.txt' ;;
+      unmerged-dirty-status) printf '%s\n' 'UU conflicted-file.txt' ;;
+      unmerged-both-added) printf '%s\n' "$PREFLIGHT_STATUS_AA" ;;
+      unmerged-both-deleted) printf '%s\n' "$PREFLIGHT_STATUS_DD" ;;
+      unmerged-and-tracked) printf '%s\n' "$PREFLIGHT_STATUS_AA" ' M other-file.txt' ;;
+    esac
     exit 0
     ;;
   branch)
@@ -471,7 +514,7 @@ try {
     const commandLog = path.join(root, `${scenario.id}.git-commands.log`);
     const result = spawnSync(runtimePath, args, {
       encoding: "utf8",
-      env: { ...process.env, HOME: fakeHome, PATH: `${fakeBin}:${process.env.PATH}`, PREFLIGHT_SCENARIO: scenario.id, PREFLIGHT_REPO: repo, PREFLIGHT_GIT_COMMAND_LOG: commandLog, PREFLIGHT_SYSTEM_GIT: systemGit },
+      env: { ...process.env, HOME: fakeHome, PATH: `${fakeBin}:${process.env.PATH}`, PREFLIGHT_SCENARIO: scenario.id, PREFLIGHT_REPO: repo, PREFLIGHT_GIT_COMMAND_LOG: commandLog, PREFLIGHT_SYSTEM_GIT: systemGit, PREFLIGHT_STATUS_AA: actualBothAdded, PREFLIGHT_STATUS_DD: actualBothDeleted },
     });
     assert.equal(result.status, scenario.process_exit_code, `${scenario.id}: process exit code`);
     const report = parseReport(result.stdout);
@@ -485,6 +528,13 @@ try {
     assert.deepEqual(gitCommands.filter(command => mutatingCommands.has(command)), [], `${scenario.id}: no mutating Git invocation`);
     if (scenario.id === "tracked-dirty-original") {
       assert.equal(report.get("Tracked Status"), "COUNT=1", "real disposable tracked dirty state was observed through the fixture transport");
+      assert.equal(report.get("Working Tree Status"), "TRACKED_DIRTY", "dirty tracked source must never be reported CLEAN");
+    }
+    if (scenario.id === "staged-dirty-status") assert.equal(report.get("Working Tree Status"), "STAGED_DIRTY");
+    if (scenario.id === "unmerged-dirty-status") assert.equal(report.get("Working Tree Status"), "UNMERGED_CONFLICT");
+    if (["unmerged-both-added", "unmerged-both-deleted", "unmerged-and-tracked"].includes(scenario.id)) {
+      assert.equal(report.get("Working Tree Status"), "UNMERGED_CONFLICT");
+      assert.equal(report.get("Unmerged Status"), "COUNT=1");
     }
     for (const [field, expected] of Object.entries({
       "Preflight Result": scenario.preflight_result,
