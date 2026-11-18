@@ -534,6 +534,35 @@ try {
 }
 NODE
 
+assert_duplicate_option_rejected() {
+  local option="$1" first="$2" second="$3" expected="$4" output
+  if output="$("$RUNTIME" "$option" "$first" "$option" "$second" 2>&1)"; then
+    fail "$option: duplicate singleton option was accepted"
+  fi
+  case "$output" in
+    *"Preflight Result: NOT_VERIFIABLE"*) ;;
+    *) fail "$option: duplicate did not fail closed: $output" ;;
+  esac
+  case "$output" in
+    *"Blocking Items: $expected"*) ;;
+    *) fail "$option: wrong duplicate diagnostic, expected '$expected': $output" ;;
+  esac
+  case "$output" in
+    *"Mutation: 0"*"Process Exit Code: 2"*) ;;
+    *) fail "$option: duplicate rejection did not preserve zero-mutation/nonzero status: $output" ;;
+  esac
+}
+
+# Every documented option is a singleton. Conflicting or repeated values must
+# not silently replace the first task, base, consumer, policy, or evidence.
+assert_duplicate_option_rejected --expected-base-sha aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb 'Expected Base SHA was supplied more than once'
+assert_duplicate_option_rejected --expected-branch-name feat/RPL-TEST-one feat/RPL-TEST-two 'Expected Branch Candidate was supplied more than once'
+assert_duplicate_option_rejected --issue-key RPL-TEST-1 RPL-TEST-2 'Issue Key was supplied more than once'
+assert_duplicate_option_rejected --execution-policy suggest-only auto-apply 'Execution Policy was supplied more than once'
+assert_duplicate_option_rejected --consumer jira-work manual-review 'Consumer was supplied more than once'
+assert_duplicate_option_rejected --provided-evidence first second 'Provided Evidence was supplied more than once'
+echo "passed: duplicate singleton option rejection (6/6)"
+
 if output="$("$RUNTIME" 2>&1)"; then
   fail "runtime accepted missing required inputs"
 fi
