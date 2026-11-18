@@ -41,28 +41,10 @@ jobs:
           const skill = fs.readFileSync(skillPath, 'utf8');
           const match = skill.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
           assert.ok(match, 'SKILL.md must have frontmatter');
-          const lines = match[1].split(/\r?\n/);
-          const topValue = (key) => {
-            const line = lines.find((item) => !/^\s/.test(item) && item.startsWith(`${key}:`));
-            return line?.slice(key.length + 1).trim();
-          };
-          assert.equal(topValue('name'), 'dev-main-flow');
-          assert.equal(topValue('disable-model-invocation'), 'true');
-
-          const metadataStart = lines.indexOf('metadata:');
-          assert.notEqual(metadataStart, -1, 'metadata block is required');
-          const metadata = [];
-          for (const line of lines.slice(metadataStart + 1)) {
-            if (line && !/^\s/.test(line)) break;
-            metadata.push(line);
-          }
-          assert.ok(metadata.some((line) => /^\s+source:\s*born-here\s*$/.test(line)), 'source must be born-here');
-          assert.ok(metadata.some((line) => /^\s+summary:\s*\S/.test(line)), 'summary is required');
-          assert.ok(!metadata.some((line) => /^\s+(?:route|routing):/.test(line)), 'this planning entry must not add routing');
-
+          const { validateExplicitOnlyFrontmatter, validateExplicitOnlyAgentMetadata } = require(path.join(root, 'scripts', 'lib', 'skill-frontmatter-validation.cjs'));
+          validateExplicitOnlyFrontmatter(match[1]);
           const agentMetadata = fs.readFileSync(path.join(skillDir, 'agents', 'openai.yaml'), 'utf8');
-          assert.match(agentMetadata, /^\s+allow_implicit_invocation:\s*false\s*$/m);
-          assert.match(agentMetadata, /default_prompt:.*Use \$dev-main-flow/);
+          validateExplicitOnlyAgentMetadata(agentMetadata);
 
           const linkPath = path.join(root, '.agents', 'skills', 'dev-main-flow');
           assert.ok(fs.lstatSync(linkPath).isSymbolicLink(), 'Repository Skill link must be a symlink');
