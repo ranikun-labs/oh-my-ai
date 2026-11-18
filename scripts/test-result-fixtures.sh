@@ -206,7 +206,42 @@ fx_blocked_result() {
   echo "passed: FX-RS-blocked-result"
 }
 
-# --- 8. Ambiguous sections and metadata --------------------------------------
+# --- 8. Status gates reject untouched template prompts ---------------------
+
+fx_status_gate_template_placeholders() {
+  local complete="$FIXTURE_ROOT/FX-RS-good-complete-validation-performed.md"
+  local partial="$FIXTURE_ROOT/FX-RS-good-partial-validation-not-performed.md"
+  local blocked="$FIXTURE_ROOT/FX-RS-good-blocked.md"
+  local d out
+  d="$(sandbox)"; out="$d/placeholder.md"
+
+  mutate_result "$complete" "$out" \
+    '- `bash -n README.md` is not applicable to Markdown; visually diffed the single-line change against the surrounding install steps.' \
+    '- <validation that was actually performed>'
+  expect_invalid "$out" "Complete-Validation-Performed-placeholder" "requires at least one entry under Validation Performed"
+
+  # A real entry may mention a template prompt; only the exact prompt line is empty.
+  mutate_result "$complete" "$out" \
+    '- `bash -n README.md` is not applicable to Markdown; visually diffed the single-line change against the surrounding install steps.' \
+    '- The report explains why `<validation that was actually performed>` was not applicable and records a visual diff.'
+  expect_valid "$out" "Complete-Validation-Performed-placeholder-mentioned-in-evidence"
+
+  mutate_result "$partial" "$out" \
+    '- Integration test against the live endpoint was not run because test credentials were not available in this environment.' \
+    '- <validation that was requested or expected but not performed, with reason>'
+  mutate_result "$out" "$out" \
+    '- Confirm rate-limit response code with the endpoint owner before merge.' \
+    '- <open issue or question>'
+  expect_invalid "$out" "Partial-Validation-And-Issue-placeholders" "requires evidence of incompleteness"
+
+  mutate_result "$blocked" "$out" \
+    '- `blocker_type`: `missing_access` - description: no IAM grant for this account on the target secrets manager project; required_access: "secretmanager.versions.access on project X"; recommended_next_action: "Request access grant from the project owner, then resume this task"' \
+    '- <reason the work is blocked>'
+  expect_invalid "$out" "Blocked-Reason-placeholder" "requires at least one entry under Blocked Reasons"
+  echo "passed: FX-RS-status-gate-template-placeholders"
+}
+
+# --- 9. Ambiguous sections and metadata --------------------------------------
 
 fx_ambiguous_result() {
   local src="$FIXTURE_ROOT/FX-RS-good-complete-validation-performed.md"
@@ -531,6 +566,7 @@ fx_scope_deviation
 fx_missing_result
 fx_partial_result
 fx_blocked_result
+fx_status_gate_template_placeholders
 fx_ambiguous_result
 fx_source_handoff_reference
 fx_required_metadata_unfilled
