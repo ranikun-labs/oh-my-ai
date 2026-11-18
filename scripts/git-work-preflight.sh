@@ -680,6 +680,14 @@ if [ "$working_tree_gate_status" = 'NOT_VERIFIABLE' ]; then
   hard_stop NOT_VERIFIABLE "$working_tree_gate_blocking_item"
 fi
 
+# PR metadata and the independently observed push ref can be read at different
+# times.  A stale or moving Draft HEAD must never be advertised as resumable.
+if [ "$pr_status" = 'OPEN_DRAFT' ] && [ "$remote_branch_status" = 'PRESENT' ] && [ "$remote_branch_tip" != "$pr_head_sha" ]; then
+  pr_status='OPEN_HEAD_OID_MISMATCH'
+  existing_work_state='H'
+  hard_stop CONFLICTED 'Open Draft PR HEAD differs from the observed Push Remote Feature tip'
+fi
+
 if [ "$pr_status" = 'OPEN_DRAFT' ] && { [ "$local_branch_status" != 'PRESENT' ] || [ "$remote_branch_status" != 'PRESENT' ]; }; then
   existing_work_state='H'
   unique_feature_commits='0'
