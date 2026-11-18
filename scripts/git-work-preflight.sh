@@ -617,6 +617,7 @@ process.stdin.on("end", () => {
       return emit("MERGED", pr.headRefName, pr.baseRefName, pr.headRefOid);
     }
     if (pr.state === "CLOSED") return emit("CLOSED_UNMERGED", pr.headRefName, pr.baseRefName, pr.headRefOid);
+    if (pr.state === "OPEN" && pr.baseRefName !== process.argv[2]) return emit("OPEN_BASE_MISMATCH", pr.headRefName, pr.baseRefName, pr.headRefOid);
     if (pr.state === "OPEN") return emit(pr.isDraft ? "OPEN_DRAFT" : "OPEN_NON_DRAFT", pr.headRefName, pr.baseRefName, pr.headRefOid);
     throw new Error("PR state is unsupported");
   } catch (_) {
@@ -646,6 +647,11 @@ if [ "$pr_status" = 'MERGED_TIP_MISMATCH' ]; then
   existing_work_state='H'
   hard_stop CONFLICTED 'Current Local or Push Remote Feature tip differs from the merged PR head'
 fi
+if [ "$pr_status" = 'OPEN_BASE_MISMATCH' ]; then
+  existing_work_state='H'
+  hard_stop CONFLICTED 'Open PR base branch does not match the expected Canonical Base Branch'
+fi
+
 if [ "$pr_status" = 'MERGED_BASE_MISMATCH' ]; then
   existing_work_state='H'
   hard_stop CONFLICTED 'Merged PR base branch does not match the expected Canonical Base Branch'
