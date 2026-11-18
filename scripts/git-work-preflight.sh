@@ -595,8 +595,8 @@ if [ "$consumer" = 'jira-work' ] && [ -n "$issue_key" ]; then
   fi
 fi
 
-pr_json="$(cd "$repository" && gh pr list --repo "$canonical_repository" --head "$expected_branch_name" --state all --json state,isDraft,headRefName,baseRefName,headRefOid 2>/dev/null)" || { pr_status='NOT_VERIFIABLE'; hard_stop NOT_VERIFIABLE 'Canonical GitHub PR state cannot be queried'; }
-append_executed 'GitHub PR metadata JSON=QUERIED (state, headRefName, baseRefName, headRefOid)'
+pr_json="$(cd "$repository" && gh pr list --repo "$canonical_repository" --head "$expected_branch_name" --state all --json state,isDraft,headRefName,baseRefName,headRefOid,headRepository 2>/dev/null)" || { pr_status='NOT_VERIFIABLE'; hard_stop NOT_VERIFIABLE 'Canonical GitHub PR state cannot be queried'; }
+append_executed 'GitHub PR metadata JSON=QUERIED (state, headRefName, baseRefName, headRefOid, headRepository)'
 pr_metadata="$(printf '%s' "$pr_json" | node -e '
 let input = "";
 process.stdin.setEncoding("utf8");
@@ -610,6 +610,8 @@ process.stdin.on("end", () => {
     if (records.length !== 1) return emit("MULTIPLE");
     const pr = records[0];
     if (!pr || typeof pr.state !== "string" || typeof pr.isDraft !== "boolean" || typeof pr.headRefName !== "string" || typeof pr.baseRefName !== "string" || typeof pr.headRefOid !== "string") throw new Error("PR record is incomplete");
+    if (!pr.headRepository || typeof pr.headRepository.id !== "string" || !pr.headRepository.id) throw new Error("PR head repository identity unavailable");
+    if (pr.headRepository.id !== process.argv[3]) return emit("HEAD_REPOSITORY_MISMATCH", pr.headRefName, pr.baseRefName, pr.headRefOid);
     if (!/^[0-9a-fA-F]{40,64}$/.test(pr.headRefOid)) throw new Error("PR headRefOid is malformed");
     if (pr.headRefName !== process.argv[1]) return emit("HEAD_MISMATCH", pr.headRefName, pr.baseRefName, pr.headRefOid);
     if (pr.state === "MERGED") {
@@ -624,7 +626,7 @@ process.stdin.on("end", () => {
     process.exitCode = 1;
   }
 });
-' "$expected_branch_name" "$expected_base_branch")" || { pr_status='NOT_VERIFIABLE'; hard_stop NOT_VERIFIABLE 'GitHub PR response is malformed or unsupported'; }
+' "$expected_branch_name" "$expected_base_branch" "$push_repository_id")" || { pr_status='NOT_VERIFIABLE'; hard_stop NOT_VERIFIABLE 'GitHub PR response is malformed or unsupported'; }
 IFS=$'\t' read -r pr_status pr_head_ref pr_base_ref pr_head_sha <<< "$pr_metadata"
 
 if [ "$pr_status" = 'MERGED' ]; then
@@ -647,6 +649,11 @@ if [ "$pr_status" = 'MERGED_TIP_MISMATCH' ]; then
   existing_work_state='H'
   hard_stop CONFLICTED 'Current Local or Push Remote Feature tip differs from the merged PR head'
 fi
+if [ "$pr_status" = 'HEAD_REPOSITORY_MISMATCH' ]; then
+  existing_work_state='H'
+  hard_stop CONFLICTED 'PR head repository does not match the configured Push Repository'
+fi
+
 if [ "$pr_status" = 'OPEN_BASE_MISMATCH' ]; then
   existing_work_state='H'
   hard_stop CONFLICTED 'Open PR base branch does not match the expected Canonical Base Branch'

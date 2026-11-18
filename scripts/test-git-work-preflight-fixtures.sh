@@ -207,7 +207,7 @@ const fixture = JSON.parse(fs.readFileSync(fixturePath, "utf8"));
 assert.equal(fixture.contract, "git-work-preflight-runtime-fixtures-v2");
 assert.deepEqual(
   fixture.scenarios.map(({ id }) => id),
-  ["actual-pushurl-aligned", "canonical-repository-identity", "redirect-alias-repository-identity", "verified-fork-repository-identity", "unrelated-repository-identity", "malformed-feature-branch", "malformed-base-branch", "multiple-pushurls", "canonical-push-remote-split", "local-only-base-tip", "local-only-unique-commit", "canonical-base-push-cache-mismatch", "canonical-pr-collision", "draft-pr-key-order", "draft-pr-base-mismatch", "merged-pr", "merged-pr-after-base-advanced", "merged-pr-association-mismatch", "merged-pr-feature-tip-advanced", "merged-pr-base-mismatch", "aligned", "tracked-dirty-original", "local-ahead", "remote-ahead", "diverged", "candidate-ancestor", "expected-canonical-base-mismatch", "github-unavailable", "multiple-prs", "report-newline-injection", "malformed-pr-json", "jira-association-unavailable", "jira-association-conflict", "remote-ahead-local-tip-already-in-base", "jira-association-unavailable-ancestor", "jira-association-matched-ancestor", "jira-association-conflicted-ancestor", "manual-review-ancestor", "stale-cached-feature-remote-ahead", "jira-work-missing-issue-key", "jira-work-valid-issue-key"],
+  ["actual-pushurl-aligned", "canonical-repository-identity", "redirect-alias-repository-identity", "verified-fork-repository-identity", "draft-pr-verified-fork", "unrelated-repository-identity", "malformed-feature-branch", "malformed-base-branch", "multiple-pushurls", "canonical-push-remote-split", "local-only-base-tip", "local-only-unique-commit", "canonical-base-push-cache-mismatch", "canonical-pr-collision", "draft-pr-key-order", "draft-pr-head-repository-mismatch", "draft-pr-head-repository-missing", "draft-pr-base-mismatch", "merged-pr", "merged-pr-after-base-advanced", "merged-pr-association-mismatch", "merged-pr-feature-tip-advanced", "merged-pr-base-mismatch", "aligned", "tracked-dirty-original", "local-ahead", "remote-ahead", "diverged", "candidate-ancestor", "expected-canonical-base-mismatch", "github-unavailable", "multiple-prs", "report-newline-injection", "malformed-pr-json", "jira-association-unavailable", "jira-association-conflict", "remote-ahead-local-tip-already-in-base", "jira-association-unavailable-ancestor", "jira-association-matched-ancestor", "jira-association-conflicted-ancestor", "manual-review-ancestor", "stale-cached-feature-remote-ahead", "jira-work-missing-issue-key", "jira-work-valid-issue-key"],
 );
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "git-work-preflight-runtime-"));
@@ -309,7 +309,7 @@ case "$command" in
     elif [ " $* " = ' get-url --all --push origin ' ] || [ " $* " = ' get-url --push --all origin ' ] || [ " $* " = ' get-url --push origin ' ]; then
       case "$scenario" in
         actual-pushurl-aligned) printf '%s\n' 'https://github.com/contributor/oh-my-ai.git' ;;
-        verified-fork-repository-identity) printf '%s\n' 'https://github.com/contributor/oh-my-ai.git' ;;
+        verified-fork-repository-identity|draft-pr-verified-fork) printf '%s\n' 'https://github.com/contributor/oh-my-ai.git' ;;
         unrelated-repository-identity) printf '%s\n' 'https://github.com/unrelated/other.git' ;;
         canonical-repository-identity) printf '%s\n' 'https://github.com/ranikun-labs/oh-my-ai.git' ;;
         *) printf '%s\n' 'https://github.com/aixion1506/oh-my-ai.git' ;;
@@ -317,7 +317,7 @@ case "$command" in
     else
       case "$scenario" in
         actual-pushurl-aligned|canonical-repository-identity) printf '%s\n' 'https://github.com/ranikun-labs/oh-my-ai.git' ;;
-        verified-fork-repository-identity) printf '%s\n' 'https://github.com/contributor/oh-my-ai.git' ;;
+        verified-fork-repository-identity|draft-pr-verified-fork) printf '%s\n' 'https://github.com/contributor/oh-my-ai.git' ;;
         unrelated-repository-identity) printf '%s\n' 'https://github.com/unrelated/other.git' ;;
         *) printf '%s\n' 'https://github.com/aixion1506/oh-my-ai.git' ;;
       esac
@@ -412,15 +412,18 @@ fi
 case "$PREFLIGHT_SCENARIO" in
   canonical-pr-collision)
     case " $* " in
-      *' --repo ranikun-labs/oh-my-ai '*) printf '%s\n' '[{"headRefName":"feat/shared-git-preflight","baseRefName":"master","headRefOid":"cccccccccccccccccccccccccccccccccccccccc","isDraft":true,"state":"OPEN"}]' ;;
+      *' --repo ranikun-labs/oh-my-ai '*) printf '%s\n' '[{"headRefName":"feat/shared-git-preflight","baseRefName":"master","headRefOid":"cccccccccccccccccccccccccccccccccccccccc","headRepository":{"id":"R_CANONICAL"},"isDraft":true,"state":"OPEN"}]' ;;
       *) printf '%s\n' '[]' ;;
     esac
     ;;
-  draft-pr-key-order) printf '%s\n' '[{"headRefName":"feat/shared-git-preflight","baseRefName":"master","headRefOid":"cccccccccccccccccccccccccccccccccccccccc","isDraft":true,"state":"OPEN"}]' ;;
-  draft-pr-base-mismatch) printf '%s\n' '[{"headRefName":"feat/shared-git-preflight","baseRefName":"release","headRefOid":"cccccccccccccccccccccccccccccccccccccccc","isDraft":true,"state":"OPEN"}]' ;;
-  merged-pr|merged-pr-after-base-advanced|merged-pr-association-mismatch|merged-pr-feature-tip-advanced) printf '%s\n' '[{"isDraft":false,"state":"MERGED","headRefName":"feat/shared-git-preflight","baseRefName":"master","headRefOid":"cccccccccccccccccccccccccccccccccccccccc"}]' ;;
-  merged-pr-base-mismatch) printf '%s\n' '[{"isDraft":false,"state":"MERGED","headRefName":"feat/shared-git-preflight","baseRefName":"release","headRefOid":"cccccccccccccccccccccccccccccccccccccccc"}]' ;;
-  multiple-prs) printf '%s\n' '[{"state":"OPEN","isDraft":true,"headRefName":"feat/shared-git-preflight","baseRefName":"master","headRefOid":"cccccccccccccccccccccccccccccccccccccccc"},{"state":"OPEN","isDraft":true,"headRefName":"feat/shared-git-preflight","baseRefName":"master","headRefOid":"cccccccccccccccccccccccccccccccccccccccc"}]' ;;
+  draft-pr-key-order) printf '%s\n' '[{"headRefName":"feat/shared-git-preflight","baseRefName":"master","headRefOid":"cccccccccccccccccccccccccccccccccccccccc","headRepository":{"id":"R_CANONICAL"},"isDraft":true,"state":"OPEN"}]' ;;
+  draft-pr-verified-fork) printf '%s\n' '[{"headRefName":"feat/shared-git-preflight","baseRefName":"master","headRefOid":"cccccccccccccccccccccccccccccccccccccccc","headRepository":{"id":"R_FORK"},"isDraft":true,"state":"OPEN"}]' ;;
+  draft-pr-head-repository-mismatch) printf '%s\n' '[{"headRefName":"feat/shared-git-preflight","baseRefName":"master","headRefOid":"cccccccccccccccccccccccccccccccccccccccc","headRepository":{"id":"R_ANOTHER_FORK","nameWithOwner":"other/oh-my-ai"},"isDraft":true,"state":"OPEN"}]' ;;
+  draft-pr-head-repository-missing) printf '%s\n' '[{"headRefName":"feat/shared-git-preflight","baseRefName":"master","headRefOid":"cccccccccccccccccccccccccccccccccccccccc","headRepository":null,"isDraft":true,"state":"OPEN"}]' ;;
+  draft-pr-base-mismatch) printf '%s\n' '[{"headRefName":"feat/shared-git-preflight","baseRefName":"release","headRefOid":"cccccccccccccccccccccccccccccccccccccccc","headRepository":{"id":"R_CANONICAL"},"isDraft":true,"state":"OPEN"}]' ;;
+  merged-pr|merged-pr-after-base-advanced|merged-pr-association-mismatch|merged-pr-feature-tip-advanced) printf '%s\n' '[{"headRepository":{"id":"R_CANONICAL"},"isDraft":false,"state":"MERGED","headRefName":"feat/shared-git-preflight","baseRefName":"master","headRefOid":"cccccccccccccccccccccccccccccccccccccccc"}]' ;;
+  merged-pr-base-mismatch) printf '%s\n' '[{"headRepository":{"id":"R_CANONICAL"},"isDraft":false,"state":"MERGED","headRefName":"feat/shared-git-preflight","baseRefName":"release","headRefOid":"cccccccccccccccccccccccccccccccccccccccc"}]' ;;
+  multiple-prs) printf '%s\n' '[{"state":"OPEN","headRepository":{"id":"R_CANONICAL"},"isDraft":true,"headRefName":"feat/shared-git-preflight","baseRefName":"master","headRefOid":"cccccccccccccccccccccccccccccccccccccccc"},{"state":"OPEN","headRepository":{"id":"R_CANONICAL"},"isDraft":true,"headRefName":"feat/shared-git-preflight","baseRefName":"master","headRefOid":"cccccccccccccccccccccccccccccccccccccccc"}]' ;;
   malformed-pr-json) printf '%s\n' '{not-json' ;;
   github-unavailable) exit 1 ;;
   *) printf '%s\n' '[]' ;;
