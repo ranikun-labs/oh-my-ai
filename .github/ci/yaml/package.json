@@ -1,0 +1,9 @@
+{
+  "name": "oh-my-ai-claude-skill-yaml-check",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Pinned YAML parser used by the Claude Skill link workflow.",
+  "dependencies": {
+    "yaml": "2.9.1"
+  }
+}

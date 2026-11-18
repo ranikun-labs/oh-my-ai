@@ -22,6 +22,12 @@ jobs:
         with:
           node-version: 22
 
+      - name: Install the pinned YAML parser for Skill metadata
+        run: npm ci --prefix .github/ci/yaml --ignore-scripts --no-audit --no-fund
+
+      - name: Run Skill frontmatter YAML fixtures
+        run: node scripts/test-skill-frontmatter-validation.cjs
+
       - name: Validate explicit-only Skill metadata and source link
         run: |
           node <<'NODE'
@@ -79,6 +85,12 @@ jobs:
           node <<'NODE'
           const fs = require('node:fs');
           const path = require('node:path');
+          const { validateSkillFrontmatter } = require(path.join(
+            process.cwd(),
+            'scripts',
+            'lib',
+            'skill-frontmatter-validation.cjs',
+          ));
 
           const root = process.cwd();
           const claudeSkillsDir = path.join(root, '.claude', 'skills');
@@ -98,13 +110,9 @@ jobs:
             }
           };
 
-          const frontmatterLines = (file) => {
+          const frontmatterText = (file) => {
             const match = fs.readFileSync(file, 'utf8').match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
-            return match ? match[1].split(/\r?\n/) : null;
-          };
-          const topValue = (lines, key) => {
-            const line = lines.find((item) => !/^\s/.test(item) && item.startsWith(`${key}:`));
-            return line ? line.slice(key.length + 1).trim() : '';
+            return match ? match[1] : null;
           };
 
           const checkLink = (name) => {
@@ -153,16 +161,14 @@ jobs:
             }
 
             // (e) frontmatter name이 항목 이름과 같고 description이 있어야 한다.
-            const lines = frontmatterLines(linkedSkill);
-            if (!lines) {
+            const frontmatter = frontmatterText(linkedSkill);
+            if (frontmatter === null) {
               throw fail(name, 'SKILL.md에 frontmatter가 없습니다.');
             }
-            const declaredName = topValue(lines, 'name');
-            if (declaredName !== name) {
-              throw fail(name, `frontmatter name 불일치(${declaredName || '없음'} ≠ ${name}).`);
-            }
-            if (!topValue(lines, 'description')) {
-              throw fail(name, 'frontmatter description이 없습니다.');
+            try {
+              validateSkillFrontmatter(frontmatter, name);
+            } catch (error) {
+              throw fail(name, error.message);
             }
           };
 
