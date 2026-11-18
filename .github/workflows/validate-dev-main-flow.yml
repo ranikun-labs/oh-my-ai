@@ -213,6 +213,12 @@ jobs:
         run: make test-dev-main-flow-install-fixtures
         timeout-minutes: 2
 
+      - name: Run offline usage summary fixtures
+        run: |
+          node scripts/test-role-usage-summary.mjs
+          node scripts/test-usage-f1.mjs
+        timeout-minutes: 2
+
       - name: Check whitespace in the pull request diff
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
