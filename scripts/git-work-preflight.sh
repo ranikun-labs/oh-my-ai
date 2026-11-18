@@ -222,31 +222,37 @@ while [ "$#" -gt 0 ]; do
       ;;
     --expected-base-sha)
       require_value "$@"
+      [ -z "$expected_base_sha" ] || hard_stop NOT_VERIFIABLE 'Expected Base SHA was supplied more than once'
       expected_base_sha="$2"
       shift 2
       ;;
     --expected-branch-name)
       require_value "$@"
+      [ -z "$expected_branch_name" ] || hard_stop NOT_VERIFIABLE 'Expected Branch Candidate was supplied more than once'
       expected_branch_name="$2"
       shift 2
       ;;
     --issue-key)
       require_value "$@"
+      [ -z "$issue_key" ] || hard_stop NOT_VERIFIABLE 'Issue Key was supplied more than once'
       issue_key="$2"
       shift 2
       ;;
     --execution-policy)
       require_value "$@"
+      [ -z "$execution_policy" ] || hard_stop NOT_VERIFIABLE 'Execution Policy was supplied more than once'
       execution_policy="$2"
       shift 2
       ;;
     --consumer)
       require_value "$@"
+      [ -z "$consumer" ] || hard_stop NOT_VERIFIABLE 'Consumer was supplied more than once'
       consumer="$2"
       shift 2
       ;;
     --provided-evidence)
       require_value "$@"
+      [ -z "$provided_evidence" ] || hard_stop NOT_VERIFIABLE 'Provided Evidence was supplied more than once'
       provided_evidence="$2"
       shift 2
       ;;
