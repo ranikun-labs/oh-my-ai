@@ -213,6 +213,16 @@ jobs:
         run: make test-dev-main-flow-install-fixtures
         timeout-minutes: 2
 
+      - name: Run work-state observation view fixtures
+        run: |
+          node scripts/test-work-state-observation-view-fixtures.mjs
+          node scripts/test-work-tree-view.mjs
+          node scripts/test-jira-observations.mjs
+          bash scripts/test-jira-observations-cli.sh
+          bash scripts/test-work-view-stdin-limits.sh
+          bash scripts/test-work-tree-cli.sh
+        timeout-minutes: 2
+
       - name: Check whitespace in the pull request diff
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}

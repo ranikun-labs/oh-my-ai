@@ -13,6 +13,9 @@ import {
 } from "./lib/context-checkpoint-state.mjs";
 import { rememberWorkStartExecution } from "./lib/work-start-execution-state.mjs";
 import { handleJiraTicketRuntimeInput } from "./lib/jira-ticket-runtime-entry.mjs";
+import { formatWorkStateObservationView } from "./lib/work-state-observation-view.mjs";
+import { formatWorkTree } from "./lib/work-tree-view.mjs";
+import { jiraObservations } from "./lib/jira-observations.mjs";
 
 const args = process.argv.slice(2);
 const command = args[0];
@@ -25,6 +28,8 @@ if (command === "hook") {
   runWorkStart(args.slice(1));
 } else if (command === "jira-ticket") {
   runJiraTicket(args.slice(1));
+} else if (command === "work-view") {
+  runWorkView(args.slice(1));
 } else {
   usage(command ? `unknown command: ${command}` : "");
 }
@@ -51,6 +56,38 @@ function runJiraTicket(args) {
     process.stderr.write(`jira-ticket runtime protocol failed: ${error.message}\n`);
     process.exit(2);
   }
+}
+
+function runWorkView(args) {
+  if (!(args.length === 1 && args[0] === "--stdin-json") && !(args.length === 2 && args[0] === "--stdin-json" && ["--relations", "--jira-observations"].includes(args[1]))) {
+    process.stderr.write("usage: oh-my-ai work-view --stdin-json [--relations|--jira-observations]\n");
+    process.exit(2);
+  }
+
+  let input;
+  try {
+    input = JSON.parse(readWorkViewStdin());
+  } catch (error) {
+    if (error.code === "WORK_VIEW_INPUT_TOO_LARGE") {
+      process.stderr.write("work-view input exceeds 8388608 bytes\n");
+      process.exit(2);
+    }
+    process.stderr.write("work-view input must be valid JSON\n");
+    process.exit(2);
+  }
+
+  let view;
+  try {
+    if (args[1] === "--jira-observations") {
+      const normalized = jiraObservations(input.issues, input.observed_at);
+      view = `조회 범위: PARTIAL — 수동 제공 관찰이며 Jira 자동 조회가 아닙니다.\n입력 범위 밖의 지원 관계(Parent·Blocks·Relates) 관찰: ${normalized.omitted_relation_observations}건; 표시하지 않은 기타 링크 관찰: ${normalized.unsupported_link_observations}건. 관찰 횟수이며 고유 관계 건수나 미조회 데이터 전체가 아닙니다.\n\n${formatWorkTree({items: normalized.items, relations: normalized.relations})}`;
+    } else view = args.length === 2 ? formatWorkTree(input) : formatWorkStateObservationView(input);
+  } catch (error) {
+    process.stderr.write(`work-view input invalid: ${error.message}\n`);
+    process.exit(2);
+  }
+
+  process.stdout.write(`${view}\n`);
 }
 
 function runWorkStart(args) {
@@ -321,6 +358,23 @@ function contextCheckpointUsage() {
   process.exit(2);
 }
 
+function readWorkViewStdin() {
+  const limit = 8 * 1024 * 1024;
+  const buffer = Buffer.allocUnsafe(limit + 1);
+  let total = 0;
+  while (true) {
+    const count = fs.readSync(0, buffer, total, buffer.length - total, null);
+    if (count === 0) break;
+    total += count;
+    if (total > limit) {
+      const error = new Error("work-view input too large");
+      error.code = "WORK_VIEW_INPUT_TOO_LARGE";
+      throw error;
+    }
+  }
+  return buffer.toString("utf8", 0, total);
+}
+
 function readStdin() {
   try {
     return fs.readFileSync(0, "utf8");
@@ -377,5 +431,6 @@ function usage(error) {
   process.stderr.write("       oh-my-ai context-checkpoint <status|handoff-preflight|resolve> ...\n");
   process.stderr.write("       oh-my-ai work-start -- <task>\n");
   process.stderr.write("       oh-my-ai jira-ticket --json <runtime-protocol-json>\n");
+  process.stderr.write("       oh-my-ai work-view --stdin-json [--relations|--jira-observations]\n");
   process.exit(error ? 2 : 0);
 }
