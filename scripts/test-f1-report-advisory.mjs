@@ -882,6 +882,44 @@ const visibleStatusAfterPre = validReport.replace(
 const visibleStatusAfterPreResult = validateF1Report(visibleStatusAfterPre);
 assert.equal(visibleStatusAfterPreResult.valid, true, visibleStatusAfterPreResult.errors.join("; "));
 
+const listHtmlBlocks = [
+  ["- <textarea>", "  </textarea>"],
+  ["1. <script>", "   </script>"],
+  ["- <!--", "  -->"],
+  ["- <details>", "  </details>"],
+  ["- <report-example>", "  </report-example>"],
+  ["- 출력 예시\n  - <textarea>", "    </textarea>"],
+  ["- - <textarea>", "    </textarea>"],
+];
+for (const [opening, closing] of listHtmlBlocks) {
+  const indentation = closing.match(/^ +/u)[0];
+  const example = `${opening}\n${indentation}CI: PASS — https://example.invalid/example`;
+  expectInvalid(
+    "an HTML block opening on a list marker cannot supply CI evidence",
+    validReport.replace(ciLine, `\n${example}\n${closing}\n`),
+    "CI must have exactly one explicit status line"
+  );
+  const afterBlock = validateF1Report(validReport.replace(ciLine, `\n${example}\n${ciLine}`));
+  assert.equal(afterBlock.valid, true, `${opening}: ${afterBlock.errors.join("; ")}`);
+}
+const tagInListParagraph = validateF1Report(validReport.replace(
+  ciLine,
+  "- 출력 예시\n  <report-example>\n  CI: NOT_RUN — 이 문단에서 실제 상태를 보고했다."
+));
+assert.equal(tagInListParagraph.valid, true, tagInListParagraph.errors.join("; "));
+expectInvalid(
+  "text after a same-line HTML block comment is not a Markdown status",
+  validReport.replace(ciLine, "- <!-- 예시 --> CI: PASS — https://example.invalid/example"),
+  "CI must have exactly one explicit status line"
+);
+const parentListAfterHtml = validateF1Report(validReport.replace(ciLine, [
+  "- - <textarea>",
+  "    CI: PASS — https://example.invalid/example",
+  `  ${ciLine}`,
+].join("\n")));
+assert.equal(parentListAfterHtml.valid, true, parentListAfterHtml.errors.join("; "));
+console.log(`f1 list HTML block fixtures passed: ${listHtmlBlocks.length * 2 + 3}`);
+
 const serviceContractFields = [
   { label: "서비스명", line: "- 서비스명: oh-my-ai" },
   { label: "기능명", line: "- 기능명: F1 보고서 구조 검사" },
