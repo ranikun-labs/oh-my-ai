@@ -207,7 +207,7 @@ const fixture = JSON.parse(fs.readFileSync(fixturePath, "utf8"));
 assert.equal(fixture.contract, "git-work-preflight-runtime-fixtures-v2");
 assert.deepEqual(
   fixture.scenarios.map(({ id }) => id),
-  ["actual-pushurl-aligned", "canonical-repository-identity", "redirect-alias-repository-identity", "verified-fork-repository-identity", "draft-pr-verified-fork", "unrelated-repository-identity", "malformed-feature-branch", "malformed-base-branch", "multiple-pushurls", "canonical-push-remote-split", "local-only-base-tip", "local-only-unique-commit", "canonical-base-push-cache-mismatch", "canonical-pr-collision", "draft-pr-key-order", "draft-pr-head-repository-mismatch", "draft-pr-head-repository-missing", "draft-pr-base-mismatch", "draft-pr-head-oid-mismatch", "merged-pr", "merged-pr-after-base-advanced", "merged-pr-association-mismatch", "merged-pr-feature-tip-advanced", "merged-pr-base-mismatch", "aligned", "clean-index-refresh", "hidden-unknown-untracked", "hidden-dirty-submodule", "nested-submodule-tracked", "nested-submodule-untracked", "clean-submodule-nested", "uninitialized-submodule", "malformed-submodule", "symlink-submodule", "outside-worktree-submodule", "cycle-submodule", "external-filter-submodule", "global-unused-filter-submodule", "malformed-submodule-with-dirty-root", "malformed-submodule-with-changed-gitlink", "malformed-submodule-with-staged-gitlink", "external-filter-root", "tracked-dirty-original", "tracked-dirty-with-unknown-untracked", "staged-dirty-status", "unmerged-dirty-status", "unmerged-both-added", "unmerged-both-deleted", "unmerged-and-tracked", "local-ahead", "remote-ahead", "diverged", "candidate-ancestor", "expected-canonical-base-mismatch", "github-unavailable", "multiple-prs", "report-newline-injection", "malformed-pr-json", "jira-association-unavailable", "jira-association-conflict", "remote-ahead-local-tip-already-in-base", "jira-association-unavailable-ancestor", "jira-association-matched-ancestor", "jira-association-conflicted-ancestor", "manual-review-ancestor", "stale-cached-feature-remote-ahead", "jira-work-missing-issue-key", "jira-work-valid-issue-key"],
+  ["actual-pushurl-aligned", "canonical-repository-identity", "redirect-alias-repository-identity", "verified-fork-repository-identity", "draft-pr-verified-fork", "unrelated-repository-identity", "malformed-feature-branch", "malformed-base-branch", "multiple-pushurls", "canonical-push-remote-split", "local-only-base-tip", "local-only-unique-commit", "canonical-base-push-cache-mismatch", "canonical-pr-collision", "draft-pr-key-order", "draft-pr-head-repository-mismatch", "draft-pr-head-repository-missing", "draft-pr-base-mismatch", "draft-pr-head-oid-mismatch", "merged-pr", "merged-pr-after-base-advanced", "merged-pr-association-mismatch", "merged-pr-feature-tip-advanced", "merged-pr-base-mismatch", "aligned", "clean-index-refresh", "assume-unchanged-index-only-attributes", "assume-unchanged-clean", "assume-unchanged-mixed", "assume-unchanged-with-skip-worktree", "assume-unchanged-skip-worktree-present", "assume-unchanged-skip-worktree-deleted", "assume-unchanged-sparse-checkout-included-deleted", "assume-unchanged-sparse-checkout-omitted-present", "assume-unchanged-sparse-checkout-absent", "hidden-unknown-untracked", "hidden-dirty-submodule", "nested-submodule-tracked", "nested-submodule-untracked", "clean-submodule-nested", "uninitialized-submodule", "malformed-submodule", "symlink-submodule", "outside-worktree-submodule", "cycle-submodule", "external-filter-submodule", "global-unused-filter-submodule", "malformed-submodule-with-dirty-root", "malformed-submodule-with-changed-gitlink", "malformed-submodule-with-staged-gitlink", "external-filter-root", "tracked-dirty-original", "tracked-dirty-with-unknown-untracked", "staged-dirty-status", "unmerged-dirty-status", "unmerged-both-added", "unmerged-both-deleted", "unmerged-and-tracked", "local-ahead", "remote-ahead", "diverged", "candidate-ancestor", "expected-canonical-base-mismatch", "github-unavailable", "multiple-prs", "report-newline-injection", "malformed-pr-json", "jira-association-unavailable", "jira-association-conflict", "remote-ahead-local-tip-already-in-base", "jira-association-unavailable-ancestor", "jira-association-matched-ancestor", "jira-association-conflicted-ancestor", "manual-review-ancestor", "stale-cached-feature-remote-ahead", "jira-work-missing-issue-key", "jira-work-valid-issue-key"],
 );
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "git-work-preflight-runtime-"));
@@ -293,6 +293,71 @@ cleanGit(["-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commi
 const indexBeforeReadOnly = fs.readFileSync(path.join(cleanRepo, ".git", "index"));
 const changedTime = new Date(fs.statSync(cleanTracked).mtimeMs + 5000);
 fs.utimesSync(cleanTracked, changedTime, changedTime);
+
+// Use Git itself to verify that status omits the assumed path. Reproduce
+// index-only attributes so the coverage decision cannot depend on rehashing.
+const assumedCases = {};
+for (const [kind, expectedTag, expectedTree] of [
+  ["index-only-attributes", "h", "NOT_VERIFIABLE"],
+  ["clean", "h", "NOT_VERIFIABLE"],
+  ["mixed", "h", "TRACKED_DIRTY"],
+  ["with-skip-worktree", "s", "NOT_VERIFIABLE"],
+  ["skip-worktree-present", "S", "NOT_VERIFIABLE"],
+  ["skip-worktree-deleted", "S", "NOT_VERIFIABLE"],
+  ["sparse-checkout-included-deleted", "S", "NOT_VERIFIABLE"],
+  ["sparse-checkout-omitted-present", "S", "NOT_VERIFIABLE"],
+  ["sparse-checkout-absent", "S", "CLEAN"],
+]) {
+  const scenario = `assume-unchanged-${kind}`;
+  const targetRepo = path.join(root, scenario);
+  const sparse = kind.startsWith("sparse-checkout-");
+  const includedDeleted = kind === "sparse-checkout-included-deleted";
+  const omittedPresent = kind === "sparse-checkout-omitted-present";
+  const tracked = includedDeleted ? "included/visible.txt" : sparse ? "omitted/hidden.txt" : path.basename(cleanTracked);
+  const trackedFile = path.join(targetRepo, tracked);
+  const attributes = path.join(targetRepo, ".gitattributes");
+  cleanGit(["clone", "-q", "--local", cleanRepo, targetRepo]);
+  if (kind === "index-only-attributes") {
+    fs.writeFileSync(attributes, `${tracked} -text\n`);
+    cleanGit(["add", ".gitattributes"], targetRepo);
+    cleanGit(["-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-qm", "attribute fixture"], targetRepo);
+    cleanGit(["config", "--local", "core.autocrlf", "input"], targetRepo);
+    cleanGit(["update-index", "--skip-worktree", "--", ".gitattributes"], targetRepo);
+    fs.unlinkSync(attributes);
+    fs.writeFileSync(trackedFile, "same bytes\r\n");
+  }
+  if (expectedTag !== "S") cleanGit(["update-index", "--assume-unchanged", "--", tracked], targetRepo);
+  if (sparse) {
+    for (const name of ["included", "omitted"]) fs.mkdirSync(path.join(targetRepo, name));
+    fs.writeFileSync(path.join(targetRepo, "included", "visible.txt"), "visible\n");
+    fs.writeFileSync(path.join(targetRepo, "omitted", "hidden.txt"), "omitted by sparse checkout\n");
+    cleanGit(["add", "included", "omitted"], targetRepo);
+    cleanGit(["-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-qm", "sparse fixture"], targetRepo);
+    cleanGit(["sparse-checkout", "set", "--cone", "--sparse-index", "included"], targetRepo);
+    if (includedDeleted) {
+      cleanGit(["update-index", "--skip-worktree", "--", tracked], targetRepo);
+      fs.unlinkSync(trackedFile);
+    }
+    assert.equal(fs.existsSync(trackedFile), false);
+    if (omittedPresent) {
+      cleanGit(["config", "--local", "sparse.expectFilesOutsideOfPatterns", "true"], targetRepo);
+      fs.mkdirSync(path.dirname(trackedFile), { recursive: true });
+      fs.writeFileSync(trackedFile, "hidden Writer content\n");
+    }
+  } else if (expectedTag.toUpperCase() === "S") {
+    cleanGit(["update-index", "--skip-worktree", "--", tracked], targetRepo);
+  }
+  if (kind === "skip-worktree-deleted") fs.unlinkSync(trackedFile);
+  if (kind === "mixed") fs.appendFileSync(attributes, "# visible modification\n");
+  if (kind === "with-skip-worktree" || kind === "skip-worktree-present") fs.writeFileSync(trackedFile, "hidden Writer content\n");
+  assert.equal(cleanGit(["ls-files", "-v", "--", tracked], targetRepo), `${expectedTag} ${tracked}\n`);
+  assert.equal(cleanGit(["--no-optional-locks", "status", "--short"], targetRepo), kind === "mixed" ? " M .gitattributes\n" : "");
+  const preserved = ["HEAD", "config", "index"].map(name => path.join(targetRepo, ".git", name));
+  if (sparse) preserved.push(path.join(targetRepo, ".git", "config.worktree"), path.join(targetRepo, ".git", "info", "sparse-checkout"));
+  const trackedPresent = fs.existsSync(trackedFile);
+  if (trackedPresent) preserved.push(trackedFile);
+  assumedCases[scenario] = { targetRepo, expectedTree, preserved, original: preserved.map(file => fs.readFileSync(file)), omitted: trackedPresent ? null : trackedFile };
+}
 
 // The real worktree contains an unknown file that plain status hides.
 const untrackedRepo = path.join(root, "hidden-untracked-repo");
@@ -545,14 +610,18 @@ case "$command" in
     ;;
   ls-files)
     case "$scenario" in
-      *submodule*|external-filter-root) exec "$PREFLIGHT_SYSTEM_GIT" --no-optional-locks -C "$command_dir" ls-files "$@" ;;
+      *submodule*|external-filter-root|assume-unchanged-*) exec "$PREFLIGHT_SYSTEM_GIT" --no-optional-locks -C "$command_dir" ls-files "$@" ;;
     esac
     ;;
   config|check-attr) exec "$PREFLIGHT_SYSTEM_GIT" -C "$command_dir" "${"$"}{git_options[@]}" "$command" "$@" ;;
+  sparse-checkout)
+    [ "$#" -eq 2 ] && [ "$1" = 'check-rules' ] && [ "$2" = '-z' ] || exit 72
+    exec "$PREFLIGHT_SYSTEM_GIT" --no-optional-locks -C "$command_dir" "${"$"}{git_options[@]}" "$command" "$@"
+    ;;
   status)
     case "$scenario" in
       tracked-dirty-original) "$PREFLIGHT_SYSTEM_GIT" --no-optional-locks -C "$repo" status --short --ignored ;;
-      clean-index-refresh|hidden-unknown-untracked|*submodule*|external-filter-root|tracked-dirty-with-unknown-untracked)
+      clean-index-refresh|hidden-unknown-untracked|*submodule*|external-filter-root|tracked-dirty-with-unknown-untracked|assume-unchanged-*)
         status_repo="$command_dir"
         if [ "$scenario" = 'clean-index-refresh' ]; then status_repo="$PREFLIGHT_CLEAN_REPO"; fi
         set -- -C "$status_repo" "${"$"}{git_options[@]}" status "$@"
@@ -668,7 +737,7 @@ try {
       "hidden-unknown-untracked": untrackedRepo,
       "hidden-dirty-submodule": submoduleRepo,
       "tracked-dirty-with-unknown-untracked": mixedRepo,
-    }[scenario.id] ?? repo;
+    }[scenario.id] ?? assumedCases[scenario.id]?.targetRepo ?? repo;
     const args = [
       "--repository", repository,
       "--canonical-repository", "ranikun-labs/oh-my-ai",
@@ -707,6 +776,13 @@ try {
     }
     if (scenario.id === "clean-index-refresh") {
       assert.deepEqual(fs.readFileSync(path.join(cleanRepo, ".git", "index")), indexBeforeReadOnly, "clean preflight must not refresh the Git index");
+    }
+    if (Object.hasOwn(assumedCases, scenario.id)) {
+      const { expectedTree, preserved, original, omitted } = assumedCases[scenario.id];
+      assert.equal(report.get("Working Tree Status"), expectedTree);
+      assert.equal(report.get("Tracked Status"), expectedTree === "TRACKED_DIRTY" ? "COUNT=1" : "COUNT=0");
+      assert.deepEqual(preserved.map(file => fs.readFileSync(file)), original, "Git metadata and worktree contents must be preserved");
+      if (omitted) assert.equal(fs.existsSync(omitted), false, "absent skip-worktree path must remain absent");
     }
     if (scenario.id === "hidden-unknown-untracked") {
       assert.equal(report.get("Working Tree Status"), "NOT_VERIFIABLE");

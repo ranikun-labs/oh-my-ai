@@ -20,10 +20,14 @@ function git(repository, args, env = localGitEnvironment, { allowedStatuses = [0
   return result.stdout;
 }
 
-function verifiedStatusArgs(repository, indexedFiles, env) {
+function gitConfig(repository, args, env) {
   const configEnv = { ...env };
   delete configEnv.GIT_CONFIG;
-  const output = git(repository, ["config", "--null", "--get-regexp", "^filter\\..+\\.(clean|process)$"], configEnv, { allowedStatuses: [0, 1] });
+  return git(repository, ["config", ...args], configEnv, { allowedStatuses: [0, 1] });
+}
+
+function verifiedStatusArgs(repository, indexedFiles, env) {
+  const output = gitConfig(repository, ["--null", "--get-regexp", "^filter\\..+\\.(clean|process)$"], env);
   const registrations = new Map();
   for (const entry of nulRecords(output.toString())) {
     const separator = entry.indexOf("\n");
@@ -55,20 +59,25 @@ function nulRecords(output) {
 }
 
 function indexEntries(repository, env) {
-  const entries = nulRecords(git(repository, ["ls-files", "--stage", "-z"], env).toString("latin1"));
+  const entries = nulRecords(git(repository, ["ls-files", "-v", "--stage", "-z"], env).toString("latin1"));
   const gitlinks = [];
   const files = new Set();
+  const skippedPaths = [];
+  let hasAssumedUnchanged = false;
   for (const entry of entries) {
-    const match = /^([0-9]+) [0-9a-f]+ ([0-3])\t([\s\S]+)$/.exec(entry);
+    const match = /^([a-zA-Z?]) ([0-9]+) [0-9a-f]+ ([0-3])\t([\s\S]+)$/.exec(entry);
     if (!match) throw new Error("Invalid index entry");
-    const [, mode, stage, file] = match;
+    const [, tag, mode, stage, file] = match;
+    // Git lowercases -v tags for assume-unchanged entries, including gitlinks.
+    if (tag >= "a" && tag <= "z") hasAssumedUnchanged = true;
+    if (tag === "S") skippedPaths.push(file);
     if (mode === "160000") {
       if (stage === "0") gitlinks.push(file);
     } else {
       files.add(file);
     }
   }
-  return { gitlinks, files: [...files] };
+  return { gitlinks, files: [...files], skippedPaths, hasAssumedUnchanged };
 }
 
 function lstatIfPresent(file) {
@@ -89,13 +98,41 @@ function gitDirectory(repository, args, env) {
   return realpathSync(git(repository, ["rev-parse", ...args], env).toString().replace(/\n$/, ""));
 }
 
-function relativeGitlinkPath(repository, indexedPath) {
+function relativeIndexPath(repository, indexedPath) {
   const relativePath = decoder.decode(Buffer.from(indexedPath, "latin1"));
   const worktree = path.resolve(repository, relativePath);
   if (!isBelow(repository, worktree) || path.relative(repository, worktree) !== relativePath) {
-    throw new Error("Unsafe submodule path");
+    throw new Error("Unsafe index path");
   }
   return relativePath;
+}
+
+function skippedPathIsAbsent(repository, indexedPath) {
+  try {
+    let currentPath = repository;
+    for (const component of relativeIndexPath(repository, indexedPath).split(path.sep)) {
+      currentPath = path.join(currentPath, component);
+      const stat = lstatIfPresent(currentPath);
+      if (!stat) return true;
+      if (!stat.isDirectory()) return false;
+    }
+  } catch {
+    return false;
+  }
+  return false;
+}
+
+function skippedPathsAreOmitted(repository, skippedPaths, env) {
+  if (skippedPaths.length === 0) return true;
+  try {
+    if (gitConfig(repository, ["--type=bool", "--get", "core.sparseCheckout"], env).toString() !== "true\n") return false;
+    if (!skippedPaths.every(file => skippedPathIsAbsent(repository, file))) return false;
+    const input = Buffer.from(skippedPaths.join("\0") + "\0", "latin1");
+    // check-rules outputs paths selected by the current sparse-checkout rules.
+    return git(repository, ["sparse-checkout", "check-rules", "-z"], env, { input }).length === 0;
+  } catch {
+    return false;
+  }
 }
 
 function populatedGitDir(repository, relativePath) {
@@ -138,12 +175,13 @@ function collectStatus(root) {
       complete = false;
       continue;
     }
+    if (complete && (index.hasAssumedUnchanged || !skippedPathsAreOmitted(worktree, index.skippedPaths, env))) complete = false;
     let canExcludeGitlinks = true;
     const excludedGitlinks = [];
     for (const indexedPath of index.gitlinks) {
       let relativePath;
       try {
-        relativePath = relativeGitlinkPath(worktree, indexedPath);
+        relativePath = relativeIndexPath(worktree, indexedPath);
         const child = populatedGitDir(worktree, relativePath);
         if (!child) continue;
         if (!rootCommonDir) {
