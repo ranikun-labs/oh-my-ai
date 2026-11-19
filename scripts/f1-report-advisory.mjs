@@ -38,6 +38,7 @@ const HTML_ATTRIBUTE = "[ \\t]+[A-Za-z_:][A-Za-z0-9_.:-]*(?:[ \\t]*=[ \\t]*(?:\"
 const STANDALONE_HTML_TAG = new RegExp(`^ {0,3}(?:</${HTML_TAG_NAME}[ \\t]*>|<${HTML_TAG_NAME}(?:${HTML_ATTRIBUTE})*[ \\t]*/?>)[ \\t]*$`, "u");
 const THEMATIC_BREAK = /^ {0,3}(?:\*(?:[ \t]*\*){2,}|-(?:[ \t]*-){2,}|_(?:[ \t]*_){2,})[ \t]*$/u;
 const SETEXT_UNDERLINE = /^ {0,3}(?:=+|-+)[ \t]*$/u;
+const MARKDOWN_LIST_ITEM = /^ {0,3}(?:[-+*]|\d{1,9}[.)])[ \t]{1,4}(?=\S)/u;
 
 const EVIDENCE_STATUSES = new Set(["PASS", "FAIL", "NOT_RUN", "BLOCKED", "UNKNOWN"]);
 const OWNER_STATUSES = new Set(["APPROVED", "PENDING", "BLOCKED", "UNKNOWN", "NOT_REQUIRED"]);
@@ -58,9 +59,14 @@ const REQUIRED_REPORT_FIELDS = [
   { section: "다음 행동", label: "담당 Lane" },
   { section: "다음 행동", label: "필요 조건" },
 ];
+const REPORT_LIST_LABELS = new Set([
+  ...STATUS_LABELS.map((label) => label.toLowerCase()),
+  ...REQUIRED_REPORT_FIELDS.map(({ label }) => label),
+]);
 
-function isIndentedCodeLine(line) {
+function leadingIndentation(line) {
   let columns = 0;
+  let length = 0;
   for (const character of line) {
     if (character === " ") {
       columns += 1;
@@ -69,8 +75,19 @@ function isIndentedCodeLine(line) {
     } else {
       break;
     }
+    length += 1;
   }
-  return columns >= 4;
+  return { columns, length };
+}
+
+function isIndentedCodeLine(line) {
+  return leadingIndentation(line).columns >= 4;
+}
+
+function relativeListLine(line, listIndent) {
+  if (listIndent === 0) return line;
+  const { columns, length } = leadingIndentation(line);
+  return " ".repeat(Math.max(0, columns - listIndent)) + line.slice(length);
 }
 
 function parseFenceStart(line) {
@@ -196,7 +213,7 @@ function findHtmlPreCloseOutsideComment(line, insideHtmlComment) {
   return { end: null, insideHtmlComment };
 }
 
-function visibleMarkdownLines(markdown) {
+function visibleMarkdownLines(markdown, statusEvidenceOnly = false) {
   const sourceLines = String(markdown).split(/\r?\n/);
   const visibleLines = [];
   let openFence = null;
@@ -206,17 +223,34 @@ function visibleMarkdownLines(markdown) {
   let insideHtmlBlock = false;
   let inlineCodeDelimiterLength = 0;
   let atBlockBoundary = true;
+  const listContexts = [];
 
   for (let lineIndex = 0; lineIndex < sourceLines.length; lineIndex += 1) {
     let line = sourceLines[lineIndex];
+    if (line.trim()) {
+      if (openFence === null && rawHtmlBlockEnd === null && !insideHtmlBlock
+        && !insideHtmlComment && !insideHtmlPreBlock && isAtxHeadingLine(line)) {
+        listContexts.length = 0;
+      }
+      const { columns } = leadingIndentation(line);
+      while (listContexts.length && columns < listContexts.at(-1).indent) listContexts.pop();
+    }
+    const parentItem = listContexts.at(-1);
+    let listIndent = parentItem?.indent ?? 0;
+    let blockLine = relativeListLine(line, listIndent);
     // A raw HTML block ends at a blank line. Its contents cannot start Markdown blocks.
     if (insideHtmlBlock) {
       if (line.trim().length > 0) continue;
       insideHtmlBlock = false;
     }
     if (openFence !== null) {
-      if (isFenceClosing(line, openFence)) openFence = null;
-      continue;
+      if (line.trim() && listIndent < openFence.listIndent) {
+        // A fenced block inside a list also ends when its list item ends.
+        openFence = null;
+      } else {
+        if (isFenceClosing(blockLine, openFence)) openFence = null;
+        continue;
+      }
     }
 
     if (rawHtmlBlockEnd !== null) {
@@ -229,27 +263,39 @@ function visibleMarkdownLines(markdown) {
       insideHtmlComment = preClose.insideHtmlComment;
       if (preClose.end === null) continue;
       line = line.slice(preClose.end);
+      listIndent = 0;
+      blockLine = line;
       insideHtmlPreBlock = false;
       insideHtmlComment = false;
     }
 
     if (inlineCodeDelimiterLength === 0 && !insideHtmlComment && !insideHtmlPreBlock
-      && isIndentedCodeLine(line) && line.trim().length > 0) continue;
+      && isIndentedCodeLine(blockLine) && line.trim().length > 0) continue;
 
     if (inlineCodeDelimiterLength === 0 && !insideHtmlComment && !insideHtmlPreBlock) {
-      const fenceStart = parseFenceStart(line);
+      const listItem = MARKDOWN_LIST_ITEM.exec(blockLine);
+      const itemPrefixLength = listItem?.[0].length ?? 0;
+      const itemText = blockLine.slice(itemPrefixLength);
+      if (listItem) {
+        const itemLabel = itemText.split(":", 1)[0].trim().toLowerCase();
+        listContexts.push({
+          indent: listIndent + itemPrefixLength,
+          reportContent: REPORT_LIST_LABELS.has(itemLabel),
+        });
+      }
+      const fenceStart = parseFenceStart(itemText);
       if (fenceStart !== null) {
-        openFence = fenceStart;
+        openFence = { ...fenceStart, listIndent: listIndent + itemPrefixLength };
         atBlockBoundary = true;
         continue;
       }
-      const rawEnd = findRawHtmlBlockEnd(line);
+      const rawEnd = findRawHtmlBlockEnd(blockLine);
       if (rawEnd) {
-        if (!rawEnd.test(line)) rawHtmlBlockEnd = rawEnd;
+        if (!rawEnd.test(blockLine)) rawHtmlBlockEnd = rawEnd;
         atBlockBoundary = true;
         continue;
       }
-      if (startsHtmlBlock(line, atBlockBoundary)) {
+      if (startsHtmlBlock(blockLine, atBlockBoundary)) {
         insideHtmlBlock = true;
         atBlockBoundary = true;
         continue;
@@ -260,6 +306,7 @@ function visibleMarkdownLines(markdown) {
     const headingCandidate = inlineCodeDelimiterLength === 0
       && !insideHtmlComment
       && !insideHtmlPreBlock
+      && listIndent === 0
       && /^ {0,3}##[ \t]+/.test(line);
     let visible = "";
     let statusVisible = "";
@@ -349,8 +396,17 @@ function visibleMarkdownLines(markdown) {
       || isAtxHeadingLine(line)
       || THEMATIC_BREAK.test(line)
       || (!atBlockBoundary && SETEXT_UNDERLINE.test(line));
-    if (isIndentedCodeLine(visible)) continue;
-    visibleLines.push({ text: visible, statusText: statusVisible, fieldText: fieldVisible, tableText: tableLine ? visible : "", headingCandidate, lineIndex });
+    if (isIndentedCodeLine(statusEvidenceOnly ? relativeListLine(visible, listIndent) : visible)) continue;
+    const nestedReportEvidence = parentItem?.reportContent && isIndentedCodeLine(line);
+    visibleLines.push({
+      text: visible,
+      statusText: relativeListLine(statusVisible, listIndent),
+      fieldText: fieldVisible,
+      tableText: tableLine ? visible : "",
+      headingCandidate,
+      nestedReportEvidence,
+      lineIndex,
+    });
   }
 
   return visibleLines;
@@ -373,7 +429,7 @@ function splitSections(markdown, statusEvidenceOnly = false) {
     fieldSections.set(current, [...fieldBody]);
   };
 
-  for (const { text: line, statusText, fieldText, tableText, headingCandidate, lineIndex } of visibleMarkdownLines(markdown)) {
+  for (const { text: line, statusText, fieldText, tableText, headingCandidate, nestedReportEvidence, lineIndex } of visibleMarkdownLines(markdown, statusEvidenceOnly)) {
     const heading = headingCandidate ? /^ {0,3}##[ \t]+(.+?)[ \t]*$/.exec(line) : null;
     if (heading) {
       flush();
@@ -381,8 +437,8 @@ function splitSections(markdown, statusEvidenceOnly = false) {
       body.length = 0;
       fieldBody.length = 0;
     } else if (current !== null) {
-      body.push(statusEvidenceOnly ? statusText : line);
-      fieldBody.push({ text: line, fieldText, tableText, lineIndex });
+      body.push(line);
+      fieldBody.push({ text: line, fieldText, tableText, statusText, nestedReportEvidence, lineIndex });
     }
   }
   flush();
@@ -683,14 +739,39 @@ function hasUsableContent(body) {
   });
 }
 
-function parseStatusLines(markdown) {
+function parseStatusLines(lines) {
   const found = new Map();
-  const re = /^[ \t]*(?:[-*][ \t]*)?(Native Test|CI|Independent Review|Runtime E2E|Owner Gate)[ \t]*:[ \t]*([A-Z_]+)(?:[ \t]*[—-][ \t]*([^\r\n]*))?[ \t]*$/gim;
-  for (const match of String(markdown).matchAll(re)) {
-    const label = match[1];
-    const status = match[2].toUpperCase();
+  const canonicalLabels = new Map(STATUS_LABELS.map((label) => [label.toLowerCase(), label]));
+  const labelPattern = new RegExp(
+    `^(\\*{1,3}|_{1,3})?(${STATUS_LABELS.join("|")})[ \\t]*(?:(\\1)[ \\t]*)?:[ \\t]*(.*)$`,
+    "i"
+  );
+  const statusPattern = /^(\*{1,3}|_{1,3}|`+)?([A-Z_]+)\1(?:[ \t]*[—-][ \t]*(.*))?[ \t]*$/i;
+  for (const { statusText: line, nestedReportEvidence } of lines) {
+    const item = MARKDOWN_LIST_ITEM.exec(line);
+    // A nested report-field list item can expose a contradiction, but is not
+    // standalone evidence for a required status.
+    if (nestedReportEvidence && !item) continue;
+    const subject = item
+      ? line.slice(item[0].length).replace(/^\[[ xX]\][ \t]+/u, "")
+      : line.trimStart().replace(/^-(?=[A-Za-z])/u, "");
+    const match = labelPattern.exec(subject);
+    if (!match) continue;
+    const [, emphasis, rawLabel, closedLabel, rawStatus] = match;
+    let statusText = rawStatus;
+    if (emphasis && !closedLabel) {
+      // Emphasis can close after the colon, status, or entire status line.
+      const closer = new RegExp(`${emphasis.replaceAll("*", "\\*")}(?=[ \\t—-]|$)`, "u");
+      if (!closer.test(statusText) && emphasis !== "*") continue;
+      statusText = statusText.replace(closer, "").trimStart();
+    }
+    const value = statusPattern.exec(statusText);
+    // A label followed by ordinary explanation is not an explicit status.
+    if (!value) continue;
+    const label = canonicalLabels.get(rawLabel.toLowerCase());
+    const [, , status, detail] = value;
     const items = found.get(label) ?? [];
-    items.push({ status, detail: (match[3] ?? "").trim() });
+    items.push({ status: status.toUpperCase(), detail: (detail ?? "").trim(), nestedReportEvidence });
     found.set(label, items);
   }
   return found;
@@ -722,11 +803,11 @@ function validateF1Report(markdown, options = {}) {
 
   errors.push(...validateRequiredReportFields(sectionScan));
 
-  const statusSections = splitSections(markdown, true).sections;
-  const statusLines = parseStatusLines(statusSections.get("검증") ?? "");
+  const statusSections = splitSections(markdown, true).fieldSections;
+  const statusLines = parseStatusLines(statusSections.get("검증") ?? []);
   for (const label of STATUS_LABELS) {
     const entries = statusLines.get(label) ?? [];
-    if (entries.length !== 1) {
+    if (entries.length !== 1 || entries[0].nestedReportEvidence) {
       errors.push(`${label} must have exactly one explicit status line`);
       continue;
     }

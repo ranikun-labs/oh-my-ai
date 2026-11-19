@@ -358,6 +358,62 @@ expectInvalid("runtime not run without reason", validReport.replace("Runtime E2E
 expectInvalid("runtime pass without runtime evidence", validReport.replace("Runtime E2E: NOT_RUN — 자동 Skill 호출은 시험하지 않았다.", "Runtime E2E: PASS — 완료"), "Runtime E2E PASS requires the runtime name");
 expectInvalid("owner approval unsupported", validReport.replace("Owner Gate: PENDING — Source Merge 승인은 별도다.", "Owner Gate: PASS — owner said yes"), "unsupported status");
 expectInvalid("approval without reference", validReport.replace("Owner Gate: PENDING — Source Merge 승인은 별도다.", "Owner Gate: APPROVED — owner approved"), "linked issue, comment, or approval URL");
+const ownerGateLine = "- Owner Gate: PENDING — Source Merge 승인은 별도다.";
+const visibleConflictingGateLines = [
+  "- owner gate: BLOCKED — another decision",
+  "+ Owner Gate: BLOCKED — another decision",
+  "1. Owner Gate: BLOCKED — another decision",
+  "2) Owner Gate: BLOCKED — another decision",
+  "- **Owner Gate:** BLOCKED — another decision",
+  "- __Owner Gate__: BLOCKED — another decision",
+  "- *Owner Gate:* BLOCKED — another decision",
+  "- **Owner Gate: BLOCKED** — another decision",
+  "- ***Owner Gate:*** BLOCKED — another decision",
+  "- Owner Gate: *BLOCKED* — another decision",
+  "- Owner Gate: **BLOCKED** — another decision",
+  "- Owner Gate: `BLOCKED` — another decision",
+  "- [x] Owner Gate: BLOCKED — another decision",
+  "   - Main gate details\n     - Owner Gate: BLOCKED — another decision",
+];
+const duplicateGateCases = [...visibleConflictingGateLines, "- Owner Gate: UNKNOWN_STATUS — another decision"];
+for (const line of duplicateGateCases) {
+  expectInvalid(
+    `visible duplicate Owner Gate is ambiguous even when formatted differently: ${line}`,
+    validReport.replace(ownerGateLine, `${ownerGateLine}\n\n${line}`),
+    "Owner Gate must have exactly one explicit status line"
+  );
+}
+const nestedGateParents = [ownerGateLine, " - 검증 상태: Native Test fixture를 실행했다."];
+const nestedGateIndents = ["    ", "\t"];
+for (const indent of nestedGateIndents) {
+  for (const parent of nestedGateParents) {
+    expectInvalid(
+      "a visible nested Gate list item conflicts with the explicit Gate even under another report field",
+      validReport.replace(parent, `${parent}\n${indent}- Owner Gate: BLOCKED — another decision`),
+      "Owner Gate must have exactly one explicit status line"
+    );
+  }
+}
+for (const line of visibleConflictingGateLines) {
+  const result = validateF1Report(validReport.replace(ownerGateLine, line));
+  assert.equal(result.valid, true, `a single explicit Owner Gate is valid: ${line}: ${result.errors.join("; ")}`);
+}
+const nonStatusGateReferences = [
+  "> **Owner Gate:** BLOCKED — quoted",
+  "```md\n+ Owner Gate: BLOCKED — example\n```",
+  "- ```md\n  - Owner Gate: BLOCKED — example\n  ```",
+  "   - Main gate examples\n     ```md\n     - Owner Gate: BLOCKED — example\n     ```",
+  "Owner Gate: The release criteria are in the linked issue.",
+  "- Owner Gate: approval scope appears in the linked issue.",
+  "Owner Gate: 독자가 구분할 승인 범위는 별도 문서에 설명한다.",
+];
+for (const line of nonStatusGateReferences) {
+  const result = validateF1Report(validReport.replace(ownerGateLine, `${ownerGateLine}\n\n${line}`));
+  assert.equal(result.valid, true, `examples and prose do not add a Gate status: ${line}: ${result.errors.join("; ")}`);
+}
+const gateCaseCount = duplicateGateCases.length + nestedGateParents.length * nestedGateIndents.length
+  + visibleConflictingGateLines.length + nonStatusGateReferences.length;
+console.log(`f1 visible Gate status fixtures passed: ${gateCaseCount}/${gateCaseCount}`);
 expectInvalid("evidence lacks identifier", validReport.replace("- Base: 6d2a93893c0c7a40e1d0b99b691a8f950aa17969", "- Base: unknown"), "must include a URL or a source SHA");
 expectInvalid("status outside verification section", validReport.replace(/- Native Test:.*\n/, "").replace("- Script: scripts/f1-report-advisory.mjs", "- Script: scripts/f1-report-advisory.mjs\n- Native Test: PASS — node scripts/test-f1-report-advisory.mjs"), "Native Test must have exactly one");
 const replaceNativeStatus = (replacement) =>
