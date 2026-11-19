@@ -207,7 +207,7 @@ const fixture = JSON.parse(fs.readFileSync(fixturePath, "utf8"));
 assert.equal(fixture.contract, "git-work-preflight-runtime-fixtures-v2");
 assert.deepEqual(
   fixture.scenarios.map(({ id }) => id),
-  ["actual-pushurl-aligned", "canonical-repository-identity", "redirect-alias-repository-identity", "verified-fork-repository-identity", "draft-pr-verified-fork", "unrelated-repository-identity", "malformed-feature-branch", "malformed-base-branch", "multiple-pushurls", "canonical-push-remote-split", "local-only-base-tip", "local-only-unique-commit", "canonical-base-push-cache-mismatch", "canonical-pr-collision", "draft-pr-key-order", "draft-pr-head-repository-mismatch", "draft-pr-head-repository-missing", "draft-pr-base-mismatch", "draft-pr-head-oid-mismatch", "merged-pr", "merged-pr-after-base-advanced", "merged-pr-association-mismatch", "merged-pr-feature-tip-advanced", "merged-pr-base-mismatch", "aligned", "clean-index-refresh", "tracked-dirty-original", "staged-dirty-status", "unmerged-dirty-status", "unmerged-both-added", "unmerged-both-deleted", "unmerged-and-tracked", "local-ahead", "remote-ahead", "diverged", "candidate-ancestor", "expected-canonical-base-mismatch", "github-unavailable", "multiple-prs", "report-newline-injection", "malformed-pr-json", "jira-association-unavailable", "jira-association-conflict", "remote-ahead-local-tip-already-in-base", "jira-association-unavailable-ancestor", "jira-association-matched-ancestor", "jira-association-conflicted-ancestor", "manual-review-ancestor", "stale-cached-feature-remote-ahead", "jira-work-missing-issue-key", "jira-work-valid-issue-key"],
+  ["actual-pushurl-aligned", "canonical-repository-identity", "redirect-alias-repository-identity", "verified-fork-repository-identity", "draft-pr-verified-fork", "unrelated-repository-identity", "malformed-feature-branch", "malformed-base-branch", "multiple-pushurls", "canonical-push-remote-split", "local-only-base-tip", "local-only-unique-commit", "canonical-base-push-cache-mismatch", "canonical-pr-collision", "draft-pr-key-order", "draft-pr-head-repository-mismatch", "draft-pr-head-repository-missing", "draft-pr-base-mismatch", "draft-pr-head-oid-mismatch", "merged-pr", "merged-pr-after-base-advanced", "merged-pr-association-mismatch", "merged-pr-feature-tip-advanced", "merged-pr-base-mismatch", "aligned", "clean-index-refresh", "hidden-unknown-untracked", "tracked-dirty-original", "staged-dirty-status", "unmerged-dirty-status", "unmerged-both-added", "unmerged-both-deleted", "unmerged-and-tracked", "local-ahead", "remote-ahead", "diverged", "candidate-ancestor", "expected-canonical-base-mismatch", "github-unavailable", "multiple-prs", "report-newline-injection", "malformed-pr-json", "jira-association-unavailable", "jira-association-conflict", "remote-ahead-local-tip-already-in-base", "jira-association-unavailable-ancestor", "jira-association-matched-ancestor", "jira-association-conflicted-ancestor", "manual-review-ancestor", "stale-cached-feature-remote-ahead", "jira-work-missing-issue-key", "jira-work-valid-issue-key"],
 );
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "git-work-preflight-runtime-"));
@@ -279,9 +279,10 @@ const actualBothDeleted = fixtureConflict("DD");
 // A plain git status refreshes index stat data; read-only preflight must not.
 const cleanRepo = path.join(root, "clean-index-repo");
 fs.mkdirSync(cleanRepo);
-function cleanGit(args) {
-  const result = spawnSync(systemGit, ["-C", cleanRepo, ...args], { encoding: "utf8", env: setupEnv });
-  assert.equal(result.status, 0, `clean-index setup ${args.join(" ")}: ${result.stderr}`);
+function cleanGit(args, targetRepo = cleanRepo) {
+  const result = spawnSync(systemGit, ["-C", targetRepo, ...args], { encoding: "utf8", env: setupEnv });
+  assert.equal(result.status, 0, `fixture Git ${args.join(" ")}: ${result.stderr}`);
+  return result.stdout;
 }
 cleanGit(["init", "-q"]);
 const cleanTracked = path.join(cleanRepo, "same-content.txt");
@@ -291,6 +292,18 @@ cleanGit(["-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commi
 const indexBeforeReadOnly = fs.readFileSync(path.join(cleanRepo, ".git", "index"));
 const changedTime = new Date(fs.statSync(cleanTracked).mtimeMs + 5000);
 fs.utimesSync(cleanTracked, changedTime, changedTime);
+
+// The real worktree contains an unknown file that plain status hides.
+const untrackedRepo = path.join(root, "hidden-untracked-repo");
+cleanGit(["clone", "-q", "--local", cleanRepo, untrackedRepo]);
+cleanGit(["config", "--local", "status.showUntrackedFiles", "no"], untrackedRepo);
+const unknownUntrackedPath = path.join(untrackedRepo, "unknown-writer-source.txt");
+const unknownUntrackedSource = "untracked Writer content\n";
+fs.writeFileSync(unknownUntrackedPath, unknownUntrackedSource);
+const untrackedIndex = fs.readFileSync(path.join(untrackedRepo, ".git", "index"));
+const untrackedStatusArgs = ["--no-optional-locks", "status", "--short", "--ignored"];
+assert.equal(cleanGit(untrackedStatusArgs, untrackedRepo), "", "plain Git status must hide the untracked fixture");
+assert.equal(cleanGit([...untrackedStatusArgs, "--untracked-files=normal"], untrackedRepo), "?? unknown-writer-source.txt\n");
 
 const fakeGit = String.raw`#!/usr/bin/env bash
 set -euo pipefail
@@ -415,12 +428,12 @@ case "$command" in
   status)
     case "$scenario" in
       tracked-dirty-original) "$PREFLIGHT_SYSTEM_GIT" --no-optional-locks -C "$repo" status --short --ignored ;;
-      clean-index-refresh)
-        if [ -n "$optional_locks" ]; then
-          "$PREFLIGHT_SYSTEM_GIT" --no-optional-locks -C "$PREFLIGHT_CLEAN_REPO" status --short --ignored
-        else
-          "$PREFLIGHT_SYSTEM_GIT" -C "$PREFLIGHT_CLEAN_REPO" status --short --ignored
-        fi ;;
+      clean-index-refresh|hidden-unknown-untracked)
+        status_repo="$repo"
+        if [ "$scenario" = 'clean-index-refresh' ]; then status_repo="$PREFLIGHT_CLEAN_REPO"; fi
+        set -- -C "$status_repo" status "$@"
+        if [ -n "$optional_locks" ]; then set -- "$optional_locks" "$@"; fi
+        exec "$PREFLIGHT_SYSTEM_GIT" "$@" ;;
 
       staged-dirty-status) printf '%s\n' 'M  staged-file.txt' ;;
       unmerged-dirty-status) printf '%s\n' 'UU conflicted-file.txt' ;;
@@ -525,8 +538,9 @@ try {
       : scenario.id === "jira-association-conflict" || scenario.id === "jira-association-conflicted-ancestor" || scenario.id === "merged-pr-association-mismatch"
         ? "repository-naming-rule-verified,issue-association-verified:RPL-TEST:other-branch"
         : "repository-naming-rule-verified";
+    const repository = scenario.id === "hidden-unknown-untracked" ? untrackedRepo : repo;
     const args = [
-      "--repository", repo,
+      "--repository", repository,
       "--canonical-repository", "ranikun-labs/oh-my-ai",
       "--push-remote", "origin",
       "--expected-base-branch", scenario.id === "malformed-base-branch" ? "bad." : "master",
@@ -541,7 +555,7 @@ try {
     const result = spawnSync(runtimePath, args, {
       encoding: "utf8",
       // Force optional locks on for this scenario so an inherited 0 cannot hide a regression.
-      env: { ...process.env, ...(scenario.id === "clean-index-refresh" ? { GIT_OPTIONAL_LOCKS: "1" } : {}), HOME: fakeHome, PATH: `${fakeBin}:${process.env.PATH}`, PREFLIGHT_SCENARIO: scenario.id, PREFLIGHT_REPO: repo, PREFLIGHT_GIT_COMMAND_LOG: commandLog, PREFLIGHT_SYSTEM_GIT: systemGit, PREFLIGHT_STATUS_AA: actualBothAdded, PREFLIGHT_STATUS_DD: actualBothDeleted, PREFLIGHT_CLEAN_REPO: cleanRepo },
+      env: { ...process.env, ...(scenario.id === "clean-index-refresh" ? { GIT_OPTIONAL_LOCKS: "1" } : {}), HOME: fakeHome, PATH: `${fakeBin}:${process.env.PATH}`, PREFLIGHT_SCENARIO: scenario.id, PREFLIGHT_REPO: repository, PREFLIGHT_GIT_COMMAND_LOG: commandLog, PREFLIGHT_SYSTEM_GIT: systemGit, PREFLIGHT_STATUS_AA: actualBothAdded, PREFLIGHT_STATUS_DD: actualBothDeleted, PREFLIGHT_CLEAN_REPO: cleanRepo },
     });
     assert.equal(result.status, scenario.process_exit_code, `${scenario.id}: process exit code`);
     const report = parseReport(result.stdout);
@@ -559,6 +573,12 @@ try {
     }
     if (scenario.id === "clean-index-refresh") {
       assert.deepEqual(fs.readFileSync(path.join(cleanRepo, ".git", "index")), indexBeforeReadOnly, "clean preflight must not refresh the Git index");
+    }
+    if (scenario.id === "hidden-unknown-untracked") {
+      assert.equal(report.get("Working Tree Status"), "NOT_VERIFIABLE");
+      assert.equal(report.get("Untracked Local State"), "LOCAL_GENERATED=0; UNKNOWN=1");
+      assert.deepEqual(fs.readFileSync(path.join(untrackedRepo, ".git", "index")), untrackedIndex, "blocked preflight must preserve the Git index");
+      assert.equal(fs.readFileSync(unknownUntrackedPath, "utf8"), unknownUntrackedSource);
     }
     if (scenario.id === "staged-dirty-status") assert.equal(report.get("Working Tree Status"), "STAGED_DIRTY");
     if (scenario.id === "unmerged-dirty-status") assert.equal(report.get("Working Tree Status"), "UNMERGED_CONFLICT");

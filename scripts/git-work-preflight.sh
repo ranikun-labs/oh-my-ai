@@ -463,7 +463,8 @@ if [ "$base_gate_status" = 'READY' ]; then
   fi
 fi
 
-if status_output="$(git --no-optional-locks -C "$repository" status --short --ignored 2>/dev/null)"; then
+# Override status.showUntrackedFiles so local config cannot hide unknown paths.
+if status_output="$(git --no-optional-locks -C "$repository" status --short --ignored --untracked-files=normal 2>/dev/null)"; then
   working_tree_gate_status='READY'
 else
   status_output=''
