@@ -15,5 +15,5 @@ export function usageF1Cell(summary, agentId, runId) {
   const numeric = fields.filter((f) => Number.isSafeInteger(u[f]) && u[f] >= 0).map((f) => u[f]);
   if (numeric.length === 0 || numeric.every((v) => v === 0)) return `UNKNOWN (수신 0 또는 미확인 값; codex exec --json ${child ? '자식 stdout' : 'stdin'} 단일 이벤트; 비용 UNKNOWN)`;
   const values = fields.map((f, i) => `${labels[i]} ${Number.isSafeInteger(u[f]) && u[f] >= 0 ? u[f] : 'UNKNOWN'}`);
-  return `${values.join(' / ')} 토큰 (codex exec --json ${child ? '자식 stdout' : 'stdin'} 단일 수신 이벤트; 호출자 지정 범위, 재개 시 이전 턴 누적 가능·이번 턴 사용량 미확인; 0 의미 미확인; 비용 UNKNOWN)`;
+  return `공식 토큰 UNKNOWN / 비용 UNKNOWN · codex exec --json ${child ? '자식 stdout' : 'stdin'} 관측값 ${values.join(' / ')} 토큰 (단일 수신 이벤트, 호출자 지정 범위, 재개 시 이전 턴 누적 가능·이번 턴 사용량 미확인, 0 의미 미확인)`;
 }

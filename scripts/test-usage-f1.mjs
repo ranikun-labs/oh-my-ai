@@ -5,6 +5,7 @@ import { validateAiStatus } from './f1-report-advisory.mjs';
 const scope = {role:'Main',agentId:'a',runId:'r'};
 const item = JSON.stringify({type:'turn.completed',usage:{input_tokens:13,cached_input_tokens:2,output_tokens:4}});
 const s = await summarizeCodexExecJsonl([item],scope);
+assert.match(usageF1Cell(s,'a','r'), /^공식 토큰 UNKNOWN \/ 비용 UNKNOWN · codex exec --json stdin 관측값 /);
 assert.match(usageF1Cell(s,'a','r'), /입력 13/);
 assert.match(usageF1Cell(s,'a','r'), /재개 시 이전 턴 누적 가능·이번 턴 사용량 미확인/);
 assert.match(usageF1Cell(s,' a ',' r '), /입력 13/);
@@ -22,7 +23,7 @@ assert.match(usageF1Cell({observed_turn_completed_record_count:1,observed_usage_
 assert.match(usageF1Cell({...s,source:'fake'},'a','r'),/^UNKNOWN/);
 assert.match(usageF1Cell({...s,caller_scope:{...s.caller_scope,basis:'fake'}},'a','r'),/^UNKNOWN/);
 const child={...s,source:'codex exec --json child stdout; allowlisted usage fields only',caller_scope:{...s.caller_scope,basis:'explicit_single_child_stdout_stream',agent_attribution:'CALLER_ASSERTED_SINGLE_RUN'}};
-assert.match(usageF1Cell(child,'a','r'),/자식 stdout/);
+assert.match(usageF1Cell(child,'a','r'), /^공식 토큰 UNKNOWN \/ 비용 UNKNOWN · codex exec --json 자식 stdout 관측값 /);
 assert.match(usageF1Cell(child,'a','r'),/재개 시 이전 턴 누적 가능·이번 턴 사용량 미확인/);
 assert.match(usageF1Cell({...child,caller_scope:{...child.caller_scope,agent_id:'UNKNOWN',agent_attribution:'UNKNOWN'}},'UNKNOWN','r'),/^UNKNOWN/);
 const zero = JSON.stringify({type:'turn.completed',usage:{input_tokens:0,cached_input_tokens:0,cache_write_input_tokens:0,output_tokens:0,reasoning_output_tokens:0}});
