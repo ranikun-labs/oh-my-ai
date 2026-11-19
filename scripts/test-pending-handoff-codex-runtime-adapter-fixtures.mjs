@@ -80,6 +80,7 @@ class FakeProcess extends EventEmitter {
     super();
     this.plan = plan;
     this.terminationMode = options.terminationMode ?? "immediate";
+    this.includeJsonRpcVersion = options.includeJsonRpcVersion ?? true;
     this.stdout = new EventEmitter();
     this.stderr = new EventEmitter();
     this.stdin = new FakeStdin(this);
@@ -112,21 +113,25 @@ class FakeProcess extends EventEmitter {
   }
 
   respond(id, result) {
-    this.stdout.emit("data", `${JSON.stringify({ jsonrpc: "2.0", id, result })}\n`);
+    this.send({ id, result });
   }
 
   error(id, code) {
-    this.stdout.emit("data", `${JSON.stringify({
-      jsonrpc: "2.0",
+    this.send({
       id,
       error: { code, message: EXCEPTION_MARKER, data: NATIVE_MARKER },
-    })}\n`);
+    });
   }
 
   notification(method, params) {
-    const message = { jsonrpc: "2.0", method };
+    const message = { method };
     if (params !== undefined) message.params = params;
-    this.stdout.emit("data", `${JSON.stringify(message)}\n`);
+    this.send(message);
+  }
+
+  send(message) {
+    const envelope = this.includeJsonRpcVersion ? { jsonrpc: "2.0", ...message } : message;
+    this.stdout.emit("data", `${JSON.stringify(envelope)}\n`);
   }
 
   malformed(value = "{malformed") {
@@ -1221,6 +1226,79 @@ await group("protocol, failure, and cleanup safety", async () => {
       SESSION_A,
     );
   });
+  await test("Codex 0.159.2 stdio resumes with versionless responses and notifications", async () => {
+    const plan = standardPlan({ pages: {
+      "false:<first>": { data: [thread(NATIVE_A)], nextCursor: null },
+    }, resume: id => ({
+      ...resumeResponse(id),
+      activePermissionProfile: null,
+      collaborationMode: null,
+      disabledPluginIds: [],
+      initialTurnsPage: null,
+      instructionSources: [],
+      itemsBackwardsCursor: null,
+      multiAgentMode: null,
+      reasoningEffort: null,
+      runtimeWorkspaceRoots: [CWD_MARKER],
+      serviceTier: null,
+      turnsBackwardsCursor: null,
+    }) });
+    const { executor: action, runner } = executor({
+      processOptions: { includeJsonRpcVersion: false },
+      plan(message, process) {
+        if (message.method === "thread/resume") process.notification("thread/started");
+        plan(message, process);
+      },
+    });
+    assert.equal(assertActionSuccess(await action.resolveAndResume(actionRequest())).outcome, "resume_accepted");
+    const [process] = runner.ledger.processes;
+    assert.deepEqual(process.messages.map(message => message.method), [
+      "initialize", "initialized", "thread/list", "thread/list", "thread/resume",
+    ]);
+    assertProcessClean(process);
+  });
+  await test("versionless resume responses with unknown fields fail closed", async () => {
+    const { executor: action } = executor({
+      processOptions: { includeJsonRpcVersion: false },
+      plan: standardPlan({ pages: {
+        "false:<first>": { data: [thread(NATIVE_A)], nextCursor: null },
+      }, resume: id => ({ ...resumeResponse(id), unexpected: true }) }),
+    });
+    assertActionFailure(await action.resolveAndResume(actionRequest()), "codex_action_result_invalid");
+  });
+  await test("versionless RPC errors retain their failure mapping", async () => {
+    const { executor: action } = executor({
+      processOptions: { includeJsonRpcVersion: false },
+      plan(message, process) {
+        if (message.method === "initialize") process.respond(message.id, initializeResponse());
+        else if (message.method === "thread/list") process.error(message.id, -32601);
+      },
+    });
+    assertActionFailure(await action.resolveAndResume(actionRequest()), "codex_action_runtime_unsupported");
+  });
+  await test("explicit invalid versions and malformed versionless responses fail closed", async () => {
+    for (const makeResponse of [
+      id => ({ id, result: initializeResponse(), jsonrpc: "1.0" }),
+      id => ({ id, result: initializeResponse(), jsonrpc: null }),
+      id => ({ id, result: initializeResponse(), jsonrpc: 2 }),
+      id => ({ id: String(id), result: initializeResponse() }),
+      id => ({ id: id + 1, result: initializeResponse() }),
+      id => ({ id, result: initializeResponse(), error: { code: -32601 } }),
+      id => ({ id }),
+      id => ({ id, result: {} }),
+    ]) {
+      const { executor: action, runner } = executor({
+        processOptions: { includeJsonRpcVersion: false },
+        plan(message, process) {
+          if (message.method === "initialize") process.send(makeResponse(message.id));
+        },
+      });
+      assertActionFailure(await action.resolveAndResume(actionRequest()), "codex_action_result_invalid");
+      const [process] = runner.ledger.processes;
+      assert.deepEqual(process.messages.map(message => message.method), ["initialize"]);
+      assertProcessClean(process);
+    }
+  });
   await test("opt-in per-invocation result captures only projected token-usage notifications", async () => {
     let fakeProcess = null;
     const last = {
@@ -1578,7 +1656,7 @@ await group("protocol, failure, and cleanup safety", async () => {
     );
 
     const malformedEnvelope = (message, process) => {
-      if (message.method === "initialize") process.stdout.emit("data", `${JSON.stringify({ id: message.id, result: initializeResponse() })}\n`);
+      if (message.method === "initialize") process.send({ id: message.id, result: initializeResponse(), jsonrpc: "invalid" });
     };
     assertResolutionFailure(
       await resolutionAdapter({ plan: malformedEnvelope }).adapter.resolveTargetSession({ runtime_id: "codex", session_identity: SESSION_A }),
