@@ -88,6 +88,12 @@ function runWorkView(args) {
     process.exit(2);
   }
 
+  process.stdout.once("error", error => {
+    // A downstream reader may intentionally close the pipe after a preview.
+    if (error.code === "EPIPE") return;
+    process.stderr.write(`work-view output failed: ${error.message}\n`);
+    process.exitCode = 1;
+  });
   process.stdout.write(`${view}\n`);
 }
 
