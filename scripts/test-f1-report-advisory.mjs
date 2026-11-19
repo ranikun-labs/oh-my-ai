@@ -116,6 +116,85 @@ for (const duplicateValue of ["YES", "NO"]) {
   assert.equal(result.valid, false, "duplicate required headers must be rejected");
   assert.ok(result.errors.some((error) => error.includes("must not repeat required header: 실제 참여")));
 }
+
+const mainParticipantTable = mainOnlyAiStatus.slice(mainOnlyAiStatus.indexOf("| Agent ID")).trimEnd();
+const [participantHeader, participantDelimiter, mainParticipantRow] = mainParticipantTable.split("\n");
+const exampleHeader = `| ${Array.from({ length: 11 }, (_, index) => `Example ${index + 1}`).join(" | ")} |`;
+const conflictingParticipantTable = `${mainParticipantTable}\n| unobserved-writer | Writer | YES | 1 | 0 | 0 | UNKNOWN | UNKNOWN | UNKNOWN | 별도 작업 수행 | UNKNOWN |`;
+const conflictingTableWithoutOuterPipes = conflictingParticipantTable.replace(/^\|\s*|\s*\|$/gmu, "");
+const rawParticipantExample = `<report-example>\n${conflictingParticipantTable}\n</report-example>`;
+const preformattedParticipantExample = `<pre>\n\n${mainParticipantTable}\n\n</pre>`;
+const collapsedParticipantTable = `<details>\n<summary>참여 기록</summary>\n\n${mainParticipantTable}\n\n</details>`;
+const aiStatusOptions = { observedParticipants: ["Main"], observationCoverage: "complete" };
+const duplicateTableError = "AI status must contain exactly one participant table";
+const aiStatusWithConflictingTable = `${mainOnlyAiStatus}\n${conflictingParticipantTable}\n`;
+const duplicateTableCases = [
+  ["conflicting table after the matching table", aiStatusWithConflictingTable],
+  ["conflicting table before the matching table", mainOnlyAiStatus.replace(mainParticipantTable, `${conflictingParticipantTable}\n\n${mainParticipantTable}`)],
+  ["two matching tables", `${mainOnlyAiStatus}\n${mainParticipantTable}\n`],
+  ["collapsed matching table before a conflicting table", aiStatusWithConflictingTable.replace(mainParticipantTable, collapsedParticipantTable)],
+  ["second table omits optional outer pipes", `${mainOnlyAiStatus}\n${conflictingTableWithoutOuterPipes}\n`],
+  ["second table uses one hyphen per delimiter cell", `${mainOnlyAiStatus}\n${conflictingParticipantTable.replace(participantDelimiter, participantDelimiter.replace(/-{3}/gu, "-"))}\n`],
+  ["thematic break ends the first table", `${mainOnlyAiStatus}---\n${conflictingParticipantTable}\n`],
+  ["literal fence inside raw HTML before the second table", `${mainOnlyAiStatus}\n<div>\n\`\`\`\n</div>\n\n${conflictingParticipantTable}\n`],
+  ["literal heading inside raw HTML before the second table", `${mainOnlyAiStatus}\n<div>\n## 메모\n</div>\n\n${conflictingParticipantTable}\n`],
+  ["inline custom tag does not start a raw HTML block inside a paragraph", `${mainOnlyAiStatus}\n예제 설명\n<report-example>\n### 실제 참여 표\n${conflictingParticipantTable}\n`],
+  ["case-insensitive script closing tag exposes the second table", `${mainOnlyAiStatus}\n<script>\n</SCRIPT>\n\n${conflictingParticipantTable}\n`],
+  ["indentation inside a paragraph cannot start a code block", `${mainOnlyAiStatus}\n예제 설명\n    설명이 이어진다\n<report-example>\n### 실제 참여 표\n${conflictingParticipantTable}\n`],
+  ["setext underline without heading text is a paragraph", `${mainOnlyAiStatus}\n===\n<report-example>\n### 실제 참여 표\n${conflictingParticipantTable}\n`],
+  ["custom element with a pre prefix ends at a blank line", `${mainOnlyAiStatus}\n<pre-example>\nexample\n</pre-example>\n\n${conflictingParticipantTable}\n`],
+];
+for (const [description, report] of duplicateTableCases) {
+  const result = validateAiStatus(report, aiStatusOptions);
+  assert.equal(result.valid, false, description);
+  assert.ok(result.errors.includes(duplicateTableError), `${description}: ${result.errors.join("; ")}`);
+}
+
+const singleTableCases = [
+  ["unrelated table before the participant table", mainOnlyAiStatus.replace(mainParticipantTable, `| 메모 |\n|---|\n| 실행 환경 참고 |\n\n${mainParticipantTable}`)],
+  ["fenced table example", `${mainOnlyAiStatus}\n\`\`\`markdown\n${conflictingParticipantTable}\n\`\`\`\n`],
+  ["single collapsed participant table", mainOnlyAiStatus.replace(mainParticipantTable, collapsedParticipantTable)],
+  ["sample header and delimiter interrupted by a fence", `${mainOnlyAiStatus}\n${participantHeader}\n\`\`\`markdown\nSeparate code example\n\`\`\`\n${participantDelimiter}\n${mainParticipantRow}\n`],
+  ["sample table inside a textarea", `${mainOnlyAiStatus}\n<textarea>\n${conflictingParticipantTable}\n</textarea>\n`],
+  ["sample table inside pre after a blank line", `${mainOnlyAiStatus}\n${preformattedParticipantExample}\n`],
+  ["visible table after a preformatted sample", mainOnlyAiStatus.replace(mainParticipantTable, `\n${preformattedParticipantExample}\n\n${mainParticipantTable}`)],
+  ["sample table inside a raw HTML block", `${mainOnlyAiStatus}\n<div>\n${conflictingParticipantTable}\n</div>\n`],
+  ["sample table inside a custom HTML block", `${mainOnlyAiStatus}\n<report-example data-label=\">\">\n${conflictingParticipantTable}\n</report-example>\n`],
+  ["space before script closing angle bracket keeps the example inside the raw block", `${mainOnlyAiStatus}\n<script>\n</script >\n\n${conflictingParticipantTable}\n</script>\n`],
+  ["custom raw HTML after indented code", `${mainOnlyAiStatus}\n    들여쓴 예제\n${rawParticipantExample}\n`],
+  ["custom raw HTML after a comment block", `${mainOnlyAiStatus}\n<!-- 예제 주석 -->\n${rawParticipantExample}\n`],
+  ["custom raw HTML after a processing instruction", `${mainOnlyAiStatus}\n<?example?>\n${rawParticipantExample}\n`],
+  ["custom raw HTML after a declaration", `${mainOnlyAiStatus}\n<!EXAMPLE>\n${rawParticipantExample}\n`],
+  ["custom raw HTML after a setext heading", `${mainOnlyAiStatus}\n예제 제목\n===\n${rawParticipantExample}\n`],
+  ["sample table inside a raw CDATA block", `${mainOnlyAiStatus}\n<![CDATA[\n\n${conflictingParticipantTable}\n]]>\n`],
+  ["sample table inside an HTML processing instruction", `${mainOnlyAiStatus}\n<?example\n${conflictingParticipantTable}\n?>\n`],
+  ["sample table inside an HTML declaration", `${mainOnlyAiStatus}\n<!EXAMPLE\n${conflictingParticipantTable}\n>\n`],
+  ["comment prefix makes the sample header raw HTML", `${mainOnlyAiStatus}\n<!-- sample -->${conflictingParticipantTable}\n`],
+  ["sample rows inside an unrelated table", `${mainOnlyAiStatus}\n### 표 구조 예시\n\n${exampleHeader}\n${participantDelimiter}\n${mainParticipantTable}\n`],
+  ["unrelated table continues after a row with no pipes", `${mainOnlyAiStatus}\n${exampleHeader}\n${participantDelimiter}\n표 구조를 예로 든다\n${mainParticipantTable}\n`],
+  ["literal backtick in a participant row", mainOnlyAiStatus.replace("결과 취합을 수행", "결과 취합과 리터럴 ` 기호 기록을 수행")],
+];
+for (const [description, report] of singleTableCases) {
+  const result = validateAiStatus(report, aiStatusOptions);
+  assert.equal(result.valid, true, `${description}: ${result.errors.join("; ")}`);
+}
+
+const onlyPreformattedTable = validateAiStatus(
+  mainOnlyAiStatus.replace(mainParticipantTable, `\n${preformattedParticipantExample}`),
+  aiStatusOptions,
+);
+assert.equal(onlyPreformattedTable.valid, false, "a preformatted sample alone cannot satisfy the participant table requirement");
+assert.ok(onlyPreformattedTable.errors.includes("AI status must contain the required participant table"));
+
+const fullReportWithConflictingTable = fullReportWithMainOnly.replace(mainOnlyAiStatus, aiStatusWithConflictingTable);
+const fullReportWithDuplicateTableResult = validateF1Report(fullReportWithConflictingTable, {
+  ...aiStatusOptions,
+  requireAiStatus: true,
+});
+assert.equal(fullReportWithDuplicateTableResult.valid, false);
+assert.ok(fullReportWithDuplicateTableResult.errors.includes(duplicateTableError));
+console.log(`f1 participant table fixtures passed: ${duplicateTableCases.length + singleTableCases.length + 2}`);
+
 const unknownCoverage = validateAiStatus(
   mainOnlyAiStatus.replace("관측 범위: complete", "관측 범위: unknown").replace("전체 참여자 수: 1", "전체 참여자 수: UNKNOWN"),
   { observationCoverage: "unknown" },
@@ -510,6 +589,11 @@ expectInvalid(
   multilinePreStatus,
   "CI must have exactly one explicit status line"
 );
+expectInvalid(
+  "a blank line in a pre block does not expose a fake CI status",
+  validReport.replace(ciLine, "\n<pre>\n\n- CI: PASS — https://example.invalid/fake-run\n\n</pre>\n"),
+  "CI must have exactly one explicit status line"
+);
 const commentedPreCloseStatus = validReport.replace(
   ciLine,
   "<pre>\n<!-- </pre> -->\nCI: PASS — https://example.invalid/fake-run\n</pre>"
@@ -784,8 +868,10 @@ const aiStatusFixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "f1-ai-status-c
 try {
   const fullF1Path = path.join(aiStatusFixtureDir, "full-f1.md");
   const conciseStatusPath = path.join(aiStatusFixtureDir, "ai-status.md");
+  const conflictingStatusPath = path.join(aiStatusFixtureDir, "conflicting-ai-status.md");
   fs.writeFileSync(fullF1Path, fullReportWithMainOnly);
   fs.writeFileSync(conciseStatusPath, mainOnlyAiStatus);
+  fs.writeFileSync(conflictingStatusPath, aiStatusWithConflictingTable);
 
   const fullAiStatusCli = spawnSync(process.execPath, [
     checkerPath,
@@ -820,7 +906,21 @@ try {
     assert.match(partialAiStatusCli.stdout, /f1_ai_status_structure_valid_partial:/);
     assert.match(partialAiStatusCli.stdout, /does not mean the full eight-section F1 is valid/i);
     assert.doesNotMatch(partialAiStatusCli.stdout, /f1_report_structure_valid:/);
-    console.log("f1 AI status CLI fixtures passed: 2/2");
+
+    const conflictingAiStatusCli = spawnSync(process.execPath, [
+      checkerPath,
+      conflictingStatusPath,
+      "--ai-status-only",
+      "--observed-participants-json",
+      '["Main"]',
+      "--observation-coverage",
+      "complete",
+    ], { cwd: os.tmpdir(), encoding: "utf8", timeout: 5000 });
+    assert.equal(conflictingAiStatusCli.error, undefined, conflictingAiStatusCli.error?.message);
+    assert.equal(conflictingAiStatusCli.signal, null, conflictingAiStatusCli.stderr);
+    assert.equal(conflictingAiStatusCli.status, 1);
+    assert.ok(conflictingAiStatusCli.stderr.includes(`invalid: ${duplicateTableError}`), conflictingAiStatusCli.stderr);
+    console.log("f1 AI status CLI fixtures passed: 3/3");
   }
 } finally {
   fs.rmSync(aiStatusFixtureDir, { recursive: true, force: true });
