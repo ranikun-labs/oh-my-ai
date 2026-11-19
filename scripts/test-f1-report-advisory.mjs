@@ -167,6 +167,85 @@ const participantTableInAppendix = validateAiStatus(
 assert.equal(participantTableInAppendix.valid, false, "an appendix table cannot satisfy the AI section");
 assert.ok(participantTableInAppendix.errors.includes("AI status must contain the required participant table"));
 console.log(`f1 ATX section boundary fixtures passed: ${sectionEndingHeadings.length + sectionPreservingExamples.length + 4}`);
+
+const setextAppendices = [
+  "참고 자료\n===",
+  "참고 자료\n---",
+  " 별도\n   참고 자료\n ---",
+  "### 앞 하위 절\n참고 자료\n---",
+  "<pre>예시 출력</pre>\n참고 자료\n---",
+  ">\n참고 자료\n---",
+  "-\n참고 자료\n---",
+  "> 내부 제목\n> ===\n참고 자료\n---",
+  "- - # 내부 제목\n참고 자료\n---",
+  "> ```md\n> 샘플\n> ```\n참고 자료\n---",
+  "> ```md\n> 샘플\n참고 자료\n===",
+  "- > ```md\n  > 샘플\n  > ```\n참고 자료\n---",
+];
+for (const appendix of setextAppendices) {
+  expectInvalid(
+    "a top-level Setext appendix ends verification",
+    validReport.replace(ciStatusPrefix, `\n${appendix}\n\n${ciStatusPrefix}`),
+    "CI must have exactly one explicit status line",
+  );
+}
+const setextNonBoundaries = [
+  "---",
+  "> 참고 자료\n> ===",
+  "- 참고 자료\n  ===",
+  "> 기존 인용\n참고 자료\n===",
+  "> ```샘플```\n참고 자료\n===",
+  "- 목록 문단\n참고 자료\n===",
+  "> ===\n참고 자료\n===",
+  "[reference]: /docs\n---",
+  "[reference]:\n  /docs\n---",
+  '[reference]: /docs\n  "제목"\n---',
+  '[reference]:\n  /docs\n  "제목"\n---',
+  "> ```md\n> 샘플\n> > ```\n> 내부 제목\n> ===\n> ```",
+  "    참고 자료\n    ===",
+  "```markdown\n참고 자료\n===\n```",
+  "열 A | 열 B\n--- | ---\n표 값 | 관측\n===",
+];
+for (const example of setextNonBoundaries) {
+  const result = validateF1Report(validReport.replace(ciStatusPrefix, `\n${example}\n\n${ciStatusPrefix}`));
+  assert.equal(result.valid, true, `${example}: ${result.errors.join("; ")}`);
+}
+const setextVerification = validateF1Report(validReport.replace("## 검증\n", "검증\n---\n"));
+assert.equal(setextVerification.valid, true, setextVerification.errors.join("; "));
+expectInvalid(
+  "an ATX section and Setext section cannot repeat the same title",
+  validReport.replace(afterVerification, `검증\n---\n\n중복 검증\n\n${afterVerification}`),
+  "duplicate required section: ## 검증",
+);
+const setextParticipantTableInAppendix = validateAiStatus(
+  mainOnlyAiStatus.replace("| Agent ID", "\n추가 관측 예시\n===\n\n| Agent ID"),
+  { observedParticipants: ["Main"], observationCoverage: "complete" },
+);
+assert.equal(setextParticipantTableInAppendix.valid, false, "a Setext appendix table cannot satisfy the AI section");
+assert.ok(setextParticipantTableInAppendix.errors.includes("AI status must contain the required participant table"));
+console.log(`f1 Setext section boundary fixtures passed: ${setextAppendices.length + setextNonBoundaries.length + 3}`);
+
+const preListExamples = [
+  "- 출력 예시\n  <pre>\n  ## 보이지 않는 제목",
+  "- <pre>\n  ## 보이지 않는 제목",
+  "- 출력 예시\n  - <pre>\n    <!-- 닫히지 않은 주석",
+];
+for (const example of preListExamples) {
+  const result = validateF1Report(validReport.replace(afterVerification, `${example}\n\n${afterVerification}`));
+  assert.equal(result.valid, true, `${example}: ${result.errors.join("; ")}`);
+}
+expectInvalid(
+  "a top-level unclosed pre block continues to hide later sections",
+  validReport.replace(afterVerification, `<pre>\n\n${afterVerification}`),
+  `missing required section: ${afterVerification}`,
+);
+expectInvalid(
+  "a status inside a list pre block is hidden until the list ends",
+  validReport.replace(/^- CI: NOT_RUN.*$/mu, "- <pre>\n\n  CI: PASS — https://example.invalid/example"),
+  "CI must have exactly one explicit status line",
+);
+console.log(`f1 list pre boundaries fixtures passed: ${preListExamples.length + 2}`);
+
 for (const duplicateValue of ["YES", "NO"]) {
   const duplicateHeader = mainOnlyAiStatus.split("\n").map((line) => {
     if (line.startsWith("| Agent ID |")) return line + " 실제 참여 |";
