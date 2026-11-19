@@ -193,6 +193,7 @@ jobs:
       - name: Run existing report, result and preflight regressions
         run: |
           node scripts/test-f1-report-advisory.mjs
+          node scripts/f1-report-advisory.mjs docs/examples/f1-report-rpl119.md
           make test-result-fixtures
           make test-truthfulness-fixtures
           make test-git-work-preflight-fixtures
@@ -203,6 +204,22 @@ jobs:
 
       - name: Run dev-main-flow install fixtures
         run: make test-dev-main-flow-install-fixtures
+        timeout-minutes: 2
+
+      - name: Run work-state observation view fixtures
+        run: |
+          node scripts/test-work-state-observation-view-fixtures.mjs
+          node scripts/test-work-tree-view.mjs
+          node scripts/test-jira-observations.mjs
+          bash scripts/test-jira-observations-cli.sh
+          bash scripts/test-work-view-stdin-limits.sh
+          bash scripts/test-work-tree-cli.sh
+        timeout-minutes: 2
+
+      - name: Run offline usage summary fixtures
+        run: |
+          node scripts/test-role-usage-summary.mjs
+          node scripts/test-usage-f1.mjs
         timeout-minutes: 2
 
       - name: Check whitespace in the pull request diff

@@ -1,0 +1,45 @@
+name: RPL-118 Capability MVP Native CI
+
+on:
+  pull_request:
+    branches:
+      - master
+      - feat/rpl-120-durable-claim-integration-20261030
+    paths:
+      - ".github/workflows/rpl118-capability-mvp.yml"
+      - "scripts/lib/rpl-118-capability-preflight-mvp.mjs"
+      - "scripts/test-rpl-118-capability-preflight-mvp.mjs"
+
+permissions:
+  contents: read
+
+jobs:
+  capability-mvp:
+    name: RPL-118 Capability MVP fixtures
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out the exact PR head
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+
+      - name: Verify whitespace and patch integrity
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: git diff --check "$BASE_SHA...$HEAD_SHA"
+
+      - name: Check JavaScript syntax
+        run: |
+          node --check scripts/lib/rpl-118-capability-preflight-mvp.mjs
+          node --check scripts/test-rpl-118-capability-preflight-mvp.mjs
+
+      - name: Run RPL-118 Capability MVP fixtures
+        run: node scripts/test-rpl-118-capability-preflight-mvp.mjs

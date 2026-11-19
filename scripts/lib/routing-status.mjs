@@ -62,13 +62,31 @@ export function matchSkillCandidatesWithStatus(normalizedInput, options = {}) {
 
       const routing = skill.routing;
       const keywordTriggers = routing.triggers.filter(trigger => trigger.kind === "keyword");
-      supportedTriggerCount += keywordTriggers.length;
-      unsupportedTriggerCount += routing.triggers.length - keywordTriggers.length;
+      const f1PatternTriggers = skill.name === "engineering-communication-ko"
+        && routing.visibility !== "hidden" && routing.risk_level !== "high"
+        ? routing.triggers.filter(trigger => trigger.kind === "pattern") : [];
+      supportedTriggerCount += keywordTriggers.length + f1PatternTriggers.length;
+      unsupportedTriggerCount += routing.triggers.length - keywordTriggers.length - f1PatternTriggers.length;
 
       if (routing.visibility === "hidden" || routing.risk_level === "high") continue;
 
       const keywordValues = keywordTriggers.flatMap(trigger => trigger.values);
-      const matched = keywordValues.filter(value => normalizedInput.includes(value.toLowerCase()));
+      let matched;
+      if (skill.name === "engineering-communication-ko") {
+        // Broad substrings override the F1 pattern's negation and inquiry guards.
+        // Keep explicit shorthand as exact input, and use the existing bounded pattern.
+        const input = normalizedInput.trim();
+        matched = keywordValues.filter(value => input === value.toLowerCase().trim());
+        for (const pattern of f1PatternTriggers.flatMap(trigger => trigger.values)) {
+          try {
+            if (normalizedInput.length <= 2000 && new RegExp(pattern, "i").test(input)) matched.push("pattern");
+          } catch {
+            // A malformed F1 pattern must not prevent other skills from routing.
+          }
+        }
+      } else {
+        matched = keywordValues.filter(value => normalizedInput.includes(value.toLowerCase()));
+      }
       if (matched.length > 0) {
         candidates.push({
           name: skill.name,

@@ -5,7 +5,7 @@ PROFILE ?=
 #   make install-completion-notify PYTHON=/opt/homebrew/bin/python3.11
 PYTHON  ?= python3
 
-.PHONY: install install-shared install-dev-main-flow doctor-dev-main-flow install-completion-notify completion-notify-status test-completion-notify doctor-completion-notify uninstall-completion-notify init-profile install-profile doctor doctor-strict instructions update work-start test-install-fixtures test-dev-main-flow-install-fixtures test-completion-notify-fixtures test-routing-fixtures test-work-start-fixtures test-notice-fixtures test-capability-fixtures test-result-fixtures test-truthfulness-fixtures test-jira-ticket-fixtures test-jira-work-fixtures test-git-work-preflight-fixtures test-context-checkpoint-codex-fixtures test-context-checkpoint-fixtures test-pending-handoff-core-fixtures test-pending-handoff-identity-fixtures test-pending-handoff-secret-provider-fixtures test-pending-handoff-identity-composition-fixtures test-pending-handoff-candidate-fixtures test-pending-handoff-store-fixtures test-pending-handoff-integrity-fixtures test-pending-handoff-revision-cas-fixtures test-pending-handoff-claim-lease-fixtures test-pending-handoff-delivery-consumption-fixtures test-pending-handoff-session-resolution-fixtures test-pending-handoff-manual-resume-fixtures test-pending-handoff-codex-runtime-adapter-fixtures test-pending-handoff-claude-runtime-adapter-fixtures test-pending-handoff-manual-resume-attempt-outcome-fixtures test-pending-handoff-manual-resume-attempt-outcome-store-adapter-fixtures test-pending-handoff-manual-resume-runtime-composition-fixtures test-v1-fixtures test-v1x-fixtures
+.PHONY: install install-shared install-dev-main-flow doctor-dev-main-flow install-completion-notify completion-notify-status test-completion-notify doctor-completion-notify uninstall-completion-notify init-profile install-profile doctor doctor-strict instructions update work-start test-install-fixtures test-user-local-state-fixtures test-dev-main-flow-install-fixtures test-completion-notify-fixtures test-routing-fixtures test-work-start-fixtures test-notice-fixtures test-capability-fixtures test-result-fixtures test-truthfulness-fixtures test-jira-ticket-fixtures test-jira-work-fixtures test-git-work-preflight-fixtures test-context-checkpoint-codex-fixtures test-context-checkpoint-fixtures test-pending-handoff-core-fixtures test-pending-handoff-identity-fixtures test-pending-handoff-secret-provider-fixtures test-pending-handoff-identity-composition-fixtures test-pending-handoff-candidate-fixtures test-pending-handoff-store-fixtures test-pending-handoff-integrity-fixtures test-pending-handoff-revision-cas-fixtures test-pending-handoff-claim-lease-fixtures test-pending-handoff-delivery-consumption-fixtures test-pending-handoff-session-resolution-fixtures test-pending-handoff-manual-resume-fixtures test-pending-handoff-codex-runtime-adapter-fixtures test-pending-handoff-claude-runtime-adapter-fixtures test-pending-handoff-manual-resume-attempt-outcome-fixtures test-pending-handoff-manual-resume-attempt-outcome-store-adapter-fixtures test-pending-handoff-manual-resume-runtime-composition-fixtures test-portfolio-briefing-fixtures test-portfolio-briefing-mcp-adapter-fixtures test-v1-fixtures test-v1x-fixtures test-agent-manifest-fixtures
 
 instructions:
 	./scripts/render-instructions.sh
@@ -28,6 +28,8 @@ work-start:
 
 test-routing-fixtures:
 	./scripts/test-routing-fixtures.sh
+	bash ./scripts/test-f1-shared-routing.sh
+	node ./scripts/test-weekly-report-routing.mjs
 
 test-work-start-fixtures:
 	./scripts/test-work-start-fixtures.sh
@@ -37,6 +39,9 @@ test-notice-fixtures:
 
 test-capability-fixtures:
 	./scripts/test-capability-fixtures.sh
+
+test-agent-manifest-fixtures:
+	node ./scripts/test-agent-manifest-fixtures.mjs
 
 test-result-fixtures:
 	./scripts/test-result-fixtures.sh
@@ -52,6 +57,9 @@ test-jira-work-fixtures:
 
 test-git-work-preflight-fixtures:
 	./scripts/test-git-work-preflight-fixtures.sh
+
+test-user-local-state-fixtures:
+	node ./scripts/test-user-local-state-fixtures.mjs
 
 test-install-fixtures:
 	./scripts/test-install-fixtures.sh
@@ -117,10 +125,17 @@ test-pending-handoff-manual-resume-attempt-outcome-fixtures:
 test-pending-handoff-manual-resume-attempt-outcome-store-adapter-fixtures:
 	node ./scripts/test-pending-handoff-manual-resume-attempt-outcome-store-adapter-fixtures.mjs
 
-test-v1-fixtures: test-install-fixtures test-completion-notify-fixtures test-routing-fixtures test-work-start-fixtures test-notice-fixtures test-capability-fixtures test-result-fixtures test-truthfulness-fixtures
+test-portfolio-briefing-fixtures:
+	node ./scripts/test-portfolio-briefing-snapshot.mjs
+
+test-portfolio-briefing-mcp-adapter-fixtures:
+	node ./scripts/test-portfolio-briefing-mcp-adapter.mjs
+
+test-v1-fixtures: test-install-fixtures test-user-local-state-fixtures test-completion-notify-fixtures test-routing-fixtures test-work-start-fixtures test-notice-fixtures test-capability-fixtures test-result-fixtures test-truthfulness-fixtures test-portfolio-briefing-fixtures test-portfolio-briefing-mcp-adapter-fixtures
 
 test-v1x-fixtures: \
 	test-v1-fixtures \
+	test-agent-manifest-fixtures \
 	test-context-checkpoint-fixtures \
 	test-pending-handoff-core-fixtures \
 	test-pending-handoff-identity-fixtures \

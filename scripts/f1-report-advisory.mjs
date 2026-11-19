@@ -31,6 +31,13 @@ const AI_STATUS_HEADERS = [
   "공식 토큰·비용·구간·출처",
 ];
 const OBSERVATION_COVERAGES = new Set(["complete", "partial", "unknown"]);
+const HTML_PRE_OPEN = /^<pre(?=[ \t/>])[^>]*>/iu;
+const HTML_BLOCK_TAG = /^ {0,3}<\/?(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|source|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)(?=[ \t/>]|$)/iu;
+const HTML_TAG_NAME = "[A-Za-z][A-Za-z0-9-]*";
+const HTML_ATTRIBUTE = "[ \\t]+[A-Za-z_:][A-Za-z0-9_.:-]*(?:[ \\t]*=[ \\t]*(?:\"[^\"]*\"|'[^']*'|[^ \\t\"'=<>`]+))?";
+const STANDALONE_HTML_TAG = new RegExp(`^ {0,3}(?:</${HTML_TAG_NAME}[ \\t]*>|<${HTML_TAG_NAME}(?:${HTML_ATTRIBUTE})*[ \\t]*/?>)[ \\t]*$`, "u");
+const THEMATIC_BREAK = /^ {0,3}(?:\*(?:[ \t]*\*){2,}|-(?:[ \t]*-){2,}|_(?:[ \t]*_){2,})[ \t]*$/u;
+const SETEXT_UNDERLINE = /^ {0,3}(?:=+|-+)[ \t]*$/u;
 
 const EVIDENCE_STATUSES = new Set(["PASS", "FAIL", "NOT_RUN", "BLOCKED", "UNKNOWN"]);
 const OWNER_STATUSES = new Set(["APPROVED", "PENDING", "BLOCKED", "UNKNOWN", "NOT_REQUIRED"]);
@@ -123,6 +130,22 @@ function isAtxHeadingLine(line) {
   return level > 0 && (index === line.length || line[index] === " " || line[index] === "\t");
 }
 
+function startsHtmlBlock(line, atBlockBoundary) {
+  // The pre scanner keeps blank lines inside the block and ignores comment-wrapped closers.
+  if (HTML_PRE_OPEN.test(line.trimStart())) return false;
+  return HTML_BLOCK_TAG.test(line) || (atBlockBoundary && STANDALONE_HTML_TAG.test(line));
+}
+
+function findRawHtmlBlockEnd(line) {
+  const element = /^ {0,3}<(script|style|textarea)(?=[ \t>]|$)/iu.exec(line);
+  if (element) return new RegExp(`</${element[1]}>`, "iu");
+  if (/^ {0,3}<!--/u.test(line)) return /-->/u;
+  if (/^ {0,3}<!\[CDATA\[/u.test(line)) return /\]\]>/u;
+  if (/^ {0,3}<\?/u.test(line)) return /\?>/u;
+  if (/^ {0,3}<![A-Z]/u.test(line)) return />/u;
+  return null;
+}
+
 function findClosingBacktickRun(lines, startLine, startColumn, runLength) {
   const backtick = String.fromCharCode(96);
 
@@ -179,12 +202,25 @@ function visibleMarkdownLines(markdown) {
   let openFence = null;
   let insideHtmlComment = false;
   let insideHtmlPreBlock = false;
+  let rawHtmlBlockEnd = null;
+  let insideHtmlBlock = false;
   let inlineCodeDelimiterLength = 0;
+  let atBlockBoundary = true;
 
   for (let lineIndex = 0; lineIndex < sourceLines.length; lineIndex += 1) {
     let line = sourceLines[lineIndex];
+    // A raw HTML block ends at a blank line. Its contents cannot start Markdown blocks.
+    if (insideHtmlBlock) {
+      if (line.trim().length > 0) continue;
+      insideHtmlBlock = false;
+    }
     if (openFence !== null) {
       if (isFenceClosing(line, openFence)) openFence = null;
+      continue;
+    }
+
+    if (rawHtmlBlockEnd !== null) {
+      if (rawHtmlBlockEnd.test(line)) rawHtmlBlockEnd = null;
       continue;
     }
 
@@ -197,16 +233,30 @@ function visibleMarkdownLines(markdown) {
       insideHtmlComment = false;
     }
 
-    if (inlineCodeDelimiterLength === 0 && !insideHtmlComment && !insideHtmlPreBlock && isIndentedCodeLine(line)) continue;
+    if (inlineCodeDelimiterLength === 0 && !insideHtmlComment && !insideHtmlPreBlock
+      && isIndentedCodeLine(line) && line.trim().length > 0) continue;
 
     if (inlineCodeDelimiterLength === 0 && !insideHtmlComment && !insideHtmlPreBlock) {
       const fenceStart = parseFenceStart(line);
       if (fenceStart !== null) {
         openFence = fenceStart;
+        atBlockBoundary = true;
+        continue;
+      }
+      const rawEnd = findRawHtmlBlockEnd(line);
+      if (rawEnd) {
+        if (!rawEnd.test(line)) rawHtmlBlockEnd = rawEnd;
+        atBlockBoundary = true;
+        continue;
+      }
+      if (startsHtmlBlock(line, atBlockBoundary)) {
+        insideHtmlBlock = true;
+        atBlockBoundary = true;
         continue;
       }
     }
 
+    const tableLine = !insideHtmlComment;
     const headingCandidate = inlineCodeDelimiterLength === 0
       && !insideHtmlComment
       && !insideHtmlPreBlock
@@ -281,7 +331,7 @@ function visibleMarkdownLines(markdown) {
         continue;
       }
 
-      const preOpen = /^<pre\b[^>]*>/i.exec(line.slice(cursor));
+      const preOpen = HTML_PRE_OPEN.exec(line.slice(cursor));
       if (preOpen && !isEscapedAt(line, cursor)) {
         insideHtmlPreBlock = true;
         cursor += preOpen[0].length;
@@ -294,8 +344,13 @@ function visibleMarkdownLines(markdown) {
       cursor += 1;
     }
 
+    // Track whether a standalone HTML tag may start a block on the next line.
+    atBlockBoundary = line.trim().length === 0
+      || isAtxHeadingLine(line)
+      || THEMATIC_BREAK.test(line)
+      || (!atBlockBoundary && SETEXT_UNDERLINE.test(line));
     if (isIndentedCodeLine(visible)) continue;
-    visibleLines.push({ text: visible, statusText: statusVisible, fieldText: fieldVisible, headingCandidate });
+    visibleLines.push({ text: visible, statusText: statusVisible, fieldText: fieldVisible, tableText: tableLine ? visible : "", headingCandidate, lineIndex });
   }
 
   return visibleLines;
@@ -318,7 +373,7 @@ function splitSections(markdown, statusEvidenceOnly = false) {
     fieldSections.set(current, [...fieldBody]);
   };
 
-  for (const { text: line, statusText, fieldText, headingCandidate } of visibleMarkdownLines(markdown)) {
+  for (const { text: line, statusText, fieldText, tableText, headingCandidate, lineIndex } of visibleMarkdownLines(markdown)) {
     const heading = headingCandidate ? /^ {0,3}##[ \t]+(.+?)[ \t]*$/.exec(line) : null;
     if (heading) {
       flush();
@@ -327,7 +382,7 @@ function splitSections(markdown, statusEvidenceOnly = false) {
       fieldBody.length = 0;
     } else if (current !== null) {
       body.push(statusEvidenceOnly ? statusText : line);
-      fieldBody.push({ text: line, fieldText });
+      fieldBody.push({ text: line, fieldText, tableText, lineIndex });
     }
   }
   flush();
@@ -400,14 +455,18 @@ function validateRequiredReportFields(sectionScan) {
   return errors;
 }
 
-function splitMarkdownTableRow(line) {
-  const trimmed = String(line).trim();
-  if (!trimmed.startsWith("|") || !trimmed.endsWith("|")) return null;
+function splitMarkdownTableRow(line, allowSingleCell = false) {
+  if (isAtxHeadingLine(line) || THEMATIC_BREAK.test(line) || /^ {0,3}(?:>|(?:[-+*]|\d{1,9}[.)])[ \t])/u.test(line)) return null;
+  const trimmed = line.trim();
+  if (!trimmed) return null;
+  const leadingPipe = trimmed.startsWith("|");
+  const trailingPipe = trimmed.endsWith("|") && !isEscapedAt(trimmed, trimmed.length - 1);
+  const content = trimmed.slice(leadingPipe ? 1 : 0, trailingPipe ? -1 : undefined);
 
   const cells = [];
   let cell = "";
   let escaped = false;
-  for (const character of trimmed.slice(1, -1)) {
+  for (const character of content) {
     if (character === "|" && !escaped) {
       cells.push(cell.trim());
       cell = "";
@@ -417,6 +476,7 @@ function splitMarkdownTableRow(line) {
     if (character === "\\" && !escaped) escaped = true;
     else escaped = false;
   }
+  if (!allowSingleCell && !leadingPipe && !trailingPipe && cells.length === 0) return null;
   cells.push(cell.trim());
   return cells;
 }
@@ -429,26 +489,40 @@ function normalizeTableHeader(value) {
     .toLocaleLowerCase();
 }
 
-function findAiStatusTable(sectionBody) {
-  const lines = String(sectionBody).split(/\r?\n/u);
+function readAiStatusTable(lines, errors) {
+  let table = null;
   for (let index = 0; index < lines.length - 1; index += 1) {
-    const headers = splitMarkdownTableRow(lines[index]);
-    const separators = splitMarkdownTableRow(lines[index + 1]);
+    if (lines[index + 1].lineIndex !== lines[index].lineIndex + 1) continue;
+    const headers = splitMarkdownTableRow(lines[index].tableText);
+    const separators = splitMarkdownTableRow(lines[index + 1].tableText);
     if (!headers || !separators || headers.length !== separators.length) continue;
-    if (!separators.every((cell) => /^:?-{3,}:?$/u.test(cell))) continue;
+    if (!separators.every((cell) => /^:?-+:?$/u.test(cell))) continue;
+
+    // Data rows inside any table cannot start a second table.
+    const rows = [];
+    let rowIndex = index + 2;
+    for (; rowIndex < lines.length; rowIndex += 1) {
+      if (lines[rowIndex].lineIndex !== lines[rowIndex - 1].lineIndex + 1) break;
+      const cells = splitMarkdownTableRow(lines[rowIndex].tableText, true);
+      if (!cells) break;
+      rows.push(cells);
+    }
+    index = rowIndex - 1;
 
     const normalizedHeaders = headers.map(normalizeTableHeader);
     if (!AI_STATUS_HEADERS.every((header) => normalizedHeaders.includes(header))) continue;
 
-    const rows = [];
-    for (let rowIndex = index + 2; rowIndex < lines.length; rowIndex += 1) {
-      const cells = splitMarkdownTableRow(lines[rowIndex]);
-      if (!cells) break;
-      rows.push(cells);
+    if (table) {
+      errors.push("AI status must contain exactly one participant table");
+      return null;
     }
-    return { headers: normalizedHeaders, rows };
+    table = { headers: normalizedHeaders, rows };
   }
-  return null;
+
+  if (!table) {
+    errors.push("AI status must contain the required participant table");
+  }
+  return table;
 }
 
 function findAiStatusLabel(sectionBody, label) {
@@ -489,10 +563,15 @@ function validateAiStatus(markdown, options = {}) {
     errors.push(`AI status observation coverage must match the supplied value: ${coverage}`);
   }
 
-  const table = findAiStatusTable(section);
+  const table = readAiStatusTable(sectionScan.fieldSections.get(AI_STATUS_SECTION), errors);
   if (!table) {
-    errors.push("AI status must contain the required participant table");
     return { valid: false, errors, scope: "AI_STATUS_ONLY" };
+  }
+
+  for (const header of AI_STATUS_HEADERS) {
+    if (table.headers.filter((value) => value === header).length > 1) {
+      errors.push(`AI status table must not repeat required header: ${header}`);
+    }
   }
 
   const headerIndexes = new Map(table.headers.map((header, index) => [header, index]));
