@@ -4,7 +4,9 @@
 // verify the truth of URLs, SHAs, test results, reviewer independence, or gates.
 
 import fs from "node:fs";
+import { types as utilTypes } from "node:util";
 import { pathToFileURL } from "node:url";
+import { validateOpaqueIdentity } from "./lib/pending-handoff-identity.mjs";
 
 const REQUIRED_SECTIONS = [
   "문제",
@@ -63,6 +65,8 @@ const REPORT_LIST_LABELS = new Set([
   ...STATUS_LABELS.map((label) => label.toLowerCase()),
   ...REQUIRED_REPORT_FIELDS.map(({ label }) => label),
 ]);
+const CODEX_USAGE_SOURCE = "Codex App Server JSON-RPC thread/tokenUsage/updated";
+const MAX_USAGE_OBSERVATION_BYTES = 32 * 1024;
 
 function leadingIndentation(line) {
   let columns = 0;
@@ -860,8 +864,174 @@ function validateF1Report(markdown, options = {}) {
   return { valid: errors.length === 0, errors };
 }
 
+function inspectF1DataObject(value, requiredKeys, optionalKeys = []) {
+  try {
+    if (utilTypes.isProxy(value) || value === null || typeof value !== "object"
+      || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype) return null;
+    const allowed = new Set([...requiredKeys, ...optionalKeys]);
+    const keys = Reflect.ownKeys(value);
+    if (keys.some((key) => typeof key !== "string" || !allowed.has(key))) return null;
+    if (requiredKeys.some((key) => !Object.hasOwn(value, key))) return null;
+    const result = {};
+    for (const key of keys) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (!descriptor || !descriptor.enumerable || !Object.hasOwn(descriptor, "value")
+        || Object.hasOwn(descriptor, "get") || Object.hasOwn(descriptor, "set")) return null;
+      result[key] = descriptor.value;
+    }
+    return result;
+  } catch {
+    return null;
+  }
+}
+
+function isNonEmptyF1Label(value) {
+  return typeof value === "string"
+    && value.trim().length > 0
+    && value.trim().toUpperCase() !== "UNKNOWN"
+    && value.length <= 128
+    && /^[\p{L}\p{N} ._@-]+$/u.test(value.trim());
+}
+
+function projectUsageCounterBreakdown(value) {
+  const inspected = inspectF1DataObject(value, [
+    "inputTokens",
+    "cachedInputTokens",
+    "outputTokens",
+    "reasoningOutputTokens",
+    "totalTokens",
+  ], ["cacheWriteInputTokens"]);
+  if (!inspected) return null;
+  const projected = {};
+  for (const key of ["inputTokens", "cachedInputTokens", "outputTokens", "reasoningOutputTokens", "totalTokens"]) {
+    if (!Number.isSafeInteger(inspected[key]) || inspected[key] < 0) return null;
+    projected[key] = inspected[key];
+  }
+  if (Object.hasOwn(inspected, "cacheWriteInputTokens")) {
+    if (!Number.isSafeInteger(inspected.cacheWriteInputTokens) || inspected.cacheWriteInputTokens < 0) return null;
+    projected.cacheWriteInputTokens = inspected.cacheWriteInputTokens;
+  } else {
+    projected.cacheWriteInputTokens = "UNKNOWN";
+  }
+  return projected;
+}
+
+function formatUsageCounters(breakdown) {
+  return `input=${breakdown.inputTokens}, cached_input=${breakdown.cachedInputTokens}, cache_write_input=${breakdown.cacheWriteInputTokens}, output=${breakdown.outputTokens}, reasoning_output=${breakdown.reasoningOutputTokens}, reported_total=${breakdown.totalTokens}`;
+}
+
+function unknownUsageCell(reason) {
+  return `UNKNOWN — ${reason}; Agent execution tokens, model/reasoning/Fast, turn attribution, runtime/source verification, coverage, and cost remain UNKNOWN.`;
+}
+
+// This renders one opt-in adapter result into a pasteable F1 usage cell. Agent/role are caller assertions;
+// the adapter event itself does not carry either identity and its token counters are not verified billing.
+export function formatUsageObservationForF1(envelope, attribution) {
+  const attributed = inspectF1DataObject(attribution, ["agent_id", "role"]);
+  if (!attributed || !isNonEmptyF1Label(attributed.agent_id) || !isNonEmptyF1Label(attributed.role)) {
+    return Object.freeze({
+      agent_id: "UNKNOWN",
+      role: "UNKNOWN",
+      attribution: "UNKNOWN",
+      usage_cell: unknownUsageCell("F1 row attribution was not supplied"),
+    });
+  }
+  const row = Object.freeze({
+    agent_id: attributed.agent_id.trim(),
+    role: attributed.role.trim(),
+    attribution: "CALLER_ASSERTED_F1_ROW; adapter event has no Agent/run ID",
+  });
+  const invocation = inspectF1DataObject(envelope, ["result", "usage_observation"]);
+  if (!invocation || invocation.result === null || typeof invocation.result !== "object") {
+    return Object.freeze({ ...row, usage_cell: unknownUsageCell("input is not one per-invocation adapter result") });
+  }
+  const observation = inspectF1DataObject(invocation.usage_observation, [
+    "status", "source", "source_verification", "runtime_version", "coverage", "observed_at",
+    "operation_window", "session_identity", "turn_attribution", "deduplication", "aggregation",
+    "notification_count", "model", "reasoning_effort", "fast", "token_usage",
+  ]);
+  if (!observation) {
+    return Object.freeze({ ...row, usage_cell: unknownUsageCell("usage observation shape is missing or invalid") });
+  }
+  const sessionIdentity = validateOpaqueIdentity(observation.session_identity);
+  const absence = observation.status === "NO_NOTIFICATION_OBSERVED";
+  if ((!absence && observation.status !== "UNVERIFIED_USAGE_NOTIFICATION")
+    || observation.source !== CODEX_USAGE_SOURCE
+    || observation.source_verification !== "UNKNOWN"
+    || observation.runtime_version !== "UNKNOWN"
+    || observation.coverage !== "UNKNOWN"
+    || observation.turn_attribution !== "UNKNOWN"
+    || observation.model !== "UNKNOWN"
+    || observation.reasoning_effort !== "UNKNOWN"
+    || observation.fast !== "UNKNOWN"
+    || observation.deduplication !== "NOT_PERFORMED"
+    || observation.aggregation !== "LATEST_NOTIFICATION_ONLY_NO_SUM"
+    || !Number.isSafeInteger(observation.notification_count)
+    || sessionIdentity.ok !== true || sessionIdentity.kind !== "session"
+    || (absence
+      ? observation.notification_count !== 0 || observation.token_usage !== null
+      : observation.notification_count < 1)) {
+    return Object.freeze({ ...row, usage_cell: unknownUsageCell("source, scope, or attribution evidence is incomplete") });
+  }
+  const canonicalTime = value => {
+    if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) return null;
+    const time = Date.parse(value);
+    return Number.isFinite(time) && new Date(time).toISOString() === value ? value : null;
+  };
+  const observedAt = canonicalTime(observation.observed_at);
+  const operationWindow = inspectF1DataObject(observation.operation_window, ["started_at", "finished_at"]);
+  const startedAt = canonicalTime(operationWindow?.started_at);
+  const finishedAt = canonicalTime(operationWindow?.finished_at);
+  if (!observedAt || !startedAt || !finishedAt || startedAt > observedAt || observedAt > finishedAt) {
+    return Object.freeze({ ...row, usage_cell: unknownUsageCell("observation time window is missing or invalid") });
+  }
+  if (absence) {
+    return Object.freeze({
+      ...row,
+      usage_cell: unknownUsageCell("no matching notification was observed in this operation window; this does not prove the run had no usage"),
+    });
+  }
+  const tokenUsage = inspectF1DataObject(observation.token_usage, ["last", "total"]);
+  const last = tokenUsage ? projectUsageCounterBreakdown(tokenUsage.last) : null;
+  const total = tokenUsage ? projectUsageCounterBreakdown(tokenUsage.total) : null;
+  if (!last || !total) {
+    return Object.freeze({ ...row, usage_cell: unknownUsageCell("counter values are missing or invalid") });
+  }
+  const usageCell = [
+    "Agent execution usage UNKNOWN (caller-attributed F1 row only; event has no Agent/run/turn attribution)",
+    `unverified thread counters from ${CODEX_USAGE_SOURCE}`,
+    `observed_at=${observedAt}; operation=${startedAt}..${finishedAt}`,
+    `notifications=${observation.notification_count}; latest matched notification only; no deduplication or sum`,
+    `last{${formatUsageCounters(last)}}`,
+    `adapter_total_snapshot{${formatUsageCounters(total)}}`,
+    "zero-versus-no-update meaning UNKNOWN; model/reasoning/Fast, runtime/source verification, and cost UNKNOWN",
+  ].join("; ");
+  return Object.freeze({ ...row, usage_cell: usageCell });
+}
+
+function readBoundedUsageInput(filename) {
+  const fd = fs.openSync(filename, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+  const chunks = [];
+  let totalBytes = 0;
+  try {
+    const inputStat = fs.fstatSync(fd);
+    if (!inputStat.isFile() || inputStat.size > MAX_USAGE_OBSERVATION_BYTES) throw new Error("oversized input");
+    while (true) {
+      const buffer = Buffer.allocUnsafe(4096);
+      const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, null);
+      if (bytesRead === 0) break;
+      totalBytes += bytesRead;
+      if (totalBytes > MAX_USAGE_OBSERVATION_BYTES) throw new Error("oversized input");
+      chunks.push(buffer.subarray(0, bytesRead));
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+  return Buffer.concat(chunks, totalBytes).toString("utf8");
+}
+
 function parseCliArguments(args) {
-  const parsed = { file: null, options: {}, aiStatusOnly: false };
+  const parsed = { file: null, options: {}, aiStatusOnly: false, usageObservation: null };
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
     if (argument === "--require-ai-status") {
@@ -882,6 +1052,14 @@ function parseCliArguments(args) {
           throw new Error("--observed-participants-json must contain valid JSON");
         }
       }
+    } else if (argument === "--usage-observation-json" || argument === "--usage-agent-id" || argument === "--usage-role") {
+      const value = args[index + 1];
+      if (!value || value.startsWith("--")) throw new Error(`missing value for ${argument}`);
+      index += 1;
+      parsed.usageObservation ??= {};
+      const key = argument === "--usage-observation-json" ? "input" : argument === "--usage-agent-id" ? "agent_id" : "role";
+      if (Object.hasOwn(parsed.usageObservation, key)) throw new Error(`duplicate option: ${argument}`);
+      parsed.usageObservation[key] = value;
     } else if (argument.startsWith("--")) {
       throw new Error(`unknown option: ${argument}`);
     } else if (parsed.file === null) {
@@ -894,6 +1072,15 @@ function parseCliArguments(args) {
     && !parsed.options.requireAiStatus) {
     throw new Error("participant options require --require-ai-status or --ai-status-only");
   }
+  if (parsed.usageObservation !== null) {
+    if (parsed.file !== null || parsed.aiStatusOnly || parsed.options.requireAiStatus
+      || parsed.options.observedParticipants !== undefined || parsed.options.observationCoverage !== undefined
+      || !Object.hasOwn(parsed.usageObservation, "input")
+      || !Object.hasOwn(parsed.usageObservation, "agent_id")
+      || !Object.hasOwn(parsed.usageObservation, "role")) {
+      throw new Error("usage observation mode requires only --usage-observation-json, --usage-agent-id, and --usage-role");
+    }
+  }
   return parsed;
 }
 
@@ -902,13 +1089,33 @@ function main() {
   try {
     parsed = parseCliArguments(process.argv.slice(2));
   } catch (error) {
-    console.error(`usage: node scripts/f1-report-advisory.mjs <report.md> [--require-ai-status] [--observed-participants-json '<json>'] [--observation-coverage complete|partial|unknown] [--ai-status-only]`);
+    console.error("usage: node scripts/f1-report-advisory.mjs <report.md> [--require-ai-status] [--observed-participants-json '<json>'] [--observation-coverage complete|partial|unknown] [--ai-status-only]");
+    console.error("       node scripts/f1-report-advisory.mjs --usage-observation-json <file> --usage-agent-id <id> --usage-role <role>");
     console.error(`invalid_arguments: ${error.message}`);
     process.exit(2);
+  }
+  if (parsed.usageObservation !== null) {
+    let envelope;
+    try {
+      envelope = JSON.parse(readBoundedUsageInput(parsed.usageObservation.input));
+    } catch (error) {
+      console.error(`invalid_usage_observation: ${error.message === "oversized input" ? error.message : "input must be bounded valid JSON"}`);
+      process.exit(2);
+    }
+    const formatted = formatUsageObservationForF1(envelope, {
+      agent_id: parsed.usageObservation.agent_id,
+      role: parsed.usageObservation.role,
+    });
+    console.log(JSON.stringify({
+      mode: "MANUAL_F1_USAGE_CELL; not inserted into a report",
+      ...formatted,
+    }));
+    return;
   }
   const { file } = parsed;
   if (!file) {
     console.error("usage: node scripts/f1-report-advisory.mjs <report.md> [--require-ai-status] [--observed-participants-json '<json>'] [--observation-coverage complete|partial|unknown] [--ai-status-only]");
+    console.error("       node scripts/f1-report-advisory.mjs --usage-observation-json <file> --usage-agent-id <id> --usage-role <role>");
     process.exit(2);
   }
   if (!fs.existsSync(file)) {

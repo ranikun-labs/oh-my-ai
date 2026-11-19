@@ -14,6 +14,7 @@ DOCTOR_FAIL_COUNT=0
 INSTALL_FAILURE=0
 DEV_MAIN_WITH_HANDOFF=0
 DEV_MAIN_WITH_RECORD_SYNC=0
+DEV_MAIN_WITH_SPEC=0
 
 usage() {
   cat <<'EOF'
@@ -21,7 +22,7 @@ usage:
   setup.sh --doctor [--strict]
   setup.sh --doctor-dev-main-flow
   setup.sh --install-shared [--dry-run]
-  setup.sh --install-dev-main-flow [--with-handoff] [--with-record-sync] [--dry-run]
+  setup.sh --install-dev-main-flow [--with-handoff] [--with-record-sync] [--with-spec] [--dry-run]
   setup.sh --init-profile --profile <name> [--dry-run]
   setup.sh --install-profile --profile <name> [--dry-run]
 
@@ -49,6 +50,7 @@ while [ "$#" -gt 0 ]; do
     --install-dev-main-flow) MODE="install-dev-main-flow" ;;
     --with-handoff) DEV_MAIN_WITH_HANDOFF=1 ;;
     --with-record-sync) DEV_MAIN_WITH_RECORD_SYNC=1 ;;
+    --with-spec) DEV_MAIN_WITH_SPEC=1 ;;
     --init-profile) MODE="init-profile" ;;
     --install-profile) MODE="install-profile" ;;
     --profile) shift; PROFILE_NAME="${1:-}" ;;
@@ -60,8 +62,8 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 
-if { [ "$DEV_MAIN_WITH_HANDOFF" -eq 1 ] || [ "$DEV_MAIN_WITH_RECORD_SYNC" -eq 1 ]; } && [ "$MODE" != "install-dev-main-flow" ]; then
-  echo "--with-handoff and --with-record-sync require --install-dev-main-flow" >&2
+if { [ "$DEV_MAIN_WITH_HANDOFF" -eq 1 ] || [ "$DEV_MAIN_WITH_RECORD_SYNC" -eq 1 ] || [ "$DEV_MAIN_WITH_SPEC" -eq 1 ]; } && [ "$MODE" != "install-dev-main-flow" ]; then
+  echo "--with-handoff, --with-record-sync and --with-spec require --install-dev-main-flow" >&2
   exit 2
 fi
 
@@ -604,7 +606,7 @@ dev_main_flow_doctor() {
   done
 
   say "Optional skills (reported separately; install only when selected):"
-  for skill_name in handoff-prompt work-record-sync; do
+  for skill_name in handoff-prompt work-record-sync spec-to-implementation; do
     status="$(dev_main_flow_skill_status "$skill_name")"
     if [ "$status" = "missing" ]; then
       status="not installed (optional)"
@@ -695,7 +697,7 @@ install_dev_main_flow() {
   say "=== install-dev-main-flow for Codex (explicit opt-in; non-destructive) ==="
   say "Target: $AGENT_DIR/skills (no hooks, settings, Runtime discovery, or other installation)"
   say "Core: dev-main-flow, adaptive-goal-closure, engineering-communication-ko"
-  say "Optional selection: handoff-prompt=$DEV_MAIN_WITH_HANDOFF, work-record-sync=$DEV_MAIN_WITH_RECORD_SYNC"
+  say "Optional selection: handoff-prompt=$DEV_MAIN_WITH_HANDOFF, work-record-sync=$DEV_MAIN_WITH_RECORD_SYNC, spec-to-implementation=$DEV_MAIN_WITH_SPEC"
   INSTALL_FAILURE=0
 
   for skill_name in dev-main-flow adaptive-goal-closure engineering-communication-ko; do
@@ -706,6 +708,9 @@ install_dev_main_flow() {
   fi
   if [ "$DEV_MAIN_WITH_RECORD_SYNC" -eq 1 ]; then
     dev_main_flow_install_one work-record-sync
+  fi
+  if [ "$DEV_MAIN_WITH_SPEC" -eq 1 ]; then
+    dev_main_flow_install_one spec-to-implementation
   fi
 
   say "Native Skill loading/invocation: NOT_RUN"

@@ -81,7 +81,9 @@ make install-dev-main-flow WITH_HANDOFF=1
 make install-dev-main-flow WITH_RECORD_SYNC=1
 ```
 
-The optional Skills are `handoff-prompt` and `work-record-sync`. Existing files,
+개발 명세 Skill을 같은 설치에 추가하려면 `make install-dev-main-flow WITH_SPEC=1`을 사용합니다. `DRY_RUN=1`로 설치 경로를 먼저 확인할 수 있습니다. 새 Codex 세션에서 `$spec-to-implementation`을 명시적으로 선택합니다.
+
+The optional Skills are `handoff-prompt`, `work-record-sync`, and `spec-to-implementation`. Existing files,
 directories, foreign links, and dangling links at a target are preserved and
 reported as conflicts; successful independent links may remain if another path
 blocks the batch. Review `make doctor-dev-main-flow` again after installation.
