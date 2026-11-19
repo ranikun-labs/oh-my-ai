@@ -31,6 +31,8 @@ const STDOUT_MARKER = "codex stdout secret marker";
 const STDERR_MARKER = "codex stderr secret marker";
 const EXCEPTION_MARKER = "codex exception marker";
 const SESSION_ATTEMPT = "123e4567-e89b-42d3-a456-426614174000";
+const USAGE_NOTIFICATION_METHOD = "thread/tokenUsage/updated";
+// Codex app-server 0.159.2: TS requires modelContextWindow:number|null; JSON Schema requires only last/total.
 const SOURCE_KINDS = [
   "cli",
   "vscode",
@@ -121,8 +123,10 @@ class FakeProcess extends EventEmitter {
     })}\n`);
   }
 
-  notification(method) {
-    this.stdout.emit("data", `${JSON.stringify({ jsonrpc: "2.0", method })}\n`);
+  notification(method, params) {
+    const message = { jsonrpc: "2.0", method };
+    if (params !== undefined) message.params = params;
+    this.stdout.emit("data", `${JSON.stringify(message)}\n`);
   }
 
   malformed(value = "{malformed") {
@@ -347,24 +351,42 @@ function deriverWith(log = []) {
   };
 }
 
-function resolutionAdapter({ plan, observer = () => NATIVE_CURRENT, deriver = deriverWith(), ledger, processOptions } = {}) {
+function resolutionAdapter({
+  plan,
+  observer = () => NATIVE_CURRENT,
+  deriver = deriverWith(),
+  ledger,
+  processOptions,
+  captureUsageObservations,
+} = {}) {
   const runner = makeRunner(plan ?? standardPlan(), ledger, processOptions);
-  const factory = createPendingHandoffCodexSessionResolutionAdapter({
+  const options = {
     currentSessionObserver: observer,
     sessionIdentityDeriver: deriver,
     spawnAppServer: runner.spawnAppServer,
-  });
+  };
+  if (captureUsageObservations !== undefined) options.captureUsageObservations = captureUsageObservations;
+  const factory = createPendingHandoffCodexSessionResolutionAdapter(options);
   assert.equal(factory.ok, true, factory.reason);
   return { adapter: factory.value, runner, deriver };
 }
 
-function executor({ plan, deriver = deriverWith(), ledger, adapterVersion = "1.2.3", processOptions } = {}) {
+function executor({
+  plan,
+  deriver = deriverWith(),
+  ledger,
+  adapterVersion = "1.2.3",
+  processOptions,
+  captureUsageObservations,
+} = {}) {
   const runner = makeRunner(plan ?? standardPlan(), ledger, processOptions);
-  const factory = createPendingHandoffCodexManualResumeExecutor({
+  const options = {
     sessionIdentityDeriver: deriver,
     adapter_version: adapterVersion,
     spawnAppServer: runner.spawnAppServer,
-  });
+  };
+  if (captureUsageObservations !== undefined) options.captureUsageObservations = captureUsageObservations;
+  const factory = createPendingHandoffCodexManualResumeExecutor(options);
   assert.equal(factory.ok, true, factory.reason);
   return { executor: factory.value, runner, deriver };
 }
@@ -519,6 +541,20 @@ await group("API and split authority surfaces", async () => {
     assert.deepEqual(Reflect.ownKeys(adapter), ["resolveCurrentSession", "resolveTargetSession"]);
     assert.equal(Object.isFrozen(adapter), true);
     assert.equal(Object.hasOwn(adapter, "resolveAndResume"), false);
+    assert.equal(Object.hasOwn(adapter, "getUsageObservation"), false);
+    assert.equal(Object.hasOwn(adapter, "resolveTargetSessionWithUsage"), false);
+  });
+  await test("per-invocation usage result methods are available only by explicit opt-in", async () => {
+    const { adapter } = resolutionAdapter({ captureUsageObservations: true });
+    assert.deepEqual(Reflect.ownKeys(adapter), [
+      "resolveCurrentSession",
+      "resolveTargetSession",
+      "resolveCurrentSessionWithUsage",
+      "resolveTargetSessionWithUsage",
+    ]);
+    assert.equal(Object.isFrozen(adapter), true);
+    const { executor: action } = executor({ captureUsageObservations: true });
+    assert.deepEqual(Reflect.ownKeys(action), ["resolveAndResume", "resolveAndResumeWithUsage"]);
   });
   await test("action facade exposes only resolveAndResume", async () => {
     const { executor: action } = executor();
@@ -544,6 +580,10 @@ await group("descriptor-safe dependency authority", async () => {
       sessionIdentityDeriver: base.sessionIdentityDeriver,
       adapter_version: "1.2.3",
       runtimeInvoke: () => {},
+    }));
+    assertFactoryFailure(createPendingHandoffCodexSessionResolutionAdapter({
+      ...base,
+      captureUsageObservations: "yes",
     }));
   });
   await test("accessor and Symbol dependencies never execute", async () => {
@@ -1180,6 +1220,353 @@ await group("protocol, failure, and cleanup safety", async () => {
       "codex",
       SESSION_A,
     );
+  });
+  await test("opt-in per-invocation result captures only projected token-usage notifications", async () => {
+    let fakeProcess = null;
+    const last = {
+      inputTokens: 7,
+      cachedInputTokens: 2,
+      outputTokens: 3,
+      reasoningOutputTokens: 1,
+      totalTokens: 10,
+      cacheWriteInputTokens: 0,
+      producerExtra: "must not pass through",
+    };
+    const total = {
+      inputTokens: 17,
+      cachedInputTokens: 4,
+      outputTokens: 5,
+      reasoningOutputTokens: 2,
+      totalTokens: 22,
+    };
+    const plan = (message, process) => {
+      fakeProcess = process;
+      if (message.method === "initialize") {
+        process.notification("server/status", { preview: PREVIEW_MARKER });
+        process.respond(message.id, initializeResponse());
+      } else if (message.method === "thread/list") {
+        if (!message.params.archived) {
+          process.respond(message.id, { data: [thread(NATIVE_A)], nextCursor: null });
+        } else {
+          process.notification(USAGE_NOTIFICATION_METHOD, {
+            threadId: NATIVE_B,
+            turnId: "turn-unrelated-001",
+            tokenUsage: { last, total },
+          });
+          process.notification(USAGE_NOTIFICATION_METHOD, {
+            threadId: NATIVE_A,
+            turnId: "turn-usage-001",
+            tokenUsage: { last, total, modelContextWindow: 128_000 },
+            prompt: PREVIEW_MARKER,
+            tools: [{ payload: STDOUT_MARKER }],
+          });
+          process.respond(message.id, { data: [], nextCursor: null });
+        }
+      }
+    };
+    const { adapter } = resolutionAdapter({ plan, captureUsageObservations: true });
+    const invocation = await adapter.resolveTargetSessionWithUsage({ runtime_id: "codex", session_identity: SESSION_A });
+    assertResolutionSuccess(invocation.result, "codex", SESSION_A);
+    assert.equal(fakeProcess.exited, true);
+    const event = invocation.usage_observation;
+    assert.notEqual(event, null);
+    assert.deepEqual(Object.keys(event).sort(), [
+      "aggregation", "coverage", "deduplication", "fast", "model", "notification_count",
+      "observed_at", "operation_window", "reasoning_effort", "runtime_version", "session_identity",
+      "source", "source_verification", "status", "token_usage", "turn_attribution",
+    ].sort());
+    assert.equal(event.status, "UNVERIFIED_USAGE_NOTIFICATION");
+    assert.equal(event.source_verification, "UNKNOWN");
+    assert.equal(event.runtime_version, "UNKNOWN");
+    assert.equal(event.coverage, "UNKNOWN");
+    assert.match(event.observed_at, /^\d{4}-\d\d-\d\dT/);
+    assert.match(event.operation_window.started_at, /^\d{4}-\d\d-\d\dT/);
+    assert.match(event.operation_window.finished_at, /^\d{4}-\d\d-\d\dT/);
+    assert.equal(event.session_identity, SESSION_A);
+    assert.equal(event.turn_attribution, "UNKNOWN");
+    assert.equal(event.deduplication, "NOT_PERFORMED");
+    assert.equal(event.aggregation, "LATEST_NOTIFICATION_ONLY_NO_SUM");
+    assert.equal(event.notification_count, 1);
+    assert.equal(event.model, "UNKNOWN");
+    assert.equal(event.reasoning_effort, "UNKNOWN");
+    assert.equal(event.fast, "UNKNOWN");
+    assert.deepEqual(event.token_usage, {
+      last: {
+        inputTokens: 7,
+        cachedInputTokens: 2,
+        outputTokens: 3,
+        reasoningOutputTokens: 1,
+        totalTokens: 10,
+        cacheWriteInputTokens: 0,
+      },
+      total: {
+        inputTokens: 17,
+        cachedInputTokens: 4,
+        outputTokens: 5,
+        reasoningOutputTokens: 2,
+        totalTokens: 22,
+      },
+    });
+    assert.equal(Object.isFrozen(event), true);
+    assert.equal(JSON.stringify(event).includes(PREVIEW_MARKER), false);
+    assert.equal(JSON.stringify(event).includes(STDOUT_MARKER), false);
+    assertNoLeak(event);
+    assert.equal(JSON.stringify(event).includes("producerExtra"), false);
+    assert.equal(JSON.stringify(event).includes("modelContextWindow"), false);
+    assert.equal(JSON.stringify(event).includes("turn-usage-001"), false);
+  });
+  await test("current-session usage result waits for thread/read identity confirmation", async () => {
+    const usage = {
+      inputTokens: 3,
+      cachedInputTokens: 1,
+      outputTokens: 2,
+      reasoningOutputTokens: 1,
+      totalTokens: 5,
+    };
+    const plan = (message, process) => {
+      if (message.method === "initialize") process.respond(message.id, initializeResponse());
+      else if (message.method === "thread/read") {
+        process.notification(USAGE_NOTIFICATION_METHOD, {
+          threadId: NATIVE_CURRENT,
+          turnId: "turn-current-session",
+          tokenUsage: { last: usage, total: usage, modelContextWindow: 64_000 },
+        });
+        process.respond(message.id, { thread: thread(NATIVE_CURRENT) });
+      }
+    };
+    const { adapter } = resolutionAdapter({ plan, captureUsageObservations: true });
+    const invocation = await adapter.resolveCurrentSessionWithUsage({ runtime_id: "codex" });
+    assertResolutionSuccess(invocation.result, "codex", SESSION_CURRENT);
+    assert.equal(invocation.usage_observation.status, "UNVERIFIED_USAGE_NOTIFICATION");
+    assert.equal(invocation.usage_observation.session_identity, SESSION_CURRENT);
+    assert.equal(invocation.usage_observation.token_usage.last.inputTokens, 3);
+    assert.equal(JSON.stringify(invocation).includes(NATIVE_CURRENT), false);
+    assert.equal(JSON.stringify(invocation).includes("turn-current-session"), false);
+  });
+  await test("manual-resume opt-in result includes usage only for its invocation", async () => {
+    const zeroUsage = {
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      reasoningOutputTokens: 0,
+      totalTokens: 0,
+    };
+    const plan = (message, process) => {
+      if (message.method === "initialize") process.respond(message.id, initializeResponse());
+      else if (message.method === "thread/list") {
+        process.respond(message.id, {
+          data: message.params.archived ? [] : [thread(NATIVE_A)],
+          nextCursor: null,
+        });
+      } else if (message.method === "thread/resume") {
+        process.notification(USAGE_NOTIFICATION_METHOD, {
+          threadId: NATIVE_A,
+          turnId: "turn-usage-resume",
+          tokenUsage: { last: zeroUsage, total: zeroUsage, modelContextWindow: null },
+          toolPayload: STDERR_MARKER,
+        });
+        process.respond(message.id, resumeResponse(NATIVE_A));
+      }
+    };
+    const { executor: action } = executor({
+      plan,
+      captureUsageObservations: true,
+    });
+    const invocation = await action.resolveAndResumeWithUsage(actionRequest());
+    assertActionSuccess(invocation.result);
+    const event = invocation.usage_observation;
+    assert.notEqual(event, null);
+    assert.equal(event.status, "UNVERIFIED_USAGE_NOTIFICATION");
+    assert.deepEqual(event.token_usage, { last: zeroUsage, total: zeroUsage });
+    assert.equal(event.session_identity, SESSION_A);
+    assert.equal(event.turn_attribution, "UNKNOWN");
+    assert.equal(JSON.stringify(event).includes(STDERR_MARKER), false);
+    assertNoLeak(event);
+  });
+  await test("no usage notification is per-invocation UNKNOWN coverage, not zero usage", async () => {
+    const plan = (message, process) => {
+      if (message.method === "initialize") process.respond(message.id, initializeResponse());
+      else if (message.method === "thread/list") {
+        if (!message.params.archived) {
+          process.respond(message.id, { data: [thread(NATIVE_A)], nextCursor: null });
+        } else {
+          process.respond(message.id, { data: [], nextCursor: null });
+        }
+      }
+    };
+    const { adapter } = resolutionAdapter({
+      plan,
+      captureUsageObservations: true,
+    });
+    const invocation = await adapter.resolveTargetSessionWithUsage({ runtime_id: "codex", session_identity: SESSION_A });
+    assertResolutionSuccess(invocation.result, "codex", SESSION_A);
+    const event = invocation.usage_observation;
+    assert.equal(event.status, "NO_NOTIFICATION_OBSERVED");
+    assert.equal(event.coverage, "UNKNOWN");
+    assert.equal(event.notification_count, 0);
+    assert.equal(event.token_usage, null);
+  });
+  await test("malformed modelContextWindow is rejected without exposing usage", async () => {
+    const usage = {
+      inputTokens: 7,
+      cachedInputTokens: 0,
+      outputTokens: 1,
+      reasoningOutputTokens: 0,
+      totalTokens: 8,
+    };
+    const plan = (message, process) => {
+      if (message.method === "initialize") process.respond(message.id, initializeResponse());
+      else if (message.method === "thread/list") {
+        if (!message.params.archived) process.respond(message.id, { data: [thread(NATIVE_A)], nextCursor: null });
+        else {
+          process.notification(USAGE_NOTIFICATION_METHOD, {
+            threadId: NATIVE_A,
+            turnId: "turn-bad-context-window",
+            tokenUsage: { last: usage, total: usage, modelContextWindow: "128K" },
+          });
+          process.respond(message.id, { data: [], nextCursor: null });
+        }
+      }
+    };
+    const { adapter } = resolutionAdapter({ plan, captureUsageObservations: true });
+    const invocation = await adapter.resolveTargetSessionWithUsage({ runtime_id: "codex", session_identity: SESSION_A });
+    assertResolutionSuccess(invocation.result, "codex", SESSION_A);
+    assert.equal(invocation.usage_observation.status, "UNKNOWN_INVALID_COUNTERS");
+    assert.equal(invocation.usage_observation.token_usage, null);
+  });
+  await test("usage notification pre-target buffer overflow reports UNKNOWN coverage", async () => {
+    const usage = {
+      inputTokens: 1,
+      cachedInputTokens: 0,
+      outputTokens: 1,
+      reasoningOutputTokens: 0,
+      totalTokens: 2,
+    };
+    const plan = (message, process) => {
+      if (message.method === "initialize") process.respond(message.id, initializeResponse());
+      else if (message.method === "thread/list") {
+        if (!message.params.archived) {
+          for (let index = 0; index < 129; index += 1) {
+            process.notification(USAGE_NOTIFICATION_METHOD, {
+              threadId: NATIVE_A,
+              turnId: `turn-buffer-${index}`,
+              tokenUsage: { last: usage, total: usage },
+            });
+          }
+          process.respond(message.id, { data: [thread(NATIVE_A)], nextCursor: null });
+        } else {
+          process.respond(message.id, { data: [], nextCursor: null });
+        }
+      }
+    };
+    const { adapter } = resolutionAdapter({ plan, captureUsageObservations: true });
+    const invocation = await adapter.resolveTargetSessionWithUsage({ runtime_id: "codex", session_identity: SESSION_A });
+    assertResolutionSuccess(invocation.result, "codex", SESSION_A);
+    assert.equal(invocation.usage_observation.status, "UNKNOWN_NOTIFICATION_COVERAGE");
+    assert.equal(invocation.usage_observation.coverage, "UNKNOWN");
+    assert.equal(invocation.usage_observation.notification_count, "UNKNOWN");
+    assert.equal(invocation.usage_observation.token_usage, null);
+    assert.equal(JSON.stringify(invocation).includes(NATIVE_A), false);
+    assert.equal(JSON.stringify(invocation).includes("turn-buffer-"), false);
+  });
+  await test("a later unsupported invocation cannot inherit an earlier invocation's usage", async () => {
+    const usage = {
+      inputTokens: 7,
+      cachedInputTokens: 0,
+      outputTokens: 1,
+      reasoningOutputTokens: 0,
+      totalTokens: 8,
+    };
+    const plan = (message, process) => {
+      if (message.method === "initialize") process.respond(message.id, initializeResponse());
+      else if (message.method === "thread/list") {
+        if (!message.params.archived) process.respond(message.id, { data: [thread(NATIVE_A)], nextCursor: null });
+        else {
+          process.notification(USAGE_NOTIFICATION_METHOD, {
+            threadId: NATIVE_A,
+            turnId: "turn-sequential-001",
+            tokenUsage: { last: usage, total: usage },
+          });
+          process.respond(message.id, { data: [], nextCursor: null });
+        }
+      }
+    };
+    const { adapter, runner } = resolutionAdapter({ plan, captureUsageObservations: true });
+    const invocationA = await adapter.resolveTargetSessionWithUsage({ runtime_id: "codex", session_identity: SESSION_A });
+    assertResolutionSuccess(invocationA.result, "codex", SESSION_A);
+    assert.equal(invocationA.usage_observation.token_usage.last.inputTokens, 7);
+
+    const invocationB = await adapter.resolveTargetSessionWithUsage({ runtime_id: "other", session_identity: SESSION_A });
+    assertResolutionFailure(invocationB.result, "runtime_unsupported");
+    assert.equal(invocationB.usage_observation.status, "UNKNOWN_NO_CAPTURE");
+    assert.equal(invocationB.usage_observation.session_identity, "UNKNOWN");
+    assert.equal(invocationB.usage_observation.token_usage, null);
+    assert.equal(runner.ledger.processes.length, 1);
+  });
+  await test("concurrent opt-in invocations retain their own usage after out-of-order completion", async () => {
+    const usageA = { inputTokens: 7, cachedInputTokens: 0, outputTokens: 1, reasoningOutputTokens: 0, totalTokens: 8 };
+    const usageB = { inputTokens: 11, cachedInputTokens: 0, outputTokens: 2, reasoningOutputTokens: 1, totalTokens: 13 };
+    let targetAResponsePending = false;
+    let targetBCompletedBeforeA = false;
+    const plan = (message, process) => {
+      if (message.method === "initialize") process.respond(message.id, initializeResponse());
+      else if (message.method === "thread/list") {
+        if (!message.params.archived) {
+          const currentTarget = process.targetNativeId;
+          if (currentTarget === undefined) {
+            process.targetNativeId = process.planTargetNativeId;
+          }
+          process.respond(message.id, { data: [thread(process.targetNativeId)], nextCursor: null });
+        } else {
+          const isA = process.targetNativeId === NATIVE_A;
+          process.notification(USAGE_NOTIFICATION_METHOD, {
+            threadId: process.targetNativeId,
+            turnId: isA ? "turn-concurrent-A" : "turn-concurrent-B",
+            tokenUsage: { last: isA ? usageA : usageB, total: isA ? usageA : usageB },
+          });
+          const respond = () => process.respond(message.id, { data: [], nextCursor: null });
+          if (isA) {
+            targetAResponsePending = true;
+            setTimeout(() => {
+              targetAResponsePending = false;
+              respond();
+            }, 20);
+          } else {
+            targetBCompletedBeforeA = targetAResponsePending;
+            respond();
+          }
+        }
+      }
+    };
+    const runner = makeRunner(plan);
+    const originalSpawn = runner.spawnAppServer;
+    runner.spawnAppServer = args => {
+      const process = originalSpawn(args);
+      process.planTargetNativeId = runner.ledger.processes.length === 1 ? NATIVE_A : NATIVE_B;
+      return process;
+    };
+    const factory = createPendingHandoffCodexSessionResolutionAdapter({
+      currentSessionObserver: () => NATIVE_CURRENT,
+      sessionIdentityDeriver: deriverWith(),
+      spawnAppServer: runner.spawnAppServer,
+      captureUsageObservations: true,
+    });
+    assert.equal(factory.ok, true);
+    const adapter = factory.value;
+    const [resultA, resultB] = await Promise.all([
+      adapter.resolveTargetSessionWithUsage({ runtime_id: "codex", session_identity: SESSION_A }),
+      adapter.resolveTargetSessionWithUsage({ runtime_id: "codex", session_identity: SESSION_B }),
+    ]);
+    assertResolutionSuccess(resultA.result, "codex", SESSION_A);
+    assertResolutionSuccess(resultB.result, "codex", SESSION_B);
+    assert.equal(targetBCompletedBeforeA, true);
+    assert.equal(resultA.usage_observation.token_usage.last.inputTokens, 7);
+    assert.equal(resultA.usage_observation.session_identity, SESSION_A);
+    assert.equal(resultA.usage_observation.status, "UNVERIFIED_USAGE_NOTIFICATION");
+    assert.equal(resultB.usage_observation.token_usage.last.inputTokens, 11);
+    assert.equal(resultB.usage_observation.session_identity, SESSION_B);
+    assert.equal(resultB.usage_observation.status, "UNVERIFIED_USAGE_NOTIFICATION");
+    assert.equal(Object.hasOwn(adapter, "getUsageObservation"), false);
   });
   await test("malformed JSON, envelope, mismatched ID, and non-zero exit fail closed", async () => {
     const malformedJson = (message, process) => {
