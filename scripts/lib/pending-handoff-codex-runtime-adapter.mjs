@@ -75,9 +75,18 @@ const RESUME_RESPONSE_KEYS = Object.freeze([
   "thread",
 ]);
 const RESUME_OPTIONAL_KEYS = Object.freeze([
+  // Codex 0.159.2 also serializes optional fields from its experimental schema.
+  "activePermissionProfile",
+  "collaborationMode",
+  "disabledPluginIds",
+  "initialTurnsPage",
   "instructionSources",
+  "itemsBackwardsCursor",
+  "multiAgentMode",
   "reasoningEffort",
+  "runtimeWorkspaceRoots",
   "serviceTier",
+  "turnsBackwardsCursor",
 ]);
 const UUID_V4_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const RUNTIME_ID_PATTERN = /^[a-z][a-z0-9-]{0,31}$/;
@@ -681,7 +690,9 @@ function createJsonRpcClient(processLike, usageCapture = null) {
       rejectAll("protocol_invalid");
       return;
     }
-    if (!isPlainObject(message) || message.jsonrpc !== "2.0") {
+    // Codex app-server stdio can omit the version from incoming envelopes.
+    if (!isPlainObject(message)
+      || (Object.hasOwn(message, "jsonrpc") && message.jsonrpc !== "2.0")) {
       rejectAll("protocol_invalid");
       return;
     }
