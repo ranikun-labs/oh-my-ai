@@ -117,6 +117,59 @@ for (const duplicateValue of ["YES", "NO"]) {
   assert.ok(result.errors.some((error) => error.includes("must not repeat required header: 실제 참여")));
 }
 
+const participantSummary = [
+  "- 관측 범위: complete",
+  "- 확인된 참여자 수: 1",
+  "- 전체 참여자 수: 1",
+].join("\n");
+const participantExampleLines = participantSummary.replace(/^- /gmu, "").split("\n");
+const inlineFormattedParticipantSummary = participantSummary.replace("complete", "`complete`").replaceAll(": 1", ": `1`");
+const completeAiStatusOptions = { observedParticipants: ["Main"], observationCoverage: "complete" };
+for (const prefix of ["", "    ", "\t", "2. "]) {
+  const exampleParticipantSummary = [
+    "예시 ``",
+    prefix + "설명 줄",
+    ...participantExampleLines,
+    "``",
+  ].join("\n");
+  const exampleOnly = validateAiStatus(
+    mainOnlyAiStatus.replace(participantSummary, exampleParticipantSummary),
+    completeAiStatusOptions,
+  );
+  assert.equal(exampleOnly.valid, false, "a multiline inline code example cannot supply participant summary labels");
+  assert.ok(exampleOnly.errors.some((error) => error.includes("exactly one observation coverage line")));
+  assert.ok(exampleOnly.errors.some((error) => error.includes("one numeric confirmed participant count")));
+  assert.ok(exampleOnly.errors.some((error) => error.includes("exactly one total participant count")));
+
+  const exampleWithVisibleSummary = validateAiStatus(
+    mainOnlyAiStatus.replace(participantSummary, [exampleParticipantSummary, inlineFormattedParticipantSummary].join("\n\n")),
+    completeAiStatusOptions,
+  );
+  assert.equal(exampleWithVisibleSummary.valid, true, exampleWithVisibleSummary.errors.join("; "));
+}
+
+for (const exampleMarker of ["", "- "]) {
+  const summaryWithCodeValues = participantSummary.replace("complete", "``complete``");
+  const followingListItems = [exampleMarker + "예시 ``", "    설명 줄", summaryWithCodeValues].join("\n");
+  const visibleSummaryAfterProse = validateAiStatus(
+    mainOnlyAiStatus.replace(participantSummary, followingListItems),
+    completeAiStatusOptions,
+  );
+  assert.equal(visibleSummaryAfterProse.valid, true, visibleSummaryAfterProse.errors.join("; "));
+}
+
+const exampleInListFence = [
+  "- 예시 ```",
+  "    ```text",
+  ...participantExampleLines.map((line) => "    " + line),
+  "    ```",
+].join("\n");
+const listFenceWithVisibleSummary = validateAiStatus(
+  mainOnlyAiStatus.replace(participantSummary, [exampleInListFence, participantSummary].join("\n\n")),
+  completeAiStatusOptions,
+);
+assert.equal(listFenceWithVisibleSummary.valid, true, listFenceWithVisibleSummary.errors.join("; "));
+
 const mainParticipantTable = mainOnlyAiStatus.slice(mainOnlyAiStatus.indexOf("| Agent ID")).trimEnd();
 const [participantHeader, participantDelimiter, mainParticipantRow] = mainParticipantTable.split("\n");
 const exampleHeader = `| ${Array.from({ length: 11 }, (_, index) => `Example ${index + 1}`).join(" | ")} |`;
@@ -582,6 +635,17 @@ expectInvalid(
   twoSpaceFakeNativeInMultilineCode,
   "Native Test must have exactly one explicit status line"
 );
+for (const indentation of ["    ", "\t"]) {
+  const fakeNativeAfterIndent = fakeNativeInMultilineCode.replace(
+    "Native Test: PASS — node fake.mjs 1/1",
+    indentation + "The example continues.\nNative Test: PASS — node fake.mjs 1/1",
+  );
+  expectInvalid(
+    "a multiline inline code example continues across an indented line",
+    fakeNativeAfterIndent,
+    "Native Test must have exactly one explicit status line",
+  );
+}
 const fakePassingStatusLines = [
   "Native Test: PASS — node fake.mjs 1/1",
   "CI: PASS — https://example.invalid/fake-run",
@@ -609,6 +673,14 @@ expectInvalid(
 
 const htmlPreBacktick = String.fromCharCode(96);
 const ciLine = "- CI: NOT_RUN — 이 로컬 실행에서는 CI를 호출하지 않았다.";
+const visibleCiAfterListFence = validateF1Report(validReport.replace(ciLine, [
+  "- Example ```",
+  "    ```text",
+  "    CI: PASS — https://example.invalid/quoted-run",
+  "    ```",
+  ciLine,
+].join("\n")));
+assert.equal(visibleCiAfterListFence.valid, true, visibleCiAfterListFence.errors.join("; "));
 const unclosedBeforeStatus = validReport.replace(
   ciLine,
   "- CI: " + htmlPreBacktick + "PASS — https://example.invalid/fake-run"
@@ -799,7 +871,7 @@ const hiddenFieldCases = [
     name: "multiline inline code",
     report: validReport.replace(
       "- 현재 사용자 기능: 사용자는 F1 보고서 필수 절과 다섯 Gate 상태의 구조를 확인할 수 있다.",
-      "문자열 " + backtick + "\n- 현재 사용자 기능: hidden\n" + backtick + " 안의 예시"
+      "문자열 " + backtick + "\n현재 사용자 기능: hidden\n" + backtick + " 안의 예시"
     ),
     missingLabel: "현재 사용자 기능"
   }

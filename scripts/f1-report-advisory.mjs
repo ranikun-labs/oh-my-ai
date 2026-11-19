@@ -40,7 +40,7 @@ const HTML_ATTRIBUTE = "[ \\t]+[A-Za-z_:][A-Za-z0-9_.:-]*(?:[ \\t]*=[ \\t]*(?:\"
 const STANDALONE_HTML_TAG = new RegExp(`^ {0,3}(?:</${HTML_TAG_NAME}[ \\t]*>|<${HTML_TAG_NAME}(?:${HTML_ATTRIBUTE})*[ \\t]*/?>)[ \\t]*$`, "u");
 const THEMATIC_BREAK = /^ {0,3}(?:\*(?:[ \t]*\*){2,}|-(?:[ \t]*-){2,}|_(?:[ \t]*_){2,})[ \t]*$/u;
 const SETEXT_UNDERLINE = /^ {0,3}(?:=+|-+)[ \t]*$/u;
-const MARKDOWN_LIST_ITEM = /^ {0,3}(?:[-+*]|\d{1,9}[.)])[ \t]{1,4}(?=\S)/u;
+const MARKDOWN_LIST_ITEM = /^ {0,3}([-+*]|\d{1,9}[.)])[ \t]{1,4}(?=\S)/u;
 
 const EVIDENCE_STATUSES = new Set(["PASS", "FAIL", "NOT_RUN", "BLOCKED", "UNKNOWN"]);
 const OWNER_STATUSES = new Set(["APPROVED", "PENDING", "BLOCKED", "UNKNOWN", "NOT_REQUIRED"]);
@@ -167,17 +167,23 @@ function findRawHtmlBlockEnd(line) {
   return null;
 }
 
-function findClosingBacktickRun(lines, startLine, startColumn, runLength) {
+function findClosingBacktickRun(lines, startLine, startColumn, runLength, listIndent) {
   const backtick = String.fromCharCode(96);
 
   for (let lineIndex = startLine; lineIndex < lines.length; lineIndex += 1) {
     const line = lines[lineIndex];
-    if (lineIndex > startLine
-      && (line.trim().length === 0
-        || isIndentedCodeLine(line)
-        || parseFenceStart(line) !== null
-        || isAtxHeadingLine(line))) {
-      return null;
+    if (lineIndex > startLine) {
+      const blockLine = relativeListLine(line, listIndent);
+      const marker = MARKDOWN_LIST_ITEM.exec(blockLine)?.[1];
+      // Any sibling item ends the current item. An ordered list entering a
+      // paragraph can interrupt it only when it starts at one.
+      const startsListItem = marker !== undefined
+        && (/^(?:[-+*]|0*1[.)])$/u.test(marker) || leadingIndentation(line).columns < listIndent);
+      // Indent alone continues a paragraph. Fences and headings can end it.
+      if (line.trim().length === 0 || startsListItem
+        || parseFenceStart(blockLine) !== null || isAtxHeadingLine(blockLine)) {
+        return null;
+      }
     }
 
     let cursor = lineIndex === startLine ? startColumn : 0;
@@ -341,7 +347,7 @@ function visibleMarkdownLines(markdown, statusEvidenceOnly = false) {
       }
 
       if (inlineCodeDelimiterLength > 0) {
-        const close = findClosingBacktickRun(sourceLines, lineIndex, cursor, inlineCodeDelimiterLength);
+        const close = findClosingBacktickRun(sourceLines, lineIndex, cursor, inlineCodeDelimiterLength, listIndent);
         if (close !== null && close.lineIndex === lineIndex) {
           visible += line.slice(cursor, close.end);
           cursor = close.end;
@@ -356,7 +362,7 @@ function visibleMarkdownLines(markdown, statusEvidenceOnly = false) {
 
       if (line[cursor] === backtick && !isEscapedAt(line, cursor)) {
         const runLength = backtickRunLength(line, cursor);
-        const close = findClosingBacktickRun(sourceLines, lineIndex, cursor + runLength, runLength);
+        const close = findClosingBacktickRun(sourceLines, lineIndex, cursor + runLength, runLength, listContexts.at(-1)?.indent ?? 0);
         if (close !== null) {
           if (close.lineIndex === lineIndex) {
             const inlineCode = line.slice(cursor, close.end);
@@ -585,9 +591,14 @@ function readAiStatusTable(lines, errors) {
   return table;
 }
 
-function findAiStatusLabel(sectionBody, label) {
-  const pattern = new RegExp(`^[ \\t]*(?:[-*][ \\t]*)?${label}[ \\t]*:[ \\t]*(.*)$`, "gimu");
-  return [...String(sectionBody).matchAll(pattern)].map((match) => match[1].trim().replaceAll("`", ""));
+function findAiStatusLabel(lines, label) {
+  const pattern = new RegExp(`^[ \\t]*(?:[-*][ \\t]*)?${label}[ \\t]*:[ \\t]*(.*)$`, "iu");
+  return lines.flatMap(({ text, fieldText }) => {
+    // Locate the label outside code, but preserve inline formatting in its value.
+    if (!pattern.test(fieldText)) return [];
+    const match = pattern.exec(text);
+    return match ? [match[1].trim().replaceAll("`", "")] : [];
+  });
 }
 
 function normalizeParticipantId(participant) {
@@ -605,8 +616,8 @@ function validateAiStatus(markdown, options = {}) {
     errors.push(`duplicate AI status section: ## ${AI_STATUS_SECTION}`);
   }
 
-  const section = sectionScan.sections.get(AI_STATUS_SECTION);
-  if (section === undefined) {
+  const lines = sectionScan.fieldSections.get(AI_STATUS_SECTION);
+  if (lines === undefined) {
     errors.push(`missing required section: ## ${AI_STATUS_SECTION}`);
     return { valid: false, errors, scope: "AI_STATUS_ONLY" };
   }
@@ -616,14 +627,14 @@ function validateAiStatus(markdown, options = {}) {
     errors.push("observationCoverage must be complete, partial, or unknown");
   }
 
-  const coverageLabels = findAiStatusLabel(section, "관측 범위");
+  const coverageLabels = findAiStatusLabel(lines, "관측 범위");
   if (coverageLabels.length !== 1) {
     errors.push("AI status must have exactly one observation coverage line");
   } else if (coverageLabels[0].toLowerCase() !== String(coverage).toLowerCase()) {
     errors.push(`AI status observation coverage must match the supplied value: ${coverage}`);
   }
 
-  const table = readAiStatusTable(sectionScan.fieldSections.get(AI_STATUS_SECTION), errors);
+  const table = readAiStatusTable(lines, errors);
   if (!table) {
     return { valid: false, errors, scope: "AI_STATUS_ONLY" };
   }
@@ -688,14 +699,14 @@ function validateAiStatus(markdown, options = {}) {
     errors.push("complete AI status coverage cannot include UNKNOWN participation rows");
   }
 
-  const confirmedCounts = findAiStatusLabel(section, "확인된 참여자 수");
+  const confirmedCounts = findAiStatusLabel(lines, "확인된 참여자 수");
   if (confirmedCounts.length !== 1 || !/^\d+$/u.test(confirmedCounts[0])) {
     errors.push("AI status must have one numeric confirmed participant count");
   } else if (Number(confirmedCounts[0]) !== participantIds.length) {
     errors.push("AI status confirmed participant count must match participant table rows");
   }
 
-  const totalCounts = findAiStatusLabel(section, "전체 참여자 수");
+  const totalCounts = findAiStatusLabel(lines, "전체 참여자 수");
   if (totalCounts.length !== 1) {
     errors.push("AI status must have exactly one total participant count");
   } else if (coverage === "complete") {
