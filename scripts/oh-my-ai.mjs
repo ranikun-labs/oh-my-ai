@@ -12,7 +12,11 @@ import {
   resolveCheckpoint,
 } from "./lib/context-checkpoint-state.mjs";
 import { rememberWorkStartExecution } from "./lib/work-start-execution-state.mjs";
+import { appendHookFailure } from "./lib/hook-failure-state.mjs";
 import { handleJiraTicketRuntimeInput } from "./lib/jira-ticket-runtime-entry.mjs";
+import { formatWorkStateObservationView } from "./lib/work-state-observation-view.mjs";
+import { formatWorkTree } from "./lib/work-tree-view.mjs";
+import { jiraObservations } from "./lib/jira-observations.mjs";
 
 const args = process.argv.slice(2);
 const command = args[0];
@@ -25,6 +29,8 @@ if (command === "hook") {
   runWorkStart(args.slice(1));
 } else if (command === "jira-ticket") {
   runJiraTicket(args.slice(1));
+} else if (command === "work-view") {
+  runWorkView(args.slice(1));
 } else {
   usage(command ? `unknown command: ${command}` : "");
 }
@@ -51,6 +57,38 @@ function runJiraTicket(args) {
     process.stderr.write(`jira-ticket runtime protocol failed: ${error.message}\n`);
     process.exit(2);
   }
+}
+
+function runWorkView(args) {
+  if (!(args.length === 1 && args[0] === "--stdin-json") && !(args.length === 2 && args[0] === "--stdin-json" && ["--relations", "--jira-observations"].includes(args[1]))) {
+    process.stderr.write("usage: oh-my-ai work-view --stdin-json [--relations|--jira-observations]\n");
+    process.exit(2);
+  }
+
+  let input;
+  try {
+    input = JSON.parse(readWorkViewStdin());
+  } catch (error) {
+    if (error.code === "WORK_VIEW_INPUT_TOO_LARGE") {
+      process.stderr.write("work-view input exceeds 8388608 bytes\n");
+      process.exit(2);
+    }
+    process.stderr.write("work-view input must be valid JSON\n");
+    process.exit(2);
+  }
+
+  let view;
+  try {
+    if (args[1] === "--jira-observations") {
+      const normalized = jiraObservations(input.issues, input.observed_at);
+      view = `조회 범위: PARTIAL — 수동 제공 관찰이며 Jira 자동 조회가 아닙니다.\n입력 범위 밖의 지원 관계(Parent·Blocks·Relates) 관찰: ${normalized.omitted_relation_observations}건; 표시하지 않은 기타 링크 관찰: ${normalized.unsupported_link_observations}건. 관찰 횟수이며 고유 관계 건수나 미조회 데이터 전체가 아닙니다.\n\n${formatWorkTree({items: normalized.items, relations: normalized.relations})}`;
+    } else view = args.length === 2 ? formatWorkTree(input) : formatWorkStateObservationView(input);
+  } catch (error) {
+    process.stderr.write(`work-view input invalid: ${error.message}\n`);
+    process.exit(2);
+  }
+
+  process.stdout.write(`${view}\n`);
 }
 
 function runWorkStart(args) {
@@ -84,12 +122,15 @@ function runWorkStart(args) {
   const status = result.status ?? 1;
   if (status === 0) {
     const execution = workStartExecutionContext();
-    rememberWorkStartExecution(
+    const persistence = rememberWorkStartExecution(
       process.cwd(),
       execution.runtime,
       execution.sessionId,
       task,
     );
+    if (persistence.errorCode) {
+      process.stderr.write(`work-start execution state was not saved: state_error_code=${persistence.errorCode}\n`);
+    }
   }
   process.exit(status);
 }
@@ -148,14 +189,14 @@ function runHook(args) {
         : "";
 
   if (!format) {
-    logHookFailure({ runtime, eventName, reason: "unsupported runtime" });
+    logHookFailure({ runtime, eventName, errorCode: "hook_runtime_unsupported" });
     process.exit(0);
   }
 
   const repoRoot = findRepoRoot();
   const hookScript = path.join(repoRoot, "scripts", "prompt-routing-hook.mjs");
   if (!fs.existsSync(hookScript)) {
-    logHookFailure({ runtime, eventName, reason: "missing prompt-routing-hook.mjs", repoRoot });
+    logHookFailure({ runtime, eventName, errorCode: "hook_routing_script_missing" });
     process.exit(0);
   }
 
@@ -174,8 +215,7 @@ function runHook(args) {
     logHookFailure({
       runtime,
       eventName,
-      reason: result.error ? result.error.message : `exit ${result.status}`,
-      stderr: result.stderr,
+      errorCode: childHookFailureCode(result),
     });
   }
 
@@ -188,7 +228,7 @@ function sessionStartBacklog() {
   try {
     return fs.existsSync(backlog) ? fs.readFileSync(backlog, "utf8") : "";
   } catch (error) {
-    logHookFailure({ runtime: "claude", eventName: "SessionStart", reason: error.message });
+    logHookFailure({ runtime: "claude", eventName: "SessionStart", errorCode: "hook_backlog_read_failed" });
     return "";
   }
 }
@@ -321,6 +361,23 @@ function contextCheckpointUsage() {
   process.exit(2);
 }
 
+function readWorkViewStdin() {
+  const limit = 8 * 1024 * 1024;
+  const buffer = Buffer.allocUnsafe(limit + 1);
+  let total = 0;
+  while (true) {
+    const count = fs.readSync(0, buffer, total, buffer.length - total, null);
+    if (count === 0) break;
+    total += count;
+    if (total > limit) {
+      const error = new Error("work-view input too large");
+      error.code = "WORK_VIEW_INPUT_TOO_LARGE";
+      throw error;
+    }
+  }
+  return buffer.toString("utf8", 0, total);
+}
+
 function readStdin() {
   try {
     return fs.readFileSync(0, "utf8");
@@ -337,30 +394,24 @@ function findRepoRoot() {
 }
 
 function logHookFailure(details) {
-  const repoRoot = safeRepoRoot();
-  const entry = {
-    ts: new Date().toISOString(),
-    source: "oh-my-ai",
-    ...details,
-  };
-
-  for (const file of hookFailureLogCandidates(repoRoot)) {
-    try {
-      fs.mkdirSync(path.dirname(file), { recursive: true });
-      fs.appendFileSync(file, JSON.stringify(entry) + "\n", "utf8");
-      return;
-    } catch {
-      // Hook diagnostics must never block prompt submission.
-    }
-  }
+  appendHookFailure(
+    safeRepoRoot(),
+    details.runtime,
+    details.eventName,
+    details.errorCode || "hook_failure_unknown",
+    { productCwd: process.cwd() },
+  );
 }
 
-function hookFailureLogCandidates(repoRoot) {
-  const stateHome = process.env.XDG_STATE_HOME || path.join(process.env.HOME || "", ".local", "state");
-  return [
-    path.join(stateHome, "oh-my-ai", "hook-failures.log"),
-    path.join(repoRoot, ".oh-my-ai", "state", "hook-failures.log"),
-  ];
+function childHookFailureCode(result) {
+  if (result.error) {
+    const knownCode = new Set(["EACCES", "E2BIG", "ENOENT", "EPERM", "ETIMEDOUT"]);
+    const code = knownCode.has(result.error.code) ? result.error.code.toLowerCase() : "unknown";
+    return `hook_child_${code}`;
+  }
+  return Number.isSafeInteger(result.status)
+    ? `hook_child_exit_${result.status}`
+    : "hook_child_status_unknown";
 }
 
 function safeRepoRoot() {
@@ -377,5 +428,6 @@ function usage(error) {
   process.stderr.write("       oh-my-ai context-checkpoint <status|handoff-preflight|resolve> ...\n");
   process.stderr.write("       oh-my-ai work-start -- <task>\n");
   process.stderr.write("       oh-my-ai jira-ticket --json <runtime-protocol-json>\n");
+  process.stderr.write("       oh-my-ai work-view --stdin-json [--relations|--jira-observations]\n");
   process.exit(error ? 2 : 0);
 }

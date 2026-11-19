@@ -50,6 +50,8 @@ Use accepted decisions and canonical accepted Git sources for product and archit
 
 Verify the current approved Objective or request scope and the exact target and fields it covers. Resolve who may mutate the record from the accepted task/Owner authority and authoritative target or workspace permission context; never infer record ownership or write authority from a Jira assignee, creator, last editor, page label, or directory name. A connected API permission is necessary capability evidence, not user approval. If authority, scope, or target custody is unclear, keep the result read-only and identify the exact missing decision.
 
+For Confluence, use the page's purpose, audience, owner, and hierarchy to choose the target. Update an existing detail page for changes to the same procedure or evidence. Update a parent summary only when a milestone, decision, or status changes, and link to the supporting detail. If a separate long-lived record is needed, propose its title, owner, source revision, and parent link through the existing page creation workflow. Refer canonical contract changes to the responsible Writer or Owner. Keep ambiguous, duplicate, or unverified records read-only.
+
 ## 2. Prepare an exact proposal
 
 Show the target and each proposed field change as current value → proposed value, with the reason and source evidence. Include the live target version and separate verified facts from assumptions. Propose only fields within the existing approved scope. Do not update unspecified fields or silently turn a Confluence projection into a product decision.

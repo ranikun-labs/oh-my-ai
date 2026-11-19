@@ -345,6 +345,41 @@ await test("adapter acceptance is recorded as accepted, never completed", async 
   assertFailure(await service.reserveAttempt({ identity: { ...IDENTITY, attempt_id: ATTEMPT_B } }), "manual_resume_attempt_recovery_required");
 });
 
+await test("duplicate or stale adapter acceptance cannot overwrite the accepted Attempt", async () => {
+  const fixture = createCasFixtureStore();
+  const service = fixture.createService();
+  const reserved = await service.reserveAttempt({ identity: IDENTITY });
+  const bound = await service.bindClaim({
+    identity: IDENTITY,
+    expected_attempt_revision: reserved.value.revision,
+    claim_revision: 5,
+  });
+  const started = await service.markDispatchStarted({
+    identity: IDENTITY,
+    expected_attempt_revision: bound.value.revision,
+    claim_revision: 5,
+  });
+  const accepted = await service.recordValidatedAdapterAcceptance({
+    identity: IDENTITY,
+    expected_attempt_revision: started.value.revision,
+    adapter_version: "fixture-adapter-v1",
+  });
+  assert.equal(accepted.value.status, "accepted");
+
+  assertFailure(await service.recordValidatedAdapterAcceptance({
+    identity: IDENTITY,
+    expected_attempt_revision: started.value.revision,
+    adapter_version: "stale-fixture-adapter-v0",
+  }), "manual_resume_attempt_revision_conflict");
+  const latest = await service.readAttempt({
+    candidate_id: IDENTITY.candidate_id,
+    action_kind: IDENTITY.action_kind,
+  });
+  assert.equal(latest.value.revision, accepted.value.revision);
+  assert.equal(latest.value.status, "accepted");
+  assert.equal(latest.value.adapter_version, "fixture-adapter-v1");
+});
+
 await test("stale revision and mismatched Claim are rejected without mutation", async () => {
   const fixture = createCasFixtureStore();
   const service = fixture.createService();

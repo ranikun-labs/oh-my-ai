@@ -124,14 +124,14 @@ same reason.
 
 ## Hook Side Effect
 
-Unresolved issue:
+Current behavior:
 
-`prompt-routing-hook.mjs` can append to
-`.oh-my-ai/state/automation-candidates.log` when toil signals are detected.
-
-This means the prompt routing hook is not purely a routing/context injection
-layer. The side effect must be resolved or explicitly gated before expanding
-hook responsibilities.
+`prompt-routing-hook.mjs` stores hash-only toil candidates in
+`automation/candidates.json` under the Harness clone/worktree's user-local
+state namespace. Legacy records remain read-only; prompt routing writes no
+state into a Product worktree. `oh-my-ai.mjs` stores bounded Hook failure codes
+in `diagnostics/hook-failures.json` under the same user-local namespace; it
+does not persist stderr or use the old Product-tree fallback.
 
 ## Work-Start Artifact Risk
 

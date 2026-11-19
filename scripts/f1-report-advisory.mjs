@@ -495,6 +495,12 @@ function validateAiStatus(markdown, options = {}) {
     return { valid: false, errors, scope: "AI_STATUS_ONLY" };
   }
 
+  for (const header of AI_STATUS_HEADERS) {
+    if (table.headers.filter((value) => value === header).length > 1) {
+      errors.push(`AI status table must not repeat required header: ${header}`);
+    }
+  }
+
   const headerIndexes = new Map(table.headers.map((header, index) => [header, index]));
   const indexOf = (header) => headerIndexes.get(header);
   const malformedRows = table.rows.filter((row) => row.length !== table.headers.length).length;
