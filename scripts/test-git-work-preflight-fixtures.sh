@@ -122,7 +122,7 @@ function validate(input) {
   const templateFields = [...new Set([...report.matchAll(/^- ([\p{L}][\p{L}\p{N} –-]+):/gmu)].map(([, field]) => field))].sort();
   const runtimeFields = [...new Set([...runtime.matchAll(/report_field '([^']+)'/g)].map(([, field]) => field))].sort();
   assertExact(runtimeFields, templateFields, "Runtime Report and Template field set");
-  for (const text of ["Repository Required", "Canonical Repository Required", "Push Remote Required", "Base Branch Required", "--repository", "--canonical-repository", "--push-remote", "--expected-base-branch", "--execution-policy", "--consumer", "status --short", "remote get-url", "ls-remote --heads", "Authoritative Canonical Base", "JSON.parse", "result_policy", "Process Exit Code", "pr list --repo", "headRefName", "baseRefName", "headRefOid", "Exact Canonical Merged PR terminal", "active gate deferred until PR terminal probe", "|| true"]) {
+  for (const text of ["Repository Required", "Canonical Repository Required", "Push Remote Required", "Base Branch Required", "--repository", "--canonical-repository", "--push-remote", "--expected-base-branch", "--execution-policy", "--consumer", "git-work-preflight-tree.mjs", "remote get-url", "ls-remote --heads", "Authoritative Canonical Base", "JSON.parse", "result_policy", "Process Exit Code", "pr list --repo", "headRefName", "baseRefName", "headRefOid", "Exact Canonical Merged PR terminal", "active gate deferred until PR terminal probe", "|| true"]) {
     invariant(runtime.includes(text), `runtime missing '${text}'`);
   }
   invariant(!runtime.includes("eval "), "runtime must not use eval");
@@ -207,7 +207,7 @@ const fixture = JSON.parse(fs.readFileSync(fixturePath, "utf8"));
 assert.equal(fixture.contract, "git-work-preflight-runtime-fixtures-v2");
 assert.deepEqual(
   fixture.scenarios.map(({ id }) => id),
-  ["actual-pushurl-aligned", "canonical-repository-identity", "redirect-alias-repository-identity", "verified-fork-repository-identity", "draft-pr-verified-fork", "unrelated-repository-identity", "malformed-feature-branch", "malformed-base-branch", "multiple-pushurls", "canonical-push-remote-split", "local-only-base-tip", "local-only-unique-commit", "canonical-base-push-cache-mismatch", "canonical-pr-collision", "draft-pr-key-order", "draft-pr-head-repository-mismatch", "draft-pr-head-repository-missing", "draft-pr-base-mismatch", "draft-pr-head-oid-mismatch", "merged-pr", "merged-pr-after-base-advanced", "merged-pr-association-mismatch", "merged-pr-feature-tip-advanced", "merged-pr-base-mismatch", "aligned", "clean-index-refresh", "hidden-unknown-untracked", "tracked-dirty-original", "tracked-dirty-with-unknown-untracked", "staged-dirty-status", "unmerged-dirty-status", "unmerged-both-added", "unmerged-both-deleted", "unmerged-and-tracked", "local-ahead", "remote-ahead", "diverged", "candidate-ancestor", "expected-canonical-base-mismatch", "github-unavailable", "multiple-prs", "report-newline-injection", "malformed-pr-json", "jira-association-unavailable", "jira-association-conflict", "remote-ahead-local-tip-already-in-base", "jira-association-unavailable-ancestor", "jira-association-matched-ancestor", "jira-association-conflicted-ancestor", "manual-review-ancestor", "stale-cached-feature-remote-ahead", "jira-work-missing-issue-key", "jira-work-valid-issue-key"],
+  ["actual-pushurl-aligned", "canonical-repository-identity", "redirect-alias-repository-identity", "verified-fork-repository-identity", "draft-pr-verified-fork", "unrelated-repository-identity", "malformed-feature-branch", "malformed-base-branch", "multiple-pushurls", "canonical-push-remote-split", "local-only-base-tip", "local-only-unique-commit", "canonical-base-push-cache-mismatch", "canonical-pr-collision", "draft-pr-key-order", "draft-pr-head-repository-mismatch", "draft-pr-head-repository-missing", "draft-pr-base-mismatch", "draft-pr-head-oid-mismatch", "merged-pr", "merged-pr-after-base-advanced", "merged-pr-association-mismatch", "merged-pr-feature-tip-advanced", "merged-pr-base-mismatch", "aligned", "clean-index-refresh", "hidden-unknown-untracked", "hidden-dirty-submodule", "nested-submodule-tracked", "nested-submodule-untracked", "clean-submodule-nested", "uninitialized-submodule", "malformed-submodule", "symlink-submodule", "outside-worktree-submodule", "cycle-submodule", "external-filter-submodule", "global-unused-filter-submodule", "malformed-submodule-with-dirty-root", "malformed-submodule-with-changed-gitlink", "malformed-submodule-with-staged-gitlink", "external-filter-root", "tracked-dirty-original", "tracked-dirty-with-unknown-untracked", "staged-dirty-status", "unmerged-dirty-status", "unmerged-both-added", "unmerged-both-deleted", "unmerged-and-tracked", "local-ahead", "remote-ahead", "diverged", "candidate-ancestor", "expected-canonical-base-mismatch", "github-unavailable", "multiple-prs", "report-newline-injection", "malformed-pr-json", "jira-association-unavailable", "jira-association-conflict", "remote-ahead-local-tip-already-in-base", "jira-association-unavailable-ancestor", "jira-association-matched-ancestor", "jira-association-conflicted-ancestor", "manual-review-ancestor", "stale-cached-feature-remote-ahead", "jira-work-missing-issue-key", "jira-work-valid-issue-key"],
 );
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "git-work-preflight-runtime-"));
@@ -287,7 +287,8 @@ function cleanGit(args, targetRepo = cleanRepo) {
 cleanGit(["init", "-q"]);
 const cleanTracked = path.join(cleanRepo, "same-content.txt");
 fs.writeFileSync(cleanTracked, "same bytes\n");
-cleanGit(["add", "same-content.txt"]);
+fs.writeFileSync(path.join(cleanRepo, ".gitattributes"), "same-content.txt filter=fixture\n");
+cleanGit(["add", "same-content.txt", ".gitattributes"]);
 cleanGit(["-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-qm", "base"]);
 const indexBeforeReadOnly = fs.readFileSync(path.join(cleanRepo, ".git", "index"));
 const changedTime = new Date(fs.statSync(cleanTracked).mtimeMs + 5000);
@@ -304,6 +305,105 @@ const untrackedIndex = fs.readFileSync(path.join(untrackedRepo, ".git", "index")
 const untrackedStatusArgs = ["--no-optional-locks", "status", "--short", "--ignored"];
 assert.equal(cleanGit(untrackedStatusArgs, untrackedRepo), "", "plain Git status must hide the untracked fixture");
 assert.equal(cleanGit([...untrackedStatusArgs, "--untracked-files=normal"], untrackedRepo), "?? unknown-writer-source.txt\n");
+
+const submoduleRepo = path.join(root, "hidden-dirty-submodule-repo");
+cleanGit(["clone", "-q", "--local", cleanRepo, submoduleRepo]);
+cleanGit(["-c", "protocol.file.allow=always", "submodule", "add", "-q", cleanRepo, "dependency"], submoduleRepo);
+cleanGit(["-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-qm", "add fixture submodule"], submoduleRepo);
+cleanGit(["config", "--local", "submodule.dependency.ignore", "all"], submoduleRepo);
+const completeStatusArgs = [...untrackedStatusArgs, "--untracked-files=normal", "--ignore-submodules=none"];
+assert.equal(cleanGit(completeStatusArgs, submoduleRepo), "", "a clean submodule must stay clean");
+const nestedTrackedPath = path.join(submoduleRepo, "dependency", path.basename(cleanTracked));
+const nestedTrackedContent = "uncommitted submodule work\n";
+fs.writeFileSync(nestedTrackedPath, nestedTrackedContent);
+assert.equal(cleanGit([...untrackedStatusArgs, "--untracked-files=normal"], submoduleRepo), "", "configured Git status must hide dirty submodule");
+assert.match(cleanGit(completeStatusArgs, submoduleRepo), /^ [mM] dependency\n$/);
+const submoduleGitDir = path.join(submoduleRepo, ".git");
+const submoduleMetadataPaths = [submoduleGitDir, path.join(submoduleGitDir, "modules", "dependency")]
+  .flatMap(gitDir => ["HEAD", "config", "index"].map(file => path.join(gitDir, file)));
+const submoduleMetadata = submoduleMetadataPaths.map(file => fs.readFileSync(file));
+
+const nestedSourceRepo = path.join(root, "nested-source");
+cleanGit(["clone", "-q", "--local", cleanRepo, nestedSourceRepo]);
+const nestedName = "nested\twith space";
+cleanGit(["-c", "protocol.file.allow=always", "submodule", "add", "-q", "--name", "nested", cleanRepo, nestedName], nestedSourceRepo);
+cleanGit(["-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-qm", "add nested fixture submodule"], nestedSourceRepo);
+const nestedParentRepo = path.join(root, "clean-submodule-nested");
+cleanGit(["clone", "-q", "--local", cleanRepo, nestedParentRepo]);
+cleanGit(["-c", "protocol.file.allow=always", "submodule", "add", "-q", nestedSourceRepo, "direct"], nestedParentRepo);
+cleanGit(["-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-qm", "add direct fixture submodule"], nestedParentRepo);
+cleanGit(["-c", "protocol.file.allow=always", "submodule", "update", "-q", "--init", "--recursive"], nestedParentRepo);
+const submoduleCases = { "clean-submodule-nested": nestedParentRepo };
+function submoduleFixture(id) {
+  const target = path.join(root, id);
+  fs.cpSync(nestedParentRepo, target, { recursive: true });
+  submoduleCases[id] = target;
+  return target;
+}
+const nestedTrackedRepo = submoduleFixture("nested-submodule-tracked");
+const nestedDirect = path.join(nestedTrackedRepo, "direct");
+cleanGit(["config", "--local", "submodule.nested.ignore", "all"], nestedDirect);
+const nestedChangedPath = path.join(nestedDirect, nestedName, path.basename(cleanTracked));
+fs.writeFileSync(nestedChangedPath, nestedTrackedContent);
+assert.equal(cleanGit(completeStatusArgs, nestedTrackedRepo), "", "one top-level override must miss the tracked nested fixture");
+const nestedUnknownRepo = submoduleFixture("nested-submodule-untracked");
+const nestedUnknownDirect = path.join(nestedUnknownRepo, "direct");
+const nestedUnknown = path.join(nestedUnknownDirect, nestedName);
+cleanGit(["config", "--local", "diff.ignoreSubmodules", "all"], nestedUnknownDirect);
+cleanGit(["config", "--local", "status.showUntrackedFiles", "no"], nestedUnknown);
+const nestedUnknownFile = path.join(nestedUnknown, "untracked\nfile");
+fs.writeFileSync(nestedUnknownFile, unknownUntrackedSource);
+assert.equal(cleanGit(completeStatusArgs, nestedUnknownRepo), "", "one top-level override must miss the untracked nested fixture");
+const uninitialized = path.join(root, "uninitialized-submodule");
+cleanGit(["clone", "-q", "--local", nestedParentRepo, uninitialized]);
+submoduleCases["uninitialized-submodule"] = uninitialized;
+const malformed = submoduleFixture("malformed-submodule");
+fs.writeFileSync(path.join(malformed, "direct", ".git"), "missing gitdir\n");
+const symlink = submoduleFixture("symlink-submodule");
+fs.renameSync(path.join(symlink, "direct"), path.join(root, "moved-direct-worktree"));
+fs.symlinkSync(nestedSourceRepo, path.join(symlink, "direct"), "dir");
+const outside = submoduleFixture("outside-worktree-submodule");
+cleanGit(["config", "--local", "core.worktree", nestedSourceRepo], path.join(outside, "direct"));
+const cycle = submoduleFixture("cycle-submodule");
+fs.writeFileSync(path.join(cycle, "direct", nestedName, ".git"), "gitdir: ../../.git\n");
+const externalFilter = submoduleFixture("external-filter-submodule");
+const filteredSubmodule = path.join(externalFilter, "direct", nestedName);
+cleanGit(["config", "--local", "filter.fixture.clean", "touch fixture-filter-ran; cat"], filteredSubmodule);
+fs.utimesSync(path.join(filteredSubmodule, path.basename(cleanTracked)), changedTime, changedTime);
+const globalFilterConfig = path.join(root, "global-lfs-config");
+fs.writeFileSync(globalFilterConfig, '[filter "lfs"]\n\tclean = git-lfs clean -- %f\n\tprocess = git-lfs filter-process\n\trequired = true\n');
+submoduleFixture("global-unused-filter-submodule");
+const dirtyRootWithMalformedChild = submoduleFixture("malformed-submodule-with-dirty-root");
+const knownRootEdit = path.join(dirtyRootWithMalformedChild, path.basename(cleanTracked));
+fs.writeFileSync(knownRootEdit, dirtySource);
+fs.writeFileSync(path.join(dirtyRootWithMalformedChild, "direct", ".git"), "missing gitdir\n");
+const changedGitlink = submoduleFixture("malformed-submodule-with-changed-gitlink");
+const validSiblingName = "valid [link]";
+const invalidSiblingName = "malformed [link]";
+for (const [name, directory] of [["valid", validSiblingName], ["malformed", invalidSiblingName]]) {
+  cleanGit(["-c", "protocol.file.allow=always", "submodule", "add", "-q", "--name", name, cleanRepo, directory], changedGitlink);
+}
+cleanGit(["-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-qm", "add gitlink fixture siblings"], changedGitlink);
+cleanGit(["-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "--allow-empty", "-qm", "change valid gitlink"], path.join(changedGitlink, validSiblingName));
+fs.writeFileSync(path.join(changedGitlink, invalidSiblingName, ".git"), "missing gitdir\n");
+const stagedGitlink = path.join(root, "malformed-submodule-with-staged-gitlink");
+fs.cpSync(changedGitlink, stagedGitlink, { recursive: true });
+submoduleCases["malformed-submodule-with-staged-gitlink"] = stagedGitlink;
+cleanGit(["add", "--", validSiblingName], stagedGitlink);
+const filteredRoot = path.join(root, "external-filter-root");
+cleanGit(["clone", "-q", "--local", cleanRepo, filteredRoot]);
+cleanGit(["config", "--local", "filter.fixture.clean", "touch fixture-filter-ran; cat"], filteredRoot);
+fs.utimesSync(path.join(filteredRoot, path.basename(cleanTracked)), changedTime, changedTime);
+
+function existingSubmoduleMetadata(repository) {
+  const gitDir = path.join(repository, ".git");
+  return [gitDir, path.join(gitDir, "modules", "direct"), path.join(gitDir, "modules", "direct", "modules", "nested"), path.join(gitDir, "modules", "valid")]
+    .flatMap(directory => ["HEAD", "config", "index"].map(file => path.join(directory, file)))
+    .filter(file => fs.existsSync(file))
+    .map(file => [file, fs.readFileSync(file)]);
+}
+const nestedMetadata = Object.fromEntries(Object.entries(submoduleCases)
+  .map(([id, repository]) => [id, existingSubmoduleMetadata(repository)]));
 
 const mixedRepo = path.join(root, "tracked-dirty-with-unknown-untracked");
 fs.cpSync(repo, mixedRepo, { recursive: true });
@@ -361,14 +461,22 @@ case "$scenario" in
 esac
 optional_locks=''
 if [ "$1" = '--no-optional-locks' ]; then optional_locks='--no-optional-locks'; shift; fi
-if [ "$1" = '-C' ]; then shift 2; fi
+command_dir="$repo"
+if [ "$1" = '-C' ]; then command_dir="$2"; shift 2; fi
+git_options=()
+while [ "$1" = '-c' ]; do git_options+=("$1" "$2"); shift 2; done
 command="$1"
 shift
 printf '%s\n' "$command" >> "$PREFLIGHT_GIT_COMMAND_LOG"
 case "$command" in
   rev-parse)
+    case "$scenario:$*" in
+      *:--local-env-vars|*submodule*:"--absolute-git-dir"|*submodule*:"--path-format=absolute --git-common-dir")
+        exec "$PREFLIGHT_SYSTEM_GIT" -C "$command_dir" rev-parse "$@" ;;
+    esac
     case "$*" in
-      --show-toplevel) printf '%s\n' "$repo" ;;
+      --show-toplevel)
+        if [ "$command_dir" = "$repo" ]; then printf '%s\n' "$repo"; else exec "$PREFLIGHT_SYSTEM_GIT" -C "$command_dir" rev-parse "$@"; fi ;;
       --abbrev-ref\ HEAD) printf '%s\n' 'feat/shared-git-preflight' ;;
       HEAD) printf '%s\n' "$current_head" ;;
       --verify\ origin/master\^\{commit\}) printf '%s\n' "$base" ;;
@@ -435,13 +543,19 @@ case "$command" in
         ;;
     esac
     ;;
+  ls-files)
+    case "$scenario" in
+      *submodule*|external-filter-root) exec "$PREFLIGHT_SYSTEM_GIT" --no-optional-locks -C "$command_dir" ls-files "$@" ;;
+    esac
+    ;;
+  config|check-attr) exec "$PREFLIGHT_SYSTEM_GIT" -C "$command_dir" "${"$"}{git_options[@]}" "$command" "$@" ;;
   status)
     case "$scenario" in
       tracked-dirty-original) "$PREFLIGHT_SYSTEM_GIT" --no-optional-locks -C "$repo" status --short --ignored ;;
-      clean-index-refresh|hidden-unknown-untracked|tracked-dirty-with-unknown-untracked)
-        status_repo="$repo"
+      clean-index-refresh|hidden-unknown-untracked|*submodule*|external-filter-root|tracked-dirty-with-unknown-untracked)
+        status_repo="$command_dir"
         if [ "$scenario" = 'clean-index-refresh' ]; then status_repo="$PREFLIGHT_CLEAN_REPO"; fi
-        set -- -C "$status_repo" status "$@"
+        set -- -C "$status_repo" "${"$"}{git_options[@]}" status "$@"
         if [ -n "$optional_locks" ]; then set -- "$optional_locks" "$@"; fi
         exec "$PREFLIGHT_SYSTEM_GIT" "$@" ;;
 
@@ -549,7 +663,10 @@ try {
         ? "repository-naming-rule-verified,issue-association-verified:RPL-TEST:other-branch"
         : "repository-naming-rule-verified";
     const repository = {
+      ...submoduleCases,
+      "external-filter-root": filteredRoot,
       "hidden-unknown-untracked": untrackedRepo,
+      "hidden-dirty-submodule": submoduleRepo,
       "tracked-dirty-with-unknown-untracked": mixedRepo,
     }[scenario.id] ?? repo;
     const args = [
@@ -565,10 +682,14 @@ try {
     if (jiraConsumer && scenario.id !== "jira-work-missing-issue-key") args.push("--issue-key", "RPL-TEST");
     if (scenario.id === "canonical-base-push-cache-mismatch" || scenario.id === "expected-canonical-base-mismatch" || scenario.id === "merged-pr-after-base-advanced") args.push("--expected-base-sha", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
     const commandLog = path.join(root, `${scenario.id}.git-commands.log`);
+    const globalFilterEnv = ["global-unused-filter-submodule", "malformed-submodule-with-dirty-root"].includes(scenario.id)
+      ? { GIT_CONFIG_GLOBAL: globalFilterConfig }
+      : {};
+    const pathspecEnv = scenario.id === "malformed-submodule-with-staged-gitlink" ? { GIT_LITERAL_PATHSPECS: "1" } : {};
     const result = spawnSync(runtimePath, args, {
       encoding: "utf8",
       // Force optional locks on for this scenario so an inherited 0 cannot hide a regression.
-      env: { ...process.env, ...(scenario.id === "clean-index-refresh" ? { GIT_OPTIONAL_LOCKS: "1" } : {}), HOME: fakeHome, PATH: `${fakeBin}:${process.env.PATH}`, PREFLIGHT_SCENARIO: scenario.id, PREFLIGHT_REPO: repository, PREFLIGHT_GIT_COMMAND_LOG: commandLog, PREFLIGHT_SYSTEM_GIT: systemGit, PREFLIGHT_STATUS_AA: actualBothAdded, PREFLIGHT_STATUS_DD: actualBothDeleted, PREFLIGHT_CLEAN_REPO: cleanRepo },
+      env: { ...process.env, ...globalFilterEnv, ...pathspecEnv, ...(scenario.id === "clean-index-refresh" ? { GIT_OPTIONAL_LOCKS: "1" } : {}), HOME: fakeHome, PATH: `${fakeBin}:${process.env.PATH}`, PREFLIGHT_SCENARIO: scenario.id, PREFLIGHT_REPO: repository, PREFLIGHT_GIT_COMMAND_LOG: commandLog, PREFLIGHT_SYSTEM_GIT: systemGit, PREFLIGHT_STATUS_AA: actualBothAdded, PREFLIGHT_STATUS_DD: actualBothDeleted, PREFLIGHT_CLEAN_REPO: cleanRepo },
     });
     assert.equal(result.status, scenario.process_exit_code, `${scenario.id}: process exit code`);
     const report = parseReport(result.stdout);
@@ -592,6 +713,47 @@ try {
       assert.equal(report.get("Untracked Local State"), "LOCAL_GENERATED=0; UNKNOWN=1");
       assert.deepEqual(fs.readFileSync(path.join(untrackedRepo, ".git", "index")), untrackedIndex, "blocked preflight must preserve the Git index");
       assert.equal(fs.readFileSync(unknownUntrackedPath, "utf8"), unknownUntrackedSource);
+    }
+    if (scenario.id === "hidden-dirty-submodule") {
+      assert.equal(report.get("Working Tree Status"), "TRACKED_DIRTY");
+      assert.equal(report.get("Tracked Status"), "COUNT=1");
+      assert.equal(report.get("Blocking Items"), "Tracked modification is present");
+      assert.equal(fs.readFileSync(nestedTrackedPath, "utf8"), nestedTrackedContent);
+      assert.deepEqual(submoduleMetadataPaths.map(file => fs.readFileSync(file)), submoduleMetadata, "preflight must preserve Git metadata in both repositories");
+    }
+    if (Object.hasOwn(nestedMetadata, scenario.id)) {
+      for (const [file, content] of nestedMetadata[scenario.id]) {
+        assert.deepEqual(fs.readFileSync(file), content, `${scenario.id}: Git metadata bytes must stay unchanged`);
+      }
+      if (scenario.id === "nested-submodule-tracked") {
+        assert.equal(report.get("Working Tree Status"), "TRACKED_DIRTY");
+        assert.equal(report.get("Tracked Status"), "COUNT=1");
+        assert.equal(fs.readFileSync(nestedChangedPath, "utf8"), nestedTrackedContent);
+      }
+      if (scenario.id === "nested-submodule-untracked") {
+        assert.equal(report.get("Tracked Status"), "COUNT=0");
+        assert.equal(report.get("Untracked Local State"), "LOCAL_GENERATED=0; UNKNOWN=1");
+        assert.equal(fs.readFileSync(nestedUnknownFile, "utf8"), unknownUntrackedSource);
+      }
+      if (scenario.id === "external-filter-submodule") {
+        assert.equal(fs.existsSync(path.join(filteredSubmodule, "fixture-filter-ran")), false, "preflight must not invoke a submodule filter");
+      }
+    }
+    if (scenario.id === "malformed-submodule-with-dirty-root") {
+      assert.equal(report.get("Working Tree Status"), "TRACKED_DIRTY");
+      assert.equal(report.get("Tracked Status"), "COUNT=1");
+      assert.equal(fs.readFileSync(knownRootEdit, "utf8"), dirtySource);
+    }
+    if (scenario.id === "malformed-submodule-with-changed-gitlink") {
+      assert.equal(report.get("Working Tree Status"), "TRACKED_DIRTY");
+      assert.equal(report.get("Tracked Status"), "COUNT=1");
+    }
+    if (scenario.id === "malformed-submodule-with-staged-gitlink") {
+      assert.equal(report.get("Working Tree Status"), "STAGED_DIRTY");
+      assert.equal(report.get("Staged Status"), "COUNT=1");
+    }
+    if (scenario.id === "external-filter-root") {
+      assert.equal(fs.existsSync(path.join(filteredRoot, "fixture-filter-ran")), false, "preflight must not invoke a root filter");
     }
     if (scenario.id === "tracked-dirty-with-unknown-untracked") {
       assert.equal(report.get("Working Tree Status"), "TRACKED_DIRTY", "tracked dirty diagnosis takes precedence");
