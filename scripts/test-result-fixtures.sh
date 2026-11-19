@@ -9,11 +9,17 @@ FIXTURE_ROOT="fixtures/result"
 
 cleanup_dirs=()
 cleanup() {
+  local d
   for d in "${cleanup_dirs[@]:-}"; do
     case "$d" in
-      */oh-my-ai-result-fixture.*) [ -d "$d" ] && rm -rf -- "$d" ;;
+      */oh-my-ai-result-fixture.*)
+        if [ -d "$d" ]; then
+          rm -rf -- "$d" || continue
+        fi
+        ;;
     esac
   done
+  return 0
 }
 trap cleanup EXIT
 
@@ -26,11 +32,12 @@ require_file() {
   [ -f "$1" ] || fail "missing file: $1"
 }
 
+# Call directly so the EXIT trap sees each registered directory.
 sandbox() {
-  local d
-  d="$(mktemp -d "${TMPDIR:-/tmp}/oh-my-ai-result-fixture.XXXXXX")"
-  cleanup_dirs+=("$d")
-  printf '%s\n' "$d"
+  local dir
+  dir="$(mktemp -d "${TMPDIR:-/tmp}/oh-my-ai-result-fixture.XXXXXX")"
+  cleanup_dirs+=("$dir")
+  printf -v "$1" '%s' "$dir"
 }
 
 expect_valid() {
@@ -94,7 +101,8 @@ fx_validation_performed() {
   expect_valid "$FIXTURE_ROOT/FX-RS-good-complete-validation-performed.md" "Validation-Performed-positive"
 
   local d out
-  d="$(sandbox)"; out="$d/bad.md"
+  sandbox d
+  out="$d/bad.md"
   mutate_result "$FIXTURE_ROOT/FX-RS-good-complete-validation-performed.md" "$out" \
     "- \`bash -n README.md\` is not applicable to Markdown; visually diffed the single-line change against the surrounding install steps." \
     "- \`None\`"
@@ -108,7 +116,8 @@ fx_validation_not_performed() {
   expect_valid "$FIXTURE_ROOT/FX-RS-good-partial-validation-not-performed.md" "Validation-Not-Performed-positive"
 
   local d out
-  d="$(sandbox)"; out="$d/bad.md"
+  sandbox d
+  out="$d/bad.md"
   mutate_result "$FIXTURE_ROOT/FX-RS-good-partial-validation-not-performed.md" "$out" \
     "- Integration test against the live endpoint was not run because test credentials were not available in this environment." \
     "- \`None\`"
@@ -127,7 +136,8 @@ fx_files_read_changed_separation() {
     fail "Files-Read-Changed: expected exactly one Files Read and one Files Changed heading"
 
   local d out duplicate_out
-  d="$(sandbox)"; out="$d/bad.md"
+  sandbox d
+  out="$d/bad.md"
   mutate_result "$FIXTURE_ROOT/FX-RS-good-complete-validation-performed.md" "$out" \
     "## Files Changed" \
     "## Files Read2renamed"
@@ -153,7 +163,8 @@ fx_scope_deviation() {
   expect_valid "$FIXTURE_ROOT/FX-RS-good-scope-deviation.md" "Scope-Deviation-positive"
 
   local d out
-  d="$(sandbox)"; out="$d/bad.md"
+  sandbox d
+  out="$d/bad.md"
   mutate_result "$FIXTURE_ROOT/FX-RS-good-scope-deviation.md" "$out" \
     "\`execution_status\`: \`partial\`" \
     "\`execution_status\`: \`complete\`"
@@ -165,7 +176,7 @@ fx_scope_deviation() {
 
 fx_missing_result() {
   local d
-  d="$(sandbox)"
+  sandbox d
   local out
   out="$(node "$VALIDATOR" "$d/does-not-exist.md" 2>&1)" && fail "Missing-Result: expected non-zero exit"
   case "$out" in
@@ -181,7 +192,8 @@ fx_partial_result() {
   expect_valid "$FIXTURE_ROOT/FX-RS-good-partial-validation-not-performed.md" "Partial-Result-positive"
 
   local d out
-  d="$(sandbox)"; out="$d/bad.md"
+  sandbox d
+  out="$d/bad.md"
   mutate_result "$FIXTURE_ROOT/FX-RS-good-partial-validation-not-performed.md" "$out" \
     "- Integration test against the live endpoint was not run because test credentials were not available in this environment." \
     "- \`None\`"
@@ -198,7 +210,8 @@ fx_blocked_result() {
   expect_valid "$FIXTURE_ROOT/FX-RS-good-blocked.md" "Blocked-Result-positive"
 
   local d out
-  d="$(sandbox)"; out="$d/bad.md"
+  sandbox d
+  out="$d/bad.md"
   mutate_result "$FIXTURE_ROOT/FX-RS-good-blocked.md" "$out" \
     '- `blocker_type`: `missing_access` - description: no IAM grant for this account on the target secrets manager project; required_access: "secretmanager.versions.access on project X"; recommended_next_action: "Request access grant from the project owner, then resume this task"' \
     '- `None`'
@@ -213,7 +226,8 @@ fx_status_gate_template_placeholders() {
   local partial="$FIXTURE_ROOT/FX-RS-good-partial-validation-not-performed.md"
   local blocked="$FIXTURE_ROOT/FX-RS-good-blocked.md"
   local d out
-  d="$(sandbox)"; out="$d/placeholder.md"
+  sandbox d
+  out="$d/placeholder.md"
 
   mutate_result "$complete" "$out" \
     '- `bash -n README.md` is not applicable to Markdown; visually diffed the single-line change against the surrounding install steps.' \
@@ -246,7 +260,8 @@ fx_status_gate_template_placeholders() {
 fx_ambiguous_result() {
   local src="$FIXTURE_ROOT/FX-RS-good-complete-validation-performed.md"
   local d out
-  d="$(sandbox)"; out="$d/ambiguous.md"
+  sandbox d
+  out="$d/ambiguous.md"
 
   # A later empty section must not erase an earlier reported deviation.
   mutate_result "$src" "$out" "## Scope Deviations" \
@@ -349,7 +364,8 @@ fx_ambiguous_result() {
 fx_completion_criteria_status() {
   local src="$FIXTURE_ROOT/FX-RS-good-complete-validation-performed.md"
   local d out status
-  d="$(sandbox)"; out="$d/criteria.md"
+  sandbox d
+  out="$d/criteria.md"
   expect_valid "$src" "Complete-All-Criteria-Met"
 
   for status in unmet partial blocked; do
@@ -415,7 +431,8 @@ fx_completion_criteria_status() {
 fx_required_metadata_unfilled() {
   local src="$FIXTURE_ROOT/FX-RS-good-complete-validation-performed.md"
   local d out
-  d="$(sandbox)"; out="$d/metadata.md"
+  sandbox d
+  out="$d/metadata.md"
   expect_valid "$src" "Required-Metadata-Complete-positive"
 
   expect_unfilled_metadata "$src" "$out" schema_version 1.0 None "Required-Metadata-schema-version-none"
@@ -466,7 +483,8 @@ fx_required_metadata_unfilled() {
 
 fx_filled_current_template() {
   local d out
-  d="$(sandbox)"; out="$d/filled-template.md"
+  sandbox d
+  out="$d/filled-template.md"
   # Fill the shipped template itself, retaining its prose. Replacing whole
   # sections with old fixtures would hide template/parser incompatibilities.
   node - "$out" <<'NODE'
@@ -509,7 +527,8 @@ NODE
 fx_source_handoff_reference() {
   local src="$FIXTURE_ROOT/FX-RS-good-complete-validation-performed.md"
   local d out
-  d="$(sandbox)"; out="$d/reference.md"
+  sandbox d
+  out="$d/reference.md"
   expect_valid "$src" "Source-Handoff-Reference-positive"
 
   mutate_result "$src" "$out" '- `source_handoff_ref`: `handoff-20260720-085000-fixture`' ''
@@ -552,6 +571,45 @@ fx_source_handoff_reference() {
   echo "passed: FX-RS-source-handoff-reference"
 }
 
+fx_sandbox_cleanup() {
+  local parent expected actual
+  local -a remaining
+  sandbox parent
+
+  for expected in 0 37; do
+    mkdir "$parent/$expected"
+    actual=0
+    (
+      export -f cleanup sandbox
+      TMPDIR="$parent/$expected" bash -euo pipefail -c '
+        cleanup_dirs=()
+        trap cleanup EXIT
+        sandbox missing
+        sandbox denied
+        sandbox removable
+        rm -rf -- "$missing"
+        touch "$denied/denied"
+
+        rm() {
+          if [ "${!#}" = "$denied" ]; then
+            return 42
+          fi
+          command rm "$@"
+        }
+
+        exit "$1"
+      ' bash "$expected"
+    ) || actual=$?
+    [ "$actual" = "$expected" ] || fail "Sandbox cleanup: expected exit $expected, got $actual"
+
+    remaining=("$parent/$expected"/oh-my-ai-result-fixture.*)
+    if [ "${#remaining[@]}" -ne 1 ] || [ ! -f "${remaining[0]}/denied" ]; then
+      fail "Sandbox cleanup: later sandbox remained after a missing directory or removal failure"
+    fi
+  done
+  echo "passed: FX-RS-sandbox-cleanup"
+}
+
 # --- run everything ----------------------------------------------------------
 
 require_file "$VALIDATOR"
@@ -572,5 +630,6 @@ fx_source_handoff_reference
 fx_required_metadata_unfilled
 fx_completion_criteria_status
 fx_filled_current_template
+fx_sandbox_cleanup
 
 echo "all Result Basic fixtures passed"
