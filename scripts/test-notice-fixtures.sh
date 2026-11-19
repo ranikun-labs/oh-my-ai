@@ -1,27 +1,29 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 cd "$REPO"
 
 FIXTURE_ROOT="fixtures/notice/manifests"
 NOTICE="$REPO/scripts/notice.mjs"
 
 cleanup_dirs=()
-cleanup_paths=()
+pending_refreshes=()
 
 cleanup() {
   if [ "${KEEP_NOTICE_FIXTURE_ARTIFACTS:-}" = "1" ]; then
     return 0
   fi
   for path in "${cleanup_dirs[@]:-}"; do
+    local pending
+    for pending in "${pending_refreshes[@]:-}"; do
+      if [ "$pending" = "$path" ]; then
+        echo "notice fixture: retaining sandbox with unobserved detached refresh: $path" >&2
+        continue 2
+      fi
+    done
     case "$path" in
       */oh-my-ai-notice-fixture.*) [ -d "$path" ] && rm -rf -- "$path" ;;
-    esac
-  done
-  for path in "${cleanup_paths[@]:-}"; do
-    case "$path" in
-      .oh-my-ai/work-start/*) [ -d "$path" ] && rm -rf -- "$path" ;;
     esac
   done
   return 0
@@ -59,11 +61,10 @@ require_file() {
 # temp dir, so fixtures never touch the real $HOME and never share state
 # with each other or with a real installation.
 new_sandbox() {
-  local dir
-  dir="$(mktemp -d "${TMPDIR:-/tmp}/oh-my-ai-notice-fixture.XXXXXX")"
-  cleanup_dirs+=("$dir")
-  mkdir -p "$dir/cache" "$dir/config"
-  printf '%s\n' "$dir"
+  NEW_SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/oh-my-ai-notice-fixture.XXXXXX")"
+  NEW_SANDBOX="$(cd "$NEW_SANDBOX" && pwd -P)"
+  cleanup_dirs+=("$NEW_SANDBOX")
+  mkdir -p "$NEW_SANDBOX/cache" "$NEW_SANDBOX/config"
 }
 
 notice_in() {
@@ -88,30 +89,73 @@ lock_file_in() {
   printf '%s/cache/oh-my-ai/notice-refresh.lock' "$1"
 }
 
-# work-start.sh's own end-of-run refresh-if-stale (see
-# run_work_start_capturing_artifact below) spawns a genuinely detached,
-# unref()'d child whenever the sandbox's cache is empty/stale. That child
-# outlives work-start.sh's own exit, so a fixture that immediately follows
-# such a run with its own synchronous do_refresh() in the SAME sandbox can
-# race the leftover child for the shared refresh lock and silently lose:
-# do_refresh() no-ops if it finds the lock still held (see notice.mjs
-# acquireLock()'s "skipped-held" path).
-#
-# Wait on the lock's actual release -- the same signal the product itself
-# uses for mutual exclusion -- rather than guessing a sleep duration. The
-# short settle before polling exists only to give a just-spawned child time
-# to reach its first acquireLock() call; once the lock is observed, this
-# waits for its genuine release (bounded), not a fixed guess.
-wait_for_refresh_lock_clear() {
-  local sandbox="$1"
-  local lock_file waited_ms=0 timeout_ms=3000
+# An absent lock alone is not a completion signal: a detached child may not
+# have started yet. Register before launch and require its unique trace event,
+# then the actual lock release. On timeout the EXIT trap preserves the sandbox
+# because the unobserved child can still create files in it later.
+register_detached_refresh() {
+  local sandbox="$1" escaped_helper
+  PENDING_TRACE="$sandbox/notice-refresh-test.trace"
+  PENDING_LAUNCH="$sandbox/notice-refresh-launch.trace"
+  PENDING_HELPER="$sandbox/observe-refresh.cjs"
+  rm -f -- "$PENDING_TRACE" "$PENDING_LAUNCH"
+  # Observe the actual refresh parent without changing detached child behavior.
+  # A completion record distinguishes an observed no-spawn from a delayed or
+  # crashed parent; absent/invalid evidence keeps the sandbox on cleanup.
+  cat > "$PENDING_HELPER" <<'NODE'
+const path = require("node:path");
+if (path.basename(process.argv[1] || "") === "notice.mjs" && process.argv[2] === "refresh-if-stale") {
+  const cp = require("node:child_process");
+  const fs = require("node:fs");
+  const originalSpawn = cp.spawn;
+  let count = 0;
+  cp.spawn = function (...args) {
+    const child = originalSpawn.apply(this, args);
+    if (Array.isArray(args[1]) && args[1].includes("__do-refresh")) count += 1;
+    return child;
+  };
+  require("node:module").syncBuiltinESMExports();
+  process.on("exit", () => {
+    try { fs.appendFileSync(process.env.NOTICE_FIXTURE_LAUNCH_TRACE, `complete spawned=${count}\n`); } catch {}
+  });
+}
+NODE
+  escaped_helper="${PENDING_HELPER//\\/\\\\}"
+  escaped_helper="${escaped_helper//\"/\\\"}"
+  PENDING_NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require=\"$escaped_helper\""
+  pending_refreshes+=("$sandbox")
+}
+
+wait_for_registered_refresh() {
+  local sandbox="$1" trace="$2" launch="$3" expected="$4"
+  local lock_file waited_ms=0 timeout_ms=5000 actual
   lock_file="$(lock_file_in "$sandbox")"
-  sleep 0.15
-  while [ -e "$lock_file" ]; do
+  while ! { [ -s "$launch" ] && grep -Eq '^complete spawned=[01]$' "$launch"; }; do
     [ "$waited_ms" -lt "$timeout_ms" ] \
-      || fail "notice refresh lock did not clear within ${timeout_ms}ms: $lock_file"
+      || fail "detached refresh parent unobserved; sandbox retained: $sandbox"
     sleep 0.02
     waited_ms=$((waited_ms + 20))
+  done
+  actual="$(sed -n 's/^complete spawned=//p' "$launch")"
+  [ "$actual" = "$expected" ] \
+    || fail "unexpected refresh launch count; sandbox retained: $sandbox"
+  if [ "$actual" = "1" ]; then
+    while ! { [ -s "$trace" ] && [ ! -e "$lock_file" ]; }; do
+      [ "$waited_ms" -lt "$timeout_ms" ] \
+        || fail "detached notice refresh unobserved; sandbox retained: $sandbox"
+      sleep 0.02
+      waited_ms=$((waited_ms + 20))
+    done
+    grep -Eq '^(acquired|acquired-after-stale|skipped-held|skipped-race|skipped-error) pid=[0-9]+$' "$trace" \
+      || fail "unexpected notice refresh trace; sandbox retained: $sandbox"
+  fi
+  clear_pending_refresh "$sandbox"
+}
+
+clear_pending_refresh() {
+  local sandbox="$1" i
+  for i in "${!pending_refreshes[@]}"; do
+    [ "${pending_refreshes[$i]}" != "$sandbox" ] || unset 'pending_refreshes[i]'
   done
 }
 
@@ -119,7 +163,7 @@ do_refresh() {
   local sandbox="$1"
   local manifest_rel="$2"
   local version="${3:-1.0.0}"
-  NOTICE_MANIFEST_URL="$(manifest_url "$manifest_rel")" \
+  NOTICE_TEST_LOCK_TRACE= NOTICE_MANIFEST_URL="$(manifest_url "$manifest_rel")" \
     notice_in "$sandbox" __do-refresh --version "$version"
 }
 
@@ -129,11 +173,24 @@ render() {
   notice_in "$sandbox" render --version "$version"
 }
 
+# A stale cache ensures an opt-out test would launch a refresh if the opt-out
+# check regressed; a fresh cache would hide that failure by returning early.
+age_cache() {
+  local cache_file="$1"
+  node -e '
+    const fs = require("fs");
+    const file = process.argv[1];
+    const data = JSON.parse(fs.readFileSync(file, "utf8"));
+    data.fetched_at = Date.now() - (25 * 60 * 60 * 1000);
+    fs.writeFileSync(file, JSON.stringify(data));
+  ' "$cache_file"
+}
+
 # --- FX-NT-001 No Cache -------------------------------------------------------
 
 fx_nt_001() {
   local sandbox out
-  sandbox="$(new_sandbox)"
+  new_sandbox; sandbox="$NEW_SANDBOX"
   out="$(render "$sandbox" 1.0.0)"
   [ -z "$out" ] || fail "FX-NT-001: expected empty render with no cache, got: $out"
   [ -f "$(cache_file_in "$sandbox")" ] && fail "FX-NT-001: cache file must not be created by render alone"
@@ -144,7 +201,7 @@ fx_nt_001() {
 
 fx_nt_002() {
   local sandbox out
-  sandbox="$(new_sandbox)"
+  new_sandbox; sandbox="$NEW_SANDBOX"
   do_refresh "$sandbox" "$FIXTURE_ROOT/valid-single-notice.json" 1.0.0
   [ -s "$(cache_file_in "$sandbox")" ] || fail "FX-NT-002: cache was not populated"
   out="$(render "$sandbox" 1.0.0)"
@@ -159,27 +216,24 @@ fx_nt_002() {
 
 fx_nt_003() {
   local sandbox cache_file
-  sandbox="$(new_sandbox)"
+  new_sandbox; sandbox="$NEW_SANDBOX"
   do_refresh "$sandbox" "$FIXTURE_ROOT/valid-single-notice.json" 1.0.0
   cache_file="$(cache_file_in "$sandbox")"
   [ -s "$cache_file" ] || fail "FX-NT-003: cache was not populated"
   # Force staleness: rewrite fetched_at far in the past.
-  node -e '
-    const fs = require("fs");
-    const file = process.argv[1];
-    const data = JSON.parse(fs.readFileSync(file, "utf8"));
-    data.fetched_at = Date.now() - (25 * 60 * 60 * 1000);
-    fs.writeFileSync(file, JSON.stringify(data));
-  ' "$cache_file"
-  local status
+  age_cache "$cache_file"
+  local status trace launch helper_options
   status="$(notice_in "$sandbox" status)"
   echo "$status" | grep -q '"cache_stale": true' || fail "FX-NT-003: cache was not reported stale"
   # refresh-if-stale must return quickly and not block on network; the
   # decisive proof (a spawn actually happened) is covered by FX-NT-014/015,
   # which drive the same code path through work-start.sh end to end.
+  register_detached_refresh "$sandbox"; trace="$PENDING_TRACE"; launch="$PENDING_LAUNCH"; helper_options="$PENDING_NODE_OPTIONS"
   XDG_CACHE_HOME="$sandbox/cache" XDG_CONFIG_HOME="$sandbox/config" \
-    run_with_timeout 5 node "$NOTICE" refresh-if-stale --version 1.0.0 \
+    NOTICE_TEST_LOCK_TRACE="$trace" NOTICE_FIXTURE_LAUNCH_TRACE="$launch" NODE_OPTIONS="$helper_options" \
+    NOTICE_MANIFEST_URL="$(manifest_url "$FIXTURE_ROOT/valid-single-notice.json")" run_with_timeout 5 node "$NOTICE" refresh-if-stale --version 1.0.0 \
     || fail "FX-NT-003: refresh-if-stale did not return promptly"
+  wait_for_registered_refresh "$sandbox" "$trace" "$launch" 1
   echo "passed: FX-NT-003-stale-cache"
 }
 
@@ -187,7 +241,7 @@ fx_nt_003() {
 
 fx_nt_004() {
   local sandbox cache_file
-  sandbox="$(new_sandbox)"
+  new_sandbox; sandbox="$NEW_SANDBOX"
   cache_file="$(cache_file_in "$sandbox")"
   # A nonexistent file:// target is a deterministic, network-free proxy for
   # "the fetch failed" -- __do-refresh's catch-all treats every fetch failure
@@ -209,7 +263,7 @@ fx_nt_004() {
 
 fx_nt_005() {
   local sandbox cache_file
-  sandbox="$(new_sandbox)"
+  new_sandbox; sandbox="$NEW_SANDBOX"
   cache_file="$(cache_file_in "$sandbox")"
   do_refresh "$sandbox" "$FIXTURE_ROOT/invalid.json" 1.0.0
   [ -f "$cache_file" ] && fail "FX-NT-005: invalid JSON must not produce a cache file"
@@ -220,7 +274,7 @@ fx_nt_005() {
 
 fx_nt_006() {
   local sandbox cache_file
-  sandbox="$(new_sandbox)"
+  new_sandbox; sandbox="$NEW_SANDBOX"
   cache_file="$(cache_file_in "$sandbox")"
   do_refresh "$sandbox" "$FIXTURE_ROOT/unsupported-schema.json" 1.0.0
   [ -f "$cache_file" ] && fail "FX-NT-006: unsupported schema_version must not produce a cache file"
@@ -234,7 +288,7 @@ fx_nt_006() {
 
 fx_supplementary_action_url_allowlist() {
   local sandbox cache_file
-  sandbox="$(new_sandbox)"
+  new_sandbox; sandbox="$NEW_SANDBOX"
   cache_file="$(cache_file_in "$sandbox")"
   do_refresh "$sandbox" "$FIXTURE_ROOT/bad-action-url.json" 1.0.0
   [ -s "$cache_file" ] || fail "action-url-allowlist: expected the manifest to still cache the surviving notice"
@@ -250,13 +304,13 @@ fx_supplementary_action_url_allowlist() {
 
 fx_nt_007() {
   local sandbox out
-  sandbox="$(new_sandbox)"
+  new_sandbox; sandbox="$NEW_SANDBOX"
   do_refresh "$sandbox" "$FIXTURE_ROOT/version-ranged.json" 1.0.0
   out="$(render "$sandbox" 5.0.0)"
   [ -z "$out" ] || fail "FX-NT-007: out-of-range version must not see the notice, got: $out"
 
   local sandbox2
-  sandbox2="$(new_sandbox)"
+  new_sandbox; sandbox2="$NEW_SANDBOX"
   do_refresh "$sandbox2" "$FIXTURE_ROOT/version-ranged.json" unknown-not-semver
   out="$(render "$sandbox2" unknown-not-semver)"
   [ -z "$out" ] || fail "FX-NT-007: unparseable version must never match, got: $out"
@@ -267,7 +321,7 @@ fx_nt_007() {
 
 fx_nt_008() {
   local sandbox out
-  sandbox="$(new_sandbox)"
+  new_sandbox; sandbox="$NEW_SANDBOX"
   do_refresh "$sandbox" "$FIXTURE_ROOT/max-impressions-one.json" 1.0.0
   out="$(render "$sandbox" 1.0.0)"
   case "$out" in
@@ -283,7 +337,7 @@ fx_nt_008() {
 
 fx_nt_009() {
   local sandbox out
-  sandbox="$(new_sandbox)"
+  new_sandbox; sandbox="$NEW_SANDBOX"
   do_refresh "$sandbox" "$FIXTURE_ROOT/valid-single-notice.json" 1.0.0
   notice_in "$sandbox" dismiss fx-nt-valid >/dev/null
   out="$(render "$sandbox" 1.0.0)"
@@ -294,20 +348,24 @@ fx_nt_009() {
 # --- FX-NT-010 Opt-out -----------------------------------------------------------
 
 fx_nt_010() {
-  local sandbox out cache_before cache_after
-  sandbox="$(new_sandbox)"
+  local sandbox out cache_before cache_after trace launch helper_options
+  new_sandbox; sandbox="$NEW_SANDBOX"
   do_refresh "$sandbox" "$FIXTURE_ROOT/valid-single-notice.json" 1.0.0
   notice_in "$sandbox" opt-out >/dev/null
 
   out="$(render "$sandbox" 1.0.0)"
   [ -z "$out" ] || fail "FX-NT-010: render must be empty after opt-out, got: $out"
 
+  # Ensure the cache alone would not suppress refresh; opt-out must do so.
+  age_cache "$(cache_file_in "$sandbox")"
   cache_before="$(cat "$(cache_file_in "$sandbox")")"
   # refresh-if-stale must not spawn a fetch at all once opted out.
+  register_detached_refresh "$sandbox"; trace="$PENDING_TRACE"; launch="$PENDING_LAUNCH"; helper_options="$PENDING_NODE_OPTIONS"
   XDG_CACHE_HOME="$sandbox/cache" XDG_CONFIG_HOME="$sandbox/config" \
+    NOTICE_TEST_LOCK_TRACE="$trace" NOTICE_FIXTURE_LAUNCH_TRACE="$launch" NODE_OPTIONS="$helper_options" \
     NOTICE_MANIFEST_URL="$(manifest_url "$FIXTURE_ROOT/version-ranged.json")" \
     node "$NOTICE" refresh-if-stale --version 1.0.0
-  sleep 0.3
+  wait_for_registered_refresh "$sandbox" "$trace" "$launch" 0
   cache_after="$(cat "$(cache_file_in "$sandbox")")"
   [ "$cache_before" = "$cache_after" ] || fail "FX-NT-010: cache changed after opt-out; a network check ran"
 
@@ -324,11 +382,14 @@ fx_nt_010() {
 
 fx_nt_011() {
   local sandbox trace cache_file
-  sandbox="$(new_sandbox)"
+  new_sandbox; sandbox="$NEW_SANDBOX"
   cache_file="$(cache_file_in "$sandbox")"
   trace="$sandbox/lock-trace.log"
   : > "$trace"
 
+  # The children below are waited explicitly. Preserve this sandbox on early
+  # interruption so cleanup cannot race a child that is still running.
+  pending_refreshes+=("$sandbox")
   # Widen the critical section so two invocations launched back-to-back are
   # forced to genuinely overlap, instead of hoping process scheduling alone
   # creates a race.
@@ -348,6 +409,7 @@ fx_nt_011() {
   ) &
   local p2=$!
   wait "$p1" "$p2"
+  clear_pending_refresh "$sandbox"
 
   local acquired skipped
   acquired="$(grep -c '^acquired' "$trace" || true)"
@@ -364,7 +426,7 @@ fx_nt_011() {
 
 fx_nt_012() {
   local sandbox cache_file state_file
-  sandbox="$(new_sandbox)"
+  new_sandbox; sandbox="$NEW_SANDBOX"
   cache_file="$(cache_file_in "$sandbox")"
   state_file="$(state_file_in "$sandbox")"
 
@@ -401,35 +463,52 @@ run_work_start_capturing_artifact() {
   local version="$3"
   local manifest_rel="$4"
   [ -n "$manifest_rel" ] || fail "run_work_start_capturing_artifact requires manifest_rel (no real network in fixtures)"
-  local out artifact
-  out="$(XDG_CACHE_HOME="$sandbox/cache" XDG_CONFIG_HOME="$sandbox/config" \
-    NOTICE_MANIFEST_URL="$(manifest_url "$manifest_rel")" \
-    TASK="$task" bash scripts/work-start.sh 2>&1)" || fail "work-start.sh exited non-zero for: $task"
+  local out artifact trace launch helper_options expected=0
+  # The first run of each pair has an empty cache; the second has fresh local
+  # cache. Record every launch and retain the sandbox if either fact is unclear.
+  case "$task" in
+    "fx-nt-013 without notice"|"fx-nt-014 first run") expected=1 ;;
+  esac
+  # Run the real engine against a sandbox-owned repository. Its generated
+  # artifacts must never share the caller's .oh-my-ai tree with another run.
+  local fixture_repo="$sandbox/project" git_var
+  local -a git_env_args=()
+  while IFS= read -r git_var; do
+    [ -n "$git_var" ] && git_env_args+=(-u "$git_var")
+  done < <(git rev-parse --local-env-vars)
+  if [ ! -d "$fixture_repo/.git" ]; then
+    mkdir -p "$fixture_repo"
+    env "${git_env_args[@]}" git -C "$fixture_repo" init -q
+  fi
+  register_detached_refresh "$sandbox"; trace="$PENDING_TRACE"; launch="$PENDING_LAUNCH"; helper_options="$PENDING_NODE_OPTIONS"
+  out="$(cd "$fixture_repo" && env "${git_env_args[@]}" -u TASK_FILE -u OH_MY_AI_WORK_START_INVOCATION_LOG \
+    XDG_CACHE_HOME="$sandbox/cache" XDG_CONFIG_HOME="$sandbox/config" \
+    NOTICE_TEST_LOCK_TRACE="$trace" NOTICE_FIXTURE_LAUNCH_TRACE="$launch" NODE_OPTIONS="$helper_options" \
+    NOTICE_MANIFEST_URL="$(manifest_url "$manifest_rel")" TASK="$task" bash "$REPO/scripts/work-start.sh" 2>&1)" || fail "work-start.sh exited non-zero for: $task"
+  wait_for_registered_refresh "$sandbox" "$trace" "$launch" "$expected"
   artifact="$(printf '%s\n' "$out" | sed -n 's/^work-start artifact created: //p')"
   [ -n "$artifact" ] || fail "could not parse artifact path for: $task"
   case "$artifact" in
     .oh-my-ai/work-start/*) ;;
     *) fail "unsafe artifact path: $artifact" ;;
   esac
-  cleanup_paths+=("$artifact")
-  printf '%s\n%s' "$artifact" "$out"
+  WORK_START_RESULT="$(printf '%s\n%s' "$fixture_repo/$artifact" "$out")"
 }
 
 # --- FX-NT-013 Artifact Content Invariance --------------------------------------
 
 fx_nt_013() {
   local sandbox result artifact_notice artifact_plain out_notice out_plain
-  sandbox="$(new_sandbox)"
+  new_sandbox; sandbox="$NEW_SANDBOX"
 
-  result="$(run_work_start_capturing_artifact "$sandbox" "fx-nt-013 without notice" 1.0.0 "$FIXTURE_ROOT/does-not-exist.json")"
+  run_work_start_capturing_artifact "$sandbox" "fx-nt-013 without notice" 1.0.0 "$FIXTURE_ROOT/does-not-exist.json"
+  result="$WORK_START_RESULT"
   artifact_plain="$(printf '%s' "$result" | head -1)"
 
-  # That run's own end-of-run refresh-if-stale may have left a detached child
-  # still holding the lock; let it clear before the do_refresh() below claims
-  # the same lock in the same sandbox.
-  wait_for_refresh_lock_clear "$sandbox"
+  # The observed detached refresh has completed before the next local refresh.
   do_refresh "$sandbox" "$FIXTURE_ROOT/valid-single-notice.json" 1.0.0
-  result="$(run_work_start_capturing_artifact "$sandbox" "fx-nt-013 with notice" 1.0.0 "$FIXTURE_ROOT/does-not-exist.json")"
+  run_work_start_capturing_artifact "$sandbox" "fx-nt-013 with notice" 1.0.0 "$FIXTURE_ROOT/does-not-exist.json"
+  result="$WORK_START_RESULT"
   artifact_notice="$(printf '%s' "$result" | head -1)"
   out_notice="$(printf '%s' "$result" | tail -n +2)"
 
@@ -438,8 +517,15 @@ fx_nt_013() {
     *) fail "FX-NT-013: expected the notice text in stdout for the second run" ;;
   esac
 
+  local artifact_file grep_status
+  for artifact_file in "$artifact_plain/handoff-candidate.md" "$artifact_notice/handoff-candidate.md"; do
+    [ -s "$artifact_file" ] || fail "FX-NT-013: expected Candidate Artifact missing"
+  done
   if grep -rli "valid single notice" "$artifact_plain" "$artifact_notice" >/dev/null 2>&1; then
     fail "FX-NT-013: notice text leaked into a Candidate Artifact file"
+  else
+    grep_status=$?
+    [ "$grep_status" -eq 1 ] || fail "FX-NT-013: unable to inspect Candidate Artifacts"
   fi
   echo "passed: FX-NT-013-artifact-invariance"
 }
@@ -448,33 +534,25 @@ fx_nt_013() {
 
 fx_nt_014_015() {
   local sandbox result artifact1 out1 artifact2 out2
-  sandbox="$(new_sandbox)"
+  new_sandbox; sandbox="$NEW_SANDBOX"
 
-  # Run 1: cache starts empty, so isCacheStale() is true regardless of which
-  # manifest the end-of-run refresh-if-stale points at -- pointing it at a
-  # nonexistent file only makes that detached child's own fetch fail fast, it
-  # does not stop the child from spawning and briefly holding the refresh
-  # lock. The Cache-first / Next-run claim under test is about ordering
-  # within THIS run's own output, not about racing a background child's
-  # completion time.
-  result="$(run_work_start_capturing_artifact "$sandbox" "fx-nt-014 first run" 1.0.0 "$FIXTURE_ROOT/does-not-exist.json")"
+  # Run 1 snapshots the empty cache before launching a genuine detached
+  # refresh of a local fixture. The refresh must not affect this run's output.
+  run_work_start_capturing_artifact "$sandbox" "fx-nt-014 first run" 1.0.0 "$FIXTURE_ROOT/valid-single-notice.json"
+  result="$WORK_START_RESULT"
   artifact1="$(printf '%s' "$result" | head -1)"
   out1="$(printf '%s' "$result" | tail -n +2)"
   case "$out1" in
     *"a valid single notice"*) fail "FX-NT-014: Remote result leaked into the run that triggered the refresh" ;;
   esac
 
-  # Let that leftover detached child release the lock before the deterministic
-  # do_refresh() below claims it in the same sandbox.
-  wait_for_refresh_lock_clear "$sandbox"
-
-  # Deterministically materialize "the eventual detached refresh completed"
-  # instead of racing the real detached child on process-scheduling timing.
-  do_refresh "$sandbox" "$FIXTURE_ROOT/valid-single-notice.json" 1.0.0
+  # The trace+lock completion above confirms the actual background refresh,
+  # rather than replacing it with a second synchronous refresh.
   [ -s "$(cache_file_in "$sandbox")" ] || fail "FX-NT-014: expected cache to be populated after refresh"
 
   # Run 2: the now-warm cache is this run's Snapshot; the notice must appear.
-  result="$(run_work_start_capturing_artifact "$sandbox" "fx-nt-015 second run" 1.0.0 "$FIXTURE_ROOT/does-not-exist.json")"
+  run_work_start_capturing_artifact "$sandbox" "fx-nt-015 second run" 1.0.0 "$FIXTURE_ROOT/does-not-exist.json"
+  result="$WORK_START_RESULT"
   artifact2="$(printf '%s' "$result" | head -1)"
   out2="$(printf '%s' "$result" | tail -n +2)"
   case "$out2" in
