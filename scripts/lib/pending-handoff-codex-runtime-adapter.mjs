@@ -34,7 +34,17 @@ const ACTION_DEPENDENCY_KEYS = Object.freeze([
   "sessionIdentityDeriver",
   "adapter_version",
 ]);
-const OPTIONAL_SPAWN_KEY = Object.freeze(["spawnAppServer"]);
+const OPTIONAL_ADAPTER_KEYS = Object.freeze(["spawnAppServer", "captureUsageObservations"]);
+const USAGE_NOTIFICATION_METHOD = "thread/tokenUsage/updated";
+const MAX_BUFFERED_USAGE_NOTIFICATIONS = 128;
+const USAGE_BREAKDOWN_KEYS = Object.freeze([
+  "inputTokens",
+  "cachedInputTokens",
+  "outputTokens",
+  "reasoningOutputTokens",
+  "totalTokens",
+]);
+const USAGE_BREAKDOWN_OPTIONAL_KEYS = Object.freeze(["cacheWriteInputTokens"]);
 const CURRENT_REQUEST_KEYS = Object.freeze(["runtime_id"]);
 const TARGET_REQUEST_KEYS = Object.freeze(["runtime_id", "session_identity"]);
 const ACTION_REQUEST_KEYS = Object.freeze([
@@ -92,8 +102,13 @@ export function createPendingHandoffCodexSessionResolutionAdapter(options) {
   const inspected = inspectResolutionDependencies(options);
   if (!inspected.ok) return failure(inspected.reason);
 
-  const { currentSessionObserver, sessionIdentityDeriver, spawnAppServer } = inspected.value;
-  const facade = Object.freeze({
+  const {
+    currentSessionObserver,
+    sessionIdentityDeriver,
+    spawnAppServer,
+    captureUsageObservations,
+  } = inspected.value;
+  const facade = {
     resolveCurrentSession: request => resolveCurrentSession(
       currentSessionObserver,
       sessionIdentityDeriver,
@@ -105,27 +120,77 @@ export function createPendingHandoffCodexSessionResolutionAdapter(options) {
       spawnAppServer,
       request,
     ),
-  });
-  return success(facade);
+  };
+  if (captureUsageObservations) {
+    facade.resolveCurrentSessionWithUsage = request => resolveWithUsage(
+      usageCapture => resolveCurrentSession(
+        currentSessionObserver,
+        sessionIdentityDeriver,
+        spawnAppServer,
+        request,
+        usageCapture,
+      ),
+    );
+    facade.resolveTargetSessionWithUsage = request => resolveWithUsage(
+      usageCapture => resolveTargetSession(
+        sessionIdentityDeriver,
+        spawnAppServer,
+        request,
+        usageCapture,
+      ),
+    );
+  }
+  return success(Object.freeze(facade));
 }
 
 export function createPendingHandoffCodexManualResumeExecutor(options) {
   const inspected = inspectActionDependencies(options);
   if (!inspected.ok) return failure(inspected.reason);
 
-  const { sessionIdentityDeriver, spawnAppServer, adapterVersion } = inspected.value;
-  const facade = Object.freeze({
+  const {
+    sessionIdentityDeriver,
+    spawnAppServer,
+    adapterVersion,
+    captureUsageObservations,
+  } = inspected.value;
+  const facade = {
     resolveAndResume: request => resolveAndResume(
       sessionIdentityDeriver,
       spawnAppServer,
       adapterVersion,
       request,
     ),
-  });
-  return success(facade);
+  };
+  if (captureUsageObservations) {
+    facade.resolveAndResumeWithUsage = request => resolveWithUsage(
+      usageCapture => resolveAndResume(
+        sessionIdentityDeriver,
+        spawnAppServer,
+        adapterVersion,
+        request,
+        usageCapture,
+      ),
+      "codex_action_unavailable",
+    );
+  }
+  return success(Object.freeze(facade));
 }
 
-async function resolveCurrentSession(observer, deriver, spawnAppServer, request) {
+async function resolveWithUsage(operation, fallbackReason = "unavailable") {
+  const usageCapture = createUsageNotificationCapture();
+  let result;
+  try {
+    result = await operation(usageCapture);
+  } catch {
+    result = failure(fallbackReason);
+  }
+  return Object.freeze({
+    result,
+    usage_observation: usageCapture.finish(),
+  });
+}
+
+async function resolveCurrentSession(observer, deriver, spawnAppServer, request, usageCapture = null) {
   const inspected = inspectCurrentRequest(request);
   if (!inspected.ok) return failure("unavailable");
   if (inspected.value.runtimeId !== CODEX_RUNTIME_ID) {
@@ -152,11 +217,12 @@ async function resolveCurrentSession(observer, deriver, spawnAppServer, request)
 
     const identity = await deriveOpaqueIdentity(deriver, nativeId);
     if (!identity.ok) return failure("unavailable");
+    usageCapture?.setTarget(nativeId, identity.value);
     return semanticSuccess(identity.value);
-  });
+  }, usageCapture);
 }
 
-async function resolveTargetSession(deriver, spawnAppServer, request) {
+async function resolveTargetSession(deriver, spawnAppServer, request, usageCapture = null) {
   const inspected = inspectTargetRequest(request);
   if (!inspected.ok) return failure("unavailable");
   if (inspected.value.runtimeId !== CODEX_RUNTIME_ID) {
@@ -169,13 +235,14 @@ async function resolveTargetSession(deriver, spawnAppServer, request) {
       deriver,
       inspected.value.sessionIdentity,
       "resolution",
+      usageCapture,
     );
     if (!discovered.ok) return discovered;
     return semanticSuccess(inspected.value.sessionIdentity);
-  });
+  }, usageCapture);
 }
 
-async function resolveAndResume(deriver, spawnAppServer, adapterVersion, request) {
+async function resolveAndResume(deriver, spawnAppServer, adapterVersion, request, usageCapture = null) {
   const inspected = inspectActionRequest(request);
   if (!inspected.ok) return failure("codex_action_input_invalid");
   const input = inspected.value;
@@ -186,6 +253,7 @@ async function resolveAndResume(deriver, spawnAppServer, adapterVersion, request
       deriver,
       input.targetSessionIdentity,
       "action",
+      usageCapture,
     );
     if (!target.ok) return target;
 
@@ -219,10 +287,10 @@ async function resolveAndResume(deriver, spawnAppServer, adapterVersion, request
       adapter_version: adapterVersion,
       outcome: "resume_accepted",
     }));
-  });
+  }, usageCapture);
 }
 
-async function discoverTarget(client, deriver, requestedIdentity, mode) {
+async function discoverTarget(client, deriver, requestedIdentity, mode, usageCapture = null) {
   const matches = [];
   const seenNativeIds = new Set();
   let pageCount = 0;
@@ -296,6 +364,7 @@ async function discoverTarget(client, deriver, requestedIdentity, mode) {
   if (matches.length > 1) {
     return failure(mode === "action" ? "codex_action_ambiguous" : "ambiguous");
   }
+  usageCapture?.setTarget(matches[0], requestedIdentity);
   return success({ nativeId: matches[0] });
 }
 
@@ -320,7 +389,171 @@ async function deriveOpaqueIdentity(deriver, nativeId, absoluteDeadline = null) 
   return success(inspected.values.identity);
 }
 
-async function runWithAppServer(spawnAppServer, mode, operation) {
+function createUsageNotificationCapture() {
+  const startedAt = new Date().toISOString();
+  let targetNativeId = null;
+  let targetIdentity = null;
+  let pending = [];
+  let overflowed = false;
+  let uncertainNotification = false;
+  let notificationCount = 0;
+  let latestUsage = null;
+  let latestUsageValid = false;
+  let latestObservedAt = null;
+
+  const accept = entry => {
+    if (entry.nativeId !== targetNativeId) return;
+    notificationCount += 1;
+    latestUsage = entry.usage;
+    latestUsageValid = entry.usageValid;
+    latestObservedAt = entry.observedAt;
+  };
+
+  return Object.freeze({
+    observeNotification(message) {
+      const inspected = inspectUsageNotification(message);
+      if (!inspected.ok) {
+        uncertainNotification = true;
+        return;
+      }
+      const entry = Object.freeze({
+        nativeId: inspected.value.nativeId,
+        usage: inspected.value.usage,
+        usageValid: inspected.value.usageValid,
+        observedAt: new Date().toISOString(),
+      });
+      if (targetNativeId !== null) {
+        accept(entry);
+        return;
+      }
+      if (pending.length >= MAX_BUFFERED_USAGE_NOTIFICATIONS) {
+        overflowed = true;
+        return;
+      }
+      pending.push(entry);
+    },
+    setTarget(nativeId, identity) {
+      if (!isNativeId(nativeId) || !isSessionIdentity(identity)) {
+        uncertainNotification = true;
+        return;
+      }
+      if (targetNativeId !== null && (targetNativeId !== nativeId || targetIdentity !== identity)) {
+        uncertainNotification = true;
+        targetNativeId = null;
+        targetIdentity = null;
+        pending = [];
+        notificationCount = 0;
+        latestUsage = null;
+        return;
+      }
+      targetNativeId = nativeId;
+      targetIdentity = identity;
+      for (const entry of pending) accept(entry);
+      pending = [];
+    },
+    finish() {
+      const finishedAt = new Date().toISOString();
+      let status = "UNKNOWN_NO_CAPTURE";
+      let count = targetNativeId === null ? "UNKNOWN" : notificationCount;
+      let tokenUsage = null;
+      if (overflowed || uncertainNotification) {
+        status = "UNKNOWN_NOTIFICATION_COVERAGE";
+        count = "UNKNOWN";
+      } else if (targetNativeId !== null && notificationCount === 0) {
+        status = "NO_NOTIFICATION_OBSERVED";
+      } else if (targetNativeId !== null && latestUsageValid) {
+        status = "UNVERIFIED_USAGE_NOTIFICATION";
+        tokenUsage = latestUsage;
+      } else if (targetNativeId !== null && notificationCount > 0) {
+        status = "UNKNOWN_INVALID_COUNTERS";
+      }
+      const tokenUsageProjection = tokenUsage === null ? null : Object.freeze({
+        last: tokenUsage.last,
+        total: tokenUsage.total,
+      });
+      const operationWindow = Object.freeze({ started_at: startedAt, finished_at: finishedAt });
+      return Object.freeze({
+        status,
+        source: "Codex App Server JSON-RPC thread/tokenUsage/updated",
+        source_verification: "UNKNOWN",
+        runtime_version: "UNKNOWN",
+        coverage: "UNKNOWN",
+        observed_at: latestObservedAt ?? finishedAt,
+        operation_window: operationWindow,
+        session_identity: targetIdentity ?? "UNKNOWN",
+        turn_attribution: "UNKNOWN",
+        deduplication: "NOT_PERFORMED",
+        aggregation: "LATEST_NOTIFICATION_ONLY_NO_SUM",
+        notification_count: count,
+        model: "UNKNOWN",
+        reasoning_effort: "UNKNOWN",
+        fast: "UNKNOWN",
+        token_usage: tokenUsageProjection,
+      });
+    },
+  });
+}
+
+function inspectUsageNotification(message) {
+  if (!isPlainObject(message)) return failure("invalid");
+  const paramsDescriptor = Object.getOwnPropertyDescriptor(message, "params");
+  if (!isEnumerableDataDescriptor(paramsDescriptor) || !isPlainObject(paramsDescriptor.value)) {
+    return failure("invalid");
+  }
+  const params = paramsDescriptor.value;
+  const threadDescriptor = Object.getOwnPropertyDescriptor(params, "threadId");
+  const usageDescriptor = Object.getOwnPropertyDescriptor(params, "tokenUsage");
+  if (!isEnumerableDataDescriptor(threadDescriptor) || !isNativeId(threadDescriptor.value)
+    || !isEnumerableDataDescriptor(usageDescriptor)) {
+    return failure("invalid");
+  }
+  const usage = inspectTokenUsage(usageDescriptor.value);
+  return success({
+    nativeId: threadDescriptor.value,
+    usage: usage.ok ? usage.value : null,
+    usageValid: usage.ok,
+  });
+}
+
+function inspectTokenUsage(value) {
+  const inspected = inspectExactDataObject(value, ["last", "total"], ["modelContextWindow"]);
+  if (!inspected.ok) return failure("invalid");
+  if (Object.hasOwn(inspected.values, "modelContextWindow")) {
+    const contextWindow = inspected.values.modelContextWindow;
+    if (contextWindow !== null
+      && (!Number.isSafeInteger(contextWindow) || contextWindow < 0)) {
+      return failure("invalid");
+    }
+  }
+  const last = projectUsageBreakdown(inspected.values.last);
+  const total = projectUsageBreakdown(inspected.values.total);
+  if (!last.ok || !total.ok) return failure("invalid");
+  return success(Object.freeze({ last: last.value, total: total.value }));
+}
+
+function projectUsageBreakdown(value) {
+  if (!isPlainObject(value)) return failure("invalid");
+  const projected = {};
+  for (const key of USAGE_BREAKDOWN_KEYS) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!isEnumerableDataDescriptor(descriptor)
+      || !Number.isSafeInteger(descriptor.value)
+      || descriptor.value < 0) {
+      return failure("invalid");
+    }
+    projected[key] = descriptor.value;
+  }
+  if (Object.hasOwn(value, "cacheWriteInputTokens")) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, "cacheWriteInputTokens");
+    if (!isEnumerableDataDescriptor(descriptor)
+      || !Number.isSafeInteger(descriptor.value)
+      || descriptor.value < 0) return failure("invalid");
+    projected.cacheWriteInputTokens = descriptor.value;
+  }
+  return success(Object.freeze(projected));
+}
+
+async function runWithAppServer(spawnAppServer, mode, operation, usageCapture = null) {
   let result = failure(mode === "action" ? "codex_action_unavailable" : "unavailable");
   let client = null;
   let spawned = null;
@@ -330,7 +563,7 @@ async function runWithAppServer(spawnAppServer, mode, operation) {
       executable: APP_SERVER_EXECUTABLE,
       argv: [...APP_SERVER_ARGV],
     }));
-    client = createJsonRpcClient(spawned);
+    client = createJsonRpcClient(spawned, usageCapture);
 
     const initialized = await requestRpc(client, "initialize", {
       clientInfo: {
@@ -391,7 +624,7 @@ async function requestRpc(client, method, params, timeoutMs = APP_SERVER_REQUEST
   return internalSuccess(raw);
 }
 
-function createJsonRpcClient(processLike) {
+function createJsonRpcClient(processLike, usageCapture = null) {
   const inspected = inspectProcessLike(processLike);
   if (!inspected.ok) throw internalError("protocol_invalid");
 
@@ -455,7 +688,12 @@ function createJsonRpcClient(processLike) {
 
     const hasId = Object.hasOwn(message, "id");
     const hasMethod = Object.hasOwn(message, "method");
-    if (!hasId && hasMethod && typeof message.method === "string") return;
+    if (!hasId && hasMethod && typeof message.method === "string") {
+      if (message.method === USAGE_NOTIFICATION_METHOD && usageCapture !== null) {
+        usageCapture.observeNotification(message);
+      }
+      return;
+    }
     if (!hasId || typeof message.id !== "number" || !Number.isSafeInteger(message.id)) {
       rejectAll("protocol_invalid");
       return;
@@ -686,7 +924,7 @@ function defaultSpawnAppServer({ executable, argv }) {
 }
 
 function inspectResolutionDependencies(value) {
-  const inspected = inspectExactDataObject(value, RESOLUTION_DEPENDENCY_KEYS, OPTIONAL_SPAWN_KEY);
+  const inspected = inspectExactDataObject(value, RESOLUTION_DEPENDENCY_KEYS, OPTIONAL_ADAPTER_KEYS);
   if (!inspected.ok) return failure("codex_action_dependency_invalid");
   if (
     !isCallable(inspected.values.currentSessionObserver)
@@ -697,15 +935,20 @@ function inspectResolutionDependencies(value) {
     ? inspected.values.spawnAppServer
     : defaultSpawnAppServer;
   if (!isCallable(spawnAppServer)) return failure("codex_action_dependency_invalid");
+  if (Object.hasOwn(inspected.values, "captureUsageObservations")
+    && typeof inspected.values.captureUsageObservations !== "boolean") {
+    return failure("codex_action_dependency_invalid");
+  }
   return success(Object.freeze({
     currentSessionObserver: inspected.values.currentSessionObserver,
     sessionIdentityDeriver: inspected.values.sessionIdentityDeriver,
     spawnAppServer,
+    captureUsageObservations: inspected.values.captureUsageObservations === true,
   }));
 }
 
 function inspectActionDependencies(value) {
-  const inspected = inspectExactDataObject(value, ACTION_DEPENDENCY_KEYS, OPTIONAL_SPAWN_KEY);
+  const inspected = inspectExactDataObject(value, ACTION_DEPENDENCY_KEYS, OPTIONAL_ADAPTER_KEYS);
   if (!inspected.ok) return failure("codex_action_dependency_invalid");
   if (
     !isCallable(inspected.values.sessionIdentityDeriver)
@@ -717,10 +960,15 @@ function inspectActionDependencies(value) {
     ? inspected.values.spawnAppServer
     : defaultSpawnAppServer;
   if (!isCallable(spawnAppServer)) return failure("codex_action_dependency_invalid");
+  if (Object.hasOwn(inspected.values, "captureUsageObservations")
+    && typeof inspected.values.captureUsageObservations !== "boolean") {
+    return failure("codex_action_dependency_invalid");
+  }
   return success(Object.freeze({
     sessionIdentityDeriver: inspected.values.sessionIdentityDeriver,
     spawnAppServer,
     adapterVersion: inspected.values.adapter_version,
+    captureUsageObservations: inspected.values.captureUsageObservations === true,
   }));
 }
 

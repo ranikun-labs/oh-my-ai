@@ -197,6 +197,10 @@ jobs:
           make test-truthfulness-fixtures
           make test-git-work-preflight-fixtures
 
+      - name: Run Codex app-server usage observer fixtures
+        run: node scripts/test-pending-handoff-codex-runtime-adapter-fixtures.mjs
+        timeout-minutes: 2
+
       - name: Run dev-main-flow install fixtures
         run: make test-dev-main-flow-install-fixtures
         timeout-minutes: 2
