@@ -92,6 +92,18 @@ function isNone(body) {
   return lines.every((l) => /^-?\s*`?none`?\.?$/i.test(l));
 }
 
+function isNoneOrTemplatePrompt(body, prompts = []) {
+  const lines = body.split("\n").map((line) => line.trim()).filter(Boolean);
+  if (lines.length === 0) return true;
+  const promptSet = new Set(prompts);
+  return lines.every((line) => {
+    if (/^-?\s*`?none`?\.?$/i.test(line)) return true;
+    const item = line.replace(/^[-*+]\s+/, "").trim();
+    const inlineCode = /^`([^`]*)`$/.exec(item);
+    return promptSet.has(inlineCode ? inlineCode[1] : item);
+  });
+}
+
 function field(metadataBody, name) {
   const m = metadataFields(metadataBody, name)[0];
   return m ? m[1].trim() : null;
@@ -133,10 +145,20 @@ function validate(markdown) {
     errors.push(`execution_status must be one of complete/partial/failed/blocked, got: ${executionStatus}`);
   }
 
-  const blockedReasonsEmpty = isNone(sections["Blocked Reasons"]);
-  const validationPerformedEmpty = isNone(sections["Validation Performed"]);
-  const validationNotPerformedEmpty = isNone(sections["Validation Not Performed"]);
-  const openIssuesEmpty = isNone(sections["Open Issues"]);
+  // Untouched template prompts are instructions to the worker, not evidence
+  // that a status gate was satisfied.
+  const blockedReasonsEmpty = isNoneOrTemplatePrompt(sections["Blocked Reasons"], [
+    "<reason the work is blocked>",
+  ]);
+  const validationPerformedEmpty = isNoneOrTemplatePrompt(sections["Validation Performed"], [
+    "<validation that was actually performed>",
+  ]);
+  const validationNotPerformedEmpty = isNoneOrTemplatePrompt(sections["Validation Not Performed"], [
+    "<validation that was requested or expected but not performed, with reason>",
+  ]);
+  const openIssuesEmpty = isNoneOrTemplatePrompt(sections["Open Issues"], [
+    "<open issue or question>",
+  ]);
   const scopeDeviationsEmpty = isNone(sections["Scope Deviations"]);
   const filesReadEmpty = isNone(sections["Files Read"]);
   const filesChangedEmpty = isNone(sections["Files Changed"]);

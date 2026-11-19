@@ -222,31 +222,37 @@ while [ "$#" -gt 0 ]; do
       ;;
     --expected-base-sha)
       require_value "$@"
+      [ -z "$expected_base_sha" ] || hard_stop NOT_VERIFIABLE 'Expected Base SHA was supplied more than once'
       expected_base_sha="$2"
       shift 2
       ;;
     --expected-branch-name)
       require_value "$@"
+      [ -z "$expected_branch_name" ] || hard_stop NOT_VERIFIABLE 'Expected Branch Candidate was supplied more than once'
       expected_branch_name="$2"
       shift 2
       ;;
     --issue-key)
       require_value "$@"
+      [ -z "$issue_key" ] || hard_stop NOT_VERIFIABLE 'Issue Key was supplied more than once'
       issue_key="$2"
       shift 2
       ;;
     --execution-policy)
       require_value "$@"
+      [ -z "$execution_policy" ] || hard_stop NOT_VERIFIABLE 'Execution Policy was supplied more than once'
       execution_policy="$2"
       shift 2
       ;;
     --consumer)
       require_value "$@"
+      [ -z "$consumer" ] || hard_stop NOT_VERIFIABLE 'Consumer was supplied more than once'
       consumer="$2"
       shift 2
       ;;
     --provided-evidence)
       require_value "$@"
+      [ -z "$provided_evidence" ] || hard_stop NOT_VERIFIABLE 'Provided Evidence was supplied more than once'
       provided_evidence="$2"
       shift 2
       ;;
@@ -457,7 +463,7 @@ if [ "$base_gate_status" = 'READY' ]; then
   fi
 fi
 
-if status_output="$(git -C "$repository" status --short --ignored 2>/dev/null)"; then
+if status_output="$(git --no-optional-locks -C "$repository" status --short --ignored 2>/dev/null)"; then
   working_tree_gate_status='READY'
 else
   status_output=''
@@ -483,7 +489,7 @@ while IFS= read -r line; do
       esac
       ;;
     '!!') ignored_count=$((ignored_count + 1)) ;;
-    *U*|UU) unmerged_count=$((unmerged_count + 1)) ;;
+    *U*|AA|DD) unmerged_count=$((unmerged_count + 1)) ;;
     *)
       [ "${code:0:1}" = ' ' ] || staged_count=$((staged_count + 1))
       [ "${code:1:1}" = ' ' ] || tracked_count=$((tracked_count + 1))
@@ -505,13 +511,11 @@ if [ "$unmerged_count" -gt 0 ]; then
   working_tree_status='UNMERGED_CONFLICT'
   working_tree_gate_status='BLOCKED_DIRTY_TREE'
   working_tree_gate_blocking_item='Unmerged conflict is present'
-fi
-if [ "$staged_count" -gt 0 ]; then
+elif [ "$staged_count" -gt 0 ]; then
   working_tree_status='STAGED_DIRTY'
   working_tree_gate_status='BLOCKED_DIRTY_TREE'
   working_tree_gate_blocking_item='Staged modification is present'
-fi
-if [ "$tracked_count" -gt 0 ]; then
+elif [ "$tracked_count" -gt 0 ]; then
   working_tree_status='TRACKED_DIRTY'
   working_tree_gate_status='BLOCKED_DIRTY_TREE'
   working_tree_gate_blocking_item='Tracked modification is present'
@@ -523,6 +527,8 @@ if [ "$unknown_untracked_count" -gt 0 ]; then
 fi
 if [ "$working_tree_gate_status" = 'NOT_VERIFIABLE' ]; then
   working_tree_status='NOT_VERIFIABLE'
+elif [ "$working_tree_gate_status" = 'BLOCKED_DIRTY_TREE' ]; then
+  : # Preserve the specific dirty state selected above.
 elif [ "$local_state_count" -gt 0 ]; then
   working_tree_status='UNTRACKED_LOCAL_STATE'
 else
@@ -589,8 +595,8 @@ if [ "$consumer" = 'jira-work' ] && [ -n "$issue_key" ]; then
   fi
 fi
 
-pr_json="$(cd "$repository" && gh pr list --repo "$canonical_repository" --head "$expected_branch_name" --state all --json state,isDraft,headRefName,baseRefName,headRefOid 2>/dev/null)" || { pr_status='NOT_VERIFIABLE'; hard_stop NOT_VERIFIABLE 'Canonical GitHub PR state cannot be queried'; }
-append_executed 'GitHub PR metadata JSON=QUERIED (state, headRefName, baseRefName, headRefOid)'
+pr_json="$(cd "$repository" && gh pr list --repo "$canonical_repository" --head "$expected_branch_name" --state all --json state,isDraft,headRefName,baseRefName,headRefOid,headRepository 2>/dev/null)" || { pr_status='NOT_VERIFIABLE'; hard_stop NOT_VERIFIABLE 'Canonical GitHub PR state cannot be queried'; }
+append_executed 'GitHub PR metadata JSON=QUERIED (state, headRefName, baseRefName, headRefOid, headRepository)'
 pr_metadata="$(printf '%s' "$pr_json" | node -e '
 let input = "";
 process.stdin.setEncoding("utf8");
@@ -604,6 +610,8 @@ process.stdin.on("end", () => {
     if (records.length !== 1) return emit("MULTIPLE");
     const pr = records[0];
     if (!pr || typeof pr.state !== "string" || typeof pr.isDraft !== "boolean" || typeof pr.headRefName !== "string" || typeof pr.baseRefName !== "string" || typeof pr.headRefOid !== "string") throw new Error("PR record is incomplete");
+    if (!pr.headRepository || typeof pr.headRepository.id !== "string" || !pr.headRepository.id) throw new Error("PR head repository identity unavailable");
+    if (pr.headRepository.id !== process.argv[3]) return emit("HEAD_REPOSITORY_MISMATCH", pr.headRefName, pr.baseRefName, pr.headRefOid);
     if (!/^[0-9a-fA-F]{40,64}$/.test(pr.headRefOid)) throw new Error("PR headRefOid is malformed");
     if (pr.headRefName !== process.argv[1]) return emit("HEAD_MISMATCH", pr.headRefName, pr.baseRefName, pr.headRefOid);
     if (pr.state === "MERGED") {
@@ -611,13 +619,14 @@ process.stdin.on("end", () => {
       return emit("MERGED", pr.headRefName, pr.baseRefName, pr.headRefOid);
     }
     if (pr.state === "CLOSED") return emit("CLOSED_UNMERGED", pr.headRefName, pr.baseRefName, pr.headRefOid);
+    if (pr.state === "OPEN" && pr.baseRefName !== process.argv[2]) return emit("OPEN_BASE_MISMATCH", pr.headRefName, pr.baseRefName, pr.headRefOid);
     if (pr.state === "OPEN") return emit(pr.isDraft ? "OPEN_DRAFT" : "OPEN_NON_DRAFT", pr.headRefName, pr.baseRefName, pr.headRefOid);
     throw new Error("PR state is unsupported");
   } catch (_) {
     process.exitCode = 1;
   }
 });
-' "$expected_branch_name" "$expected_base_branch")" || { pr_status='NOT_VERIFIABLE'; hard_stop NOT_VERIFIABLE 'GitHub PR response is malformed or unsupported'; }
+' "$expected_branch_name" "$expected_base_branch" "$push_repository_id")" || { pr_status='NOT_VERIFIABLE'; hard_stop NOT_VERIFIABLE 'GitHub PR response is malformed or unsupported'; }
 IFS=$'\t' read -r pr_status pr_head_ref pr_base_ref pr_head_sha <<< "$pr_metadata"
 
 if [ "$pr_status" = 'MERGED' ]; then
@@ -640,6 +649,16 @@ if [ "$pr_status" = 'MERGED_TIP_MISMATCH' ]; then
   existing_work_state='H'
   hard_stop CONFLICTED 'Current Local or Push Remote Feature tip differs from the merged PR head'
 fi
+if [ "$pr_status" = 'HEAD_REPOSITORY_MISMATCH' ]; then
+  existing_work_state='H'
+  hard_stop CONFLICTED 'PR head repository does not match the configured Push Repository'
+fi
+
+if [ "$pr_status" = 'OPEN_BASE_MISMATCH' ]; then
+  existing_work_state='H'
+  hard_stop CONFLICTED 'Open PR base branch does not match the expected Canonical Base Branch'
+fi
+
 if [ "$pr_status" = 'MERGED_BASE_MISMATCH' ]; then
   existing_work_state='H'
   hard_stop CONFLICTED 'Merged PR base branch does not match the expected Canonical Base Branch'
@@ -659,6 +678,14 @@ if [ "$working_tree_gate_status" = 'BLOCKED_DIRTY_TREE' ]; then
 fi
 if [ "$working_tree_gate_status" = 'NOT_VERIFIABLE' ]; then
   hard_stop NOT_VERIFIABLE "$working_tree_gate_blocking_item"
+fi
+
+# PR metadata and the independently observed push ref can be read at different
+# times.  A stale or moving Draft HEAD must never be advertised as resumable.
+if [ "$pr_status" = 'OPEN_DRAFT' ] && [ "$remote_branch_status" = 'PRESENT' ] && [ "$remote_branch_tip" != "$pr_head_sha" ]; then
+  pr_status='OPEN_HEAD_OID_MISMATCH'
+  existing_work_state='H'
+  hard_stop CONFLICTED 'Open Draft PR HEAD differs from the observed Push Remote Feature tip'
 fi
 
 if [ "$pr_status" = 'OPEN_DRAFT' ] && { [ "$local_branch_status" != 'PRESENT' ] || [ "$remote_branch_status" != 'PRESENT' ]; }; then

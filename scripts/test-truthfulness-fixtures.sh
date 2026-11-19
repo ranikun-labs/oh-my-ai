@@ -26,10 +26,10 @@ require_file() {
 }
 
 sandbox() {
-  local d
-  d="$(mktemp -d "${TMPDIR:-/tmp}/oh-my-ai-truthfulness-fixture.XXXXXX")"
-  cleanup_dirs+=("$d")
-  printf '%s\n' "$d"
+  local dir
+  dir="$(mktemp -d "${TMPDIR:-/tmp}/oh-my-ai-truthfulness-fixture.XXXXXX")"
+  cleanup_dirs+=("$dir")
+  printf -v "$1" '%s' "$dir"
 }
 
 expect_valid() {
@@ -116,7 +116,7 @@ fx_tr_006() {
 
 fx_repo_state_dirty_tree() {
   local d
-  d="$(sandbox)"
+  sandbox d
   git -C "$d" init -q
   git -C "$d" config user.email test@example.com
   git -C "$d" config user.name test
@@ -140,7 +140,7 @@ fx_repo_state_dirty_tree() {
 
 fx_repo_state_head_sync() {
   local d
-  d="$(sandbox)"
+  sandbox d
   git -C "$d" init -q
   git -C "$d" config user.email test@example.com
   git -C "$d" config user.name test
