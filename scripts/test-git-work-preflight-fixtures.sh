@@ -207,7 +207,7 @@ const fixture = JSON.parse(fs.readFileSync(fixturePath, "utf8"));
 assert.equal(fixture.contract, "git-work-preflight-runtime-fixtures-v2");
 assert.deepEqual(
   fixture.scenarios.map(({ id }) => id),
-  ["actual-pushurl-aligned", "canonical-repository-identity", "redirect-alias-repository-identity", "verified-fork-repository-identity", "draft-pr-verified-fork", "unrelated-repository-identity", "malformed-feature-branch", "malformed-base-branch", "multiple-pushurls", "canonical-push-remote-split", "local-only-base-tip", "local-only-unique-commit", "canonical-base-push-cache-mismatch", "canonical-pr-collision", "draft-pr-key-order", "draft-pr-head-repository-mismatch", "draft-pr-head-repository-missing", "draft-pr-base-mismatch", "draft-pr-head-oid-mismatch", "merged-pr", "merged-pr-after-base-advanced", "merged-pr-association-mismatch", "merged-pr-feature-tip-advanced", "merged-pr-base-mismatch", "aligned", "clean-index-refresh", "hidden-unknown-untracked", "tracked-dirty-original", "staged-dirty-status", "unmerged-dirty-status", "unmerged-both-added", "unmerged-both-deleted", "unmerged-and-tracked", "local-ahead", "remote-ahead", "diverged", "candidate-ancestor", "expected-canonical-base-mismatch", "github-unavailable", "multiple-prs", "report-newline-injection", "malformed-pr-json", "jira-association-unavailable", "jira-association-conflict", "remote-ahead-local-tip-already-in-base", "jira-association-unavailable-ancestor", "jira-association-matched-ancestor", "jira-association-conflicted-ancestor", "manual-review-ancestor", "stale-cached-feature-remote-ahead", "jira-work-missing-issue-key", "jira-work-valid-issue-key"],
+  ["actual-pushurl-aligned", "canonical-repository-identity", "redirect-alias-repository-identity", "verified-fork-repository-identity", "draft-pr-verified-fork", "unrelated-repository-identity", "malformed-feature-branch", "malformed-base-branch", "multiple-pushurls", "canonical-push-remote-split", "local-only-base-tip", "local-only-unique-commit", "canonical-base-push-cache-mismatch", "canonical-pr-collision", "draft-pr-key-order", "draft-pr-head-repository-mismatch", "draft-pr-head-repository-missing", "draft-pr-base-mismatch", "draft-pr-head-oid-mismatch", "merged-pr", "merged-pr-after-base-advanced", "merged-pr-association-mismatch", "merged-pr-feature-tip-advanced", "merged-pr-base-mismatch", "aligned", "clean-index-refresh", "hidden-unknown-untracked", "tracked-dirty-original", "tracked-dirty-with-unknown-untracked", "staged-dirty-status", "unmerged-dirty-status", "unmerged-both-added", "unmerged-both-deleted", "unmerged-and-tracked", "local-ahead", "remote-ahead", "diverged", "candidate-ancestor", "expected-canonical-base-mismatch", "github-unavailable", "multiple-prs", "report-newline-injection", "malformed-pr-json", "jira-association-unavailable", "jira-association-conflict", "remote-ahead-local-tip-already-in-base", "jira-association-unavailable-ancestor", "jira-association-matched-ancestor", "jira-association-conflicted-ancestor", "manual-review-ancestor", "stale-cached-feature-remote-ahead", "jira-work-missing-issue-key", "jira-work-valid-issue-key"],
 );
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "git-work-preflight-runtime-"));
@@ -304,6 +304,16 @@ const untrackedIndex = fs.readFileSync(path.join(untrackedRepo, ".git", "index")
 const untrackedStatusArgs = ["--no-optional-locks", "status", "--short", "--ignored"];
 assert.equal(cleanGit(untrackedStatusArgs, untrackedRepo), "", "plain Git status must hide the untracked fixture");
 assert.equal(cleanGit([...untrackedStatusArgs, "--untracked-files=normal"], untrackedRepo), "?? unknown-writer-source.txt\n");
+
+const mixedRepo = path.join(root, "tracked-dirty-with-unknown-untracked");
+fs.cpSync(repo, mixedRepo, { recursive: true });
+const mixedUnknownPath = path.join(mixedRepo, path.basename(unknownUntrackedPath));
+fs.copyFileSync(unknownUntrackedPath, mixedUnknownPath);
+const mixedIndex = fs.readFileSync(path.join(mixedRepo, ".git", "index"));
+assert.equal(
+  cleanGit([...untrackedStatusArgs, "--untracked-files=normal"], mixedRepo),
+  " M existing-writer-source.txt\n?? unknown-writer-source.txt\n",
+);
 
 const fakeGit = String.raw`#!/usr/bin/env bash
 set -euo pipefail
@@ -428,7 +438,7 @@ case "$command" in
   status)
     case "$scenario" in
       tracked-dirty-original) "$PREFLIGHT_SYSTEM_GIT" --no-optional-locks -C "$repo" status --short --ignored ;;
-      clean-index-refresh|hidden-unknown-untracked)
+      clean-index-refresh|hidden-unknown-untracked|tracked-dirty-with-unknown-untracked)
         status_repo="$repo"
         if [ "$scenario" = 'clean-index-refresh' ]; then status_repo="$PREFLIGHT_CLEAN_REPO"; fi
         set -- -C "$status_repo" status "$@"
@@ -538,7 +548,10 @@ try {
       : scenario.id === "jira-association-conflict" || scenario.id === "jira-association-conflicted-ancestor" || scenario.id === "merged-pr-association-mismatch"
         ? "repository-naming-rule-verified,issue-association-verified:RPL-TEST:other-branch"
         : "repository-naming-rule-verified";
-    const repository = scenario.id === "hidden-unknown-untracked" ? untrackedRepo : repo;
+    const repository = {
+      "hidden-unknown-untracked": untrackedRepo,
+      "tracked-dirty-with-unknown-untracked": mixedRepo,
+    }[scenario.id] ?? repo;
     const args = [
       "--repository", repository,
       "--canonical-repository", "ranikun-labs/oh-my-ai",
@@ -579,6 +592,15 @@ try {
       assert.equal(report.get("Untracked Local State"), "LOCAL_GENERATED=0; UNKNOWN=1");
       assert.deepEqual(fs.readFileSync(path.join(untrackedRepo, ".git", "index")), untrackedIndex, "blocked preflight must preserve the Git index");
       assert.equal(fs.readFileSync(unknownUntrackedPath, "utf8"), unknownUntrackedSource);
+    }
+    if (scenario.id === "tracked-dirty-with-unknown-untracked") {
+      assert.equal(report.get("Working Tree Status"), "TRACKED_DIRTY", "tracked dirty diagnosis takes precedence");
+      assert.equal(report.get("Blocking Items"), "Tracked modification is present");
+      assert.equal(report.get("Tracked Status"), "COUNT=1");
+      assert.equal(report.get("Untracked Local State"), "LOCAL_GENERATED=0; UNKNOWN=1");
+      assert.deepEqual(fs.readFileSync(path.join(mixedRepo, ".git", "index")), mixedIndex, "mixed dirty preflight must preserve the Git index");
+      assert.equal(fs.readFileSync(path.join(mixedRepo, path.basename(dirtySourcePath)), "utf8"), dirtySource);
+      assert.equal(fs.readFileSync(mixedUnknownPath, "utf8"), unknownUntrackedSource);
     }
     if (scenario.id === "staged-dirty-status") assert.equal(report.get("Working Tree Status"), "STAGED_DIRTY");
     if (scenario.id === "unmerged-dirty-status") assert.equal(report.get("Working Tree Status"), "UNMERGED_CONFLICT");
