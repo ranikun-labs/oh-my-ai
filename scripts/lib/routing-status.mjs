@@ -61,27 +61,29 @@ export function matchSkillCandidatesWithStatus(normalizedInput, options = {}) {
       if (excluded.has(skill.name)) continue;
 
       const routing = skill.routing;
-      const keywordTriggers = routing.triggers.filter(trigger => trigger.kind === "keyword");
-      const f1PatternTriggers = skill.name === "engineering-communication-ko"
+      const usesSpecAdvisory = skill.name === "spec-to-implementation";
+      const usesScopedPatterns = usesSpecAdvisory || skill.name === "engineering-communication-ko";
+      const keywordTriggers = usesSpecAdvisory ? [] : routing.triggers.filter(trigger => trigger.kind === "keyword");
+      const scopedPatternTriggers = usesScopedPatterns
         && routing.visibility !== "hidden" && routing.risk_level !== "high"
         ? routing.triggers.filter(trigger => trigger.kind === "pattern") : [];
-      supportedTriggerCount += keywordTriggers.length + f1PatternTriggers.length;
-      unsupportedTriggerCount += routing.triggers.length - keywordTriggers.length - f1PatternTriggers.length;
+      supportedTriggerCount += keywordTriggers.length + scopedPatternTriggers.length;
+      unsupportedTriggerCount += routing.triggers.length - keywordTriggers.length - scopedPatternTriggers.length;
 
       if (routing.visibility === "hidden" || routing.risk_level === "high") continue;
 
       const keywordValues = keywordTriggers.flatMap(trigger => trigger.values);
       let matched;
-      if (skill.name === "engineering-communication-ko") {
+      if (usesScopedPatterns) {
         // Broad substrings override the F1 pattern's negation and inquiry guards.
         // Keep explicit shorthand as exact input, and use the existing bounded pattern.
         const input = normalizedInput.trim();
         matched = keywordValues.filter(value => input === value.toLowerCase().trim());
-        for (const pattern of f1PatternTriggers.flatMap(trigger => trigger.values)) {
+        for (const pattern of scopedPatternTriggers.flatMap(trigger => trigger.values)) {
           try {
             if (normalizedInput.length <= 2000 && new RegExp(pattern, "i").test(input)) matched.push("pattern");
           } catch {
-            // A malformed F1 pattern must not prevent other skills from routing.
+            // A malformed advisory pattern must not prevent other skills from routing.
           }
         }
       } else {

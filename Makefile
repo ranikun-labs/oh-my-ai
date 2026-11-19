@@ -30,6 +30,7 @@ test-routing-fixtures:
 	./scripts/test-routing-fixtures.sh
 	bash ./scripts/test-f1-shared-routing.sh
 	node ./scripts/test-weekly-report-routing.mjs
+	node ./scripts/test-spec-advisory-routing.mjs
 
 test-work-start-fixtures:
 	./scripts/test-work-start-fixtures.sh

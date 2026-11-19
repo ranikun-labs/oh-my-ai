@@ -5,6 +5,16 @@ disable-model-invocation: true
 metadata:
   source: born-here
   summary: 큰 변경을 승인 가능한 명세부터 독립 검수와 PR Gate까지 이끄는 구현 절차
+  routing:
+    visibility: contextual
+    risk_level: medium
+    task_types:
+      - feature-planning
+    triggers:
+      - kind: pattern
+        values:
+          - '^(?![\s\S]*(?:`|"|''|“|”|\b(?:do\s+not|never|idea\s+only|without\s+implementation|explain|translate|example)\b))\s*(?:please\s+)?(?:build|implement|develop|define|plan|draft|specify)\b(?=[\s\S]*\brequirements\b)(?=[\s\S]*\bacceptance\s+criteria\b)[\s\S]+$'
+          - '^(?![\s\S]*(?:`|"|''|“|”|하지\s*(?:마|말|않)|구현\s*없이|설명만|아이디어만|쓰지\s*(?:마|말|않)|(?:구현|개발)(?:은|는|을|를)?\s*안\s*(?:해|하면|하)|번역|인용))\s*요구사항(?=[\s\S]*인수\s*기준)[\s\S]*(?:(?:구현|개발)(?:해\s*줘|해\s*주세요|하자)|만들어\s*줘|정리해\s*줘)\s*[.!]?\s*$'
 
 ---
 
