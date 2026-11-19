@@ -2,6 +2,14 @@ import assert from 'node:assert/strict';
 import { formatWorkTree } from './lib/work-tree-view.mjs';
 const input = {items:[{key:'RPL-112',title:'목표'},{key:'RPL-118',title:'Story'},{key:'RPL-113',title:'기능'}],relations:[{from:'RPL-112',to:'RPL-118',type:'parent'},{from:'RPL-112',to:'RPL-113',type:'parent'},{from:'RPL-118',to:'RPL-113',type:'relates'}]};
 const out = formatWorkTree(input);
+assert.match(out, /\| 출처 \| 확인 시각 \|/);
+assert.doesNotMatch(out, /Source updated_at/);
+const dated = formatWorkTree({
+  ...input,
+  items: [{ ...input.items[0], source_updated_at: '2026-11-09T07:47:40.614Z' }, ...input.items.slice(1)],
+});
+assert.match(dated, /\| 출처 \| Source updated_at \| 확인 시각 \|/);
+assert.match(dated, /RPL-112 \| 목표 \| UNKNOWN \| UNKNOWN \| 2026-11-09T07:47:40\.614Z \| UNKNOWN \|/);
 assert.match(out, /RPL-113 \| relates \| RPL-118/);
 assert.doesNotMatch(out, /RPL-118 \| parent \| RPL-113/);
 assert.match(out, /UNKNOWN/);

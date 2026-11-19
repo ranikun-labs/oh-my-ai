@@ -14,8 +14,8 @@ export function formatWorkTree(input) {
   if (!object(input) || !own(input, ['items', 'relations']) || !Array.isArray(input.items) || !Array.isArray(input.relations) || input.items.length > MAX_ITEMS || input.relations.length > MAX_RELATIONS) throw new TypeError('invalid work-tree input');
   const items = new Map();
   for (const x of input.items) {
-    if (!object(x) || !own(x, ['key','title','status','source_ref','observed_at']) || typeof x.key !== 'string' || x.key.length > 100 || !KEY.test(x.key) || items.has(x.key)) throw new TypeError('invalid or duplicate item');
-    for (const k of ['title','status','source_ref','observed_at']) if (x[k] != null && (typeof x[k] !== 'string' || x[k].length > 1000)) throw new TypeError('invalid item field');
+    if (!object(x) || !own(x, ['key','title','status','source_ref','source_updated_at','observed_at']) || typeof x.key !== 'string' || x.key.length > 100 || !KEY.test(x.key) || items.has(x.key)) throw new TypeError('invalid or duplicate item');
+    for (const k of ['title','status','source_ref','source_updated_at','observed_at']) if (x[k] != null && (typeof x[k] !== 'string' || x[k].length > 1000)) throw new TypeError('invalid item field');
     items.set(x.key, x);
   }
   const relations = [];
@@ -49,6 +49,25 @@ export function formatWorkTree(input) {
     active.delete(key); done.add(key); return false;
   }
   if ([...items.keys()].some(visit)) warnings.push('DRIFT: Parent 관찰에 순환이 있습니다.');
+  const issueRows = [...items.values()];
+  const showUpdates = issueRows.some(item => Object.hasOwn(item, 'source_updated_at'));
+  const itemColumns = [['key', '이슈'], ['title', '제목'], ['status', '상태'], ['source_ref', '출처']];
+  if (showUpdates) itemColumns.push(['source_updated_at', 'Source updated_at']);
+  itemColumns.push(['observed_at', '확인 시각']);
+
   // Flat edges preserve type, direction and many-to-many without fabricating a parent tree.
-  return ['# 업무 관계 보기', '', '호출자가 정제해 전달한 관찰만 표시합니다. 출처와 확인 시각은 호출자가 제공했으며 검증되지 않았습니다. Parent와 소속·의존·관련 링크는 다르며 자동 조회·완료 판정을 하지 않습니다.', ...warnings.map(w => `- ${safe(w)}`), '', '| 이슈 | 제목 | 상태 | 출처 | 확인 시각 |', '|---|---|---|---|---|', ...[...items.values()].map(x => `| ${safe(x.key)} | ${safe(x.title)} | ${safe(x.status)} | ${safe(x.source_ref)} | ${safe(x.observed_at)} |`), '', '| 시작 | 관계 | 대상 | 관찰 근거 (출처, 확인 시각) |', '|---|---|---|---|', ...relations.map(x => `| ${safe(x.from)} | ${safe(x.type)} | ${safe(x.to)} | ${x.evidence.map(e => `${safe(e.source_ref)}, ${safe(e.observed_at)}`).join(' ; ')} |`)].join('\n');
+  return [
+    '# 업무 관계 보기',
+    '',
+    '호출자가 정제해 전달한 관찰만 표시합니다. 출처와 확인 시각은 호출자가 제공했으며 검증되지 않았습니다. Parent와 소속·의존·관련 링크는 다르며 자동 조회·완료 판정을 하지 않습니다.',
+    ...warnings.map(w => `- ${safe(w)}`),
+    '',
+    `| ${itemColumns.map(([, heading]) => heading).join(' | ')} |`,
+    `|${itemColumns.map(() => '---').join('|')}|`,
+    ...issueRows.map(item => `| ${itemColumns.map(([field]) => safe(item[field])).join(' | ')} |`),
+    '',
+    '| 시작 | 관계 | 대상 | 관찰 근거 (출처, 확인 시각) |',
+    '|---|---|---|---|',
+    ...relations.map(x => `| ${safe(x.from)} | ${safe(x.type)} | ${safe(x.to)} | ${x.evidence.map(e => `${safe(e.source_ref)}, ${safe(e.observed_at)}`).join(' ; ')} |`),
+  ].join('\n');
 }
