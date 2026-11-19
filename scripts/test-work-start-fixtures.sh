@@ -548,6 +548,62 @@ parse_artifact_from_output() {
   sed -n 's/^work-start artifact created: //p' | tail -1
 }
 
+check_concurrent_work_start() {
+  local sandbox="$STATE_ROOT/concurrent-work-start"
+  local first_task="첫 번째 작업 요청" second_task="두 번째 작업 요청"
+  local first_path=".oh-my-ai/work-start/20261119T000000Z-task"
+  local first_pid second_pid first_status=0 second_status=0 path_a path_b artifact real_mkdir
+  mkdir -p "$sandbox/bin" "$sandbox/product"
+  git -C "$sandbox/product" init -q
+  printf '%s\n' '#!/usr/bin/env bash' "printf '%s\\n' 20261119T000000Z" > "$sandbox/bin/date"
+  # Both runs reach mkdir for the same base name before either can create it.
+  cat > "$sandbox/bin/mkdir" <<'BASH'
+#!/usr/bin/env bash
+if [ "${!#}" = "$WORK_START_FIRST_PATH" ]; then
+  : > "$WORK_START_BARRIER/ready.$$"
+  for ((attempt=0; attempt<500; attempt++)); do
+    ready=("$WORK_START_BARRIER"/ready.*)
+    if [ "${#ready[@]}" -ge 2 ]; then
+      exec "$WORK_START_REAL_MKDIR" "$@"
+    fi
+    sleep 0.01
+  done
+  exit 1
+fi
+exec "$WORK_START_REAL_MKDIR" "$@"
+BASH
+  chmod +x "$sandbox/bin/date" "$sandbox/bin/mkdir"
+  real_mkdir="$(command -v mkdir)"
+  (
+    cd "$sandbox/product"
+    export OH_MY_AI_HOME="$REPO" PATH="$sandbox/bin:$PATH"
+    export WORK_START_FIRST_PATH="$first_path" WORK_START_BARRIER="$sandbox" WORK_START_REAL_MKDIR="$real_mkdir"
+    node "$REPO/scripts/oh-my-ai.mjs" work-start -- "$first_task" > "$sandbox/first.out" 2>&1 &
+    first_pid=$!
+    node "$REPO/scripts/oh-my-ai.mjs" work-start -- "$second_task" > "$sandbox/second.out" 2>&1 &
+    second_pid=$!
+    wait "$first_pid" || first_status=$?
+    wait "$second_pid" || second_status=$?
+    if [ "$first_status" != 0 ] || [ "$second_status" != 0 ]; then
+      cat "$sandbox/first.out" "$sandbox/second.out" >&2
+      fail "concurrent Work-start failed: $first_status/$second_status"
+    fi
+  )
+  path_a="$(parse_artifact_from_output < "$sandbox/first.out")"
+  path_b="$(parse_artifact_from_output < "$sandbox/second.out")"
+  case "$path_a $path_b" in
+    "$first_path $first_path-2"|"$first_path-2 $first_path") ;;
+    *) fail "concurrent Work-start returned unexpected artifact paths: $path_a / $path_b" ;;
+  esac
+  require_fixed "$first_task" "$sandbox/product/$path_a/handoff-candidate.md"
+  require_fixed "$second_task" "$sandbox/product/$path_b/handoff-candidate.md"
+  for artifact in "$path_a" "$path_b"; do
+    [ "$(sed -n 's/^- handoff_ref: //p' "$sandbox/product/$artifact/handoff-candidate.md")" = "handoff-${artifact##*/}" ] \
+      || fail "concurrent Work-start produced an unexpected handoff_ref for $artifact"
+  done
+  echo "passed: concurrent Work-start preserves separate Candidates and handoff references"
+}
+
 check_codex_runtime_entry_argument_normalization() {
   local fixture_dir="$1"
   local task_file="$fixture_dir/input/codex-prompt.txt"
@@ -770,6 +826,7 @@ check_search_backend_degradation() {
 
 require_file "skills/work-start/SKILL.md"
 
+check_concurrent_work_start
 run_fixture "$FIXTURE_ROOT/FX-WSH-001-positive-doc-task"
 run_fixture "$FIXTURE_ROOT/FX-WSH-010-ambiguous-deploy-task"
 run_fixture "$FIXTURE_ROOT/FX-WSH-020-multi-scope-task"
