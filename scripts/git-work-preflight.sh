@@ -520,8 +520,7 @@ elif [ "$tracked_count" -gt 0 ]; then
   working_tree_status='TRACKED_DIRTY'
   working_tree_gate_status='BLOCKED_DIRTY_TREE'
   working_tree_gate_blocking_item='Tracked modification is present'
-fi
-if [ "$unknown_untracked_count" -gt 0 ]; then
+elif [ "$unknown_untracked_count" -gt 0 ]; then
   working_tree_status='UNTRACKED_UNKNOWN'
   working_tree_gate_status='NOT_VERIFIABLE'
   working_tree_gate_blocking_item='Unknown untracked state requires Repository policy evidence'
