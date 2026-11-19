@@ -186,6 +186,9 @@ Guard 상태를 unresolved로 유지한다.
 
 `CONTEXT CHECKPOINT`는 장기 맥락 갱신이며 Worker 실행 지시문이 아니다. 현재 Task를 다음 Worker Session에 전달해야 하면 최신 Context를 준비한 뒤 `handoff-prompt`로 Structured Handoff Candidate를 별도 생성한다.
 
+세션 간 전달 시에는 결정·현재 상태·다음 행동에 각각 원본 경로와 revision 또는 관측 시각을 연결한다. 다음 세션은 원본과 현재 업무 상태를 확인해 내용을 이어받는다. 결정의 소유자나 적용 범위를 확인하지 못한 항목은 미확인으로 표시한다. 유효한 기록이 상충하면 선택한 값으로 덮지 말고 근거와 새 판단이 필요한 지점을 남긴다.
+
+
 ---
 
 ## Context 갱신 사건

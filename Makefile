@@ -17,8 +17,8 @@ doctor-dev-main-flow:
 	./setup.sh --doctor-dev-main-flow
 
 install-dev-main-flow:
-	$(if $(or $(filter-out 0 1,$(or $(DRY_RUN),0)),$(filter-out 1,$(words $(or $(DRY_RUN),0))),$(filter-out 0 1,$(or $(WITH_HANDOFF),0)),$(filter-out 1,$(words $(or $(WITH_HANDOFF),0))),$(filter-out 0 1,$(or $(WITH_RECORD_SYNC),0)),$(filter-out 1,$(words $(or $(WITH_RECORD_SYNC),0)))),$(error DRY_RUN, WITH_HANDOFF, and WITH_RECORD_SYNC must each be 0 or 1),)
-	./setup.sh --install-dev-main-flow $(if $(filter 1,$(WITH_HANDOFF)),--with-handoff) $(if $(filter 1,$(WITH_RECORD_SYNC)),--with-record-sync) $(if $(filter 1,$(DRY_RUN)),--dry-run)
+	$(if $(or $(filter-out 0 1,$(or $(DRY_RUN),0)),$(filter-out 1,$(words $(or $(DRY_RUN),0))),$(filter-out 0 1,$(or $(WITH_HANDOFF),0)),$(filter-out 1,$(words $(or $(WITH_HANDOFF),0))),$(filter-out 0 1,$(or $(WITH_RECORD_SYNC),0)),$(filter-out 1,$(words $(or $(WITH_RECORD_SYNC),0))),$(filter-out 0 1,$(or $(WITH_SPEC),0)),$(filter-out 1,$(words $(or $(WITH_SPEC),0)))),$(error DRY_RUN, WITH_HANDOFF, WITH_RECORD_SYNC, and WITH_SPEC must each be 0 or 1),)
+	./setup.sh --install-dev-main-flow $(if $(filter 1,$(WITH_HANDOFF)),--with-handoff) $(if $(filter 1,$(WITH_RECORD_SYNC)),--with-record-sync) $(if $(filter 1,$(WITH_SPEC)),--with-spec) $(if $(filter 1,$(DRY_RUN)),--dry-run)
 
 doctor-strict:
 	./setup.sh --doctor --strict

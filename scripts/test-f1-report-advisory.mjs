@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { validateAiStatus, validateF1Report } from "./f1-report-advisory.mjs";
+import { formatUsageObservationForF1, validateAiStatus, validateF1Report } from "./f1-report-advisory.mjs";
 import { matchSkillCandidatesWithStatus } from "./lib/routing-status.mjs";
 
 const validReport = `# F1 보고 구조 검사기
@@ -980,4 +980,106 @@ try {
   }
 } finally {
   fs.rmSync(aiStatusFixtureDir, { recursive: true, force: true });
+}
+
+const syntheticUsageEnvelope = {
+  result: { ok: true },
+  usage_observation: {
+    status: "UNVERIFIED_USAGE_NOTIFICATION",
+    source: "Codex App Server JSON-RPC thread/tokenUsage/updated",
+    source_verification: "UNKNOWN",
+    runtime_version: "UNKNOWN",
+    coverage: "UNKNOWN",
+    observed_at: "2026-11-19T10:02:00.000Z",
+    operation_window: {
+      started_at: "2026-11-19T10:01:00.000Z",
+      finished_at: "2026-11-19T10:02:00.000Z",
+    },
+    session_identity: "phr1.session.fixture.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    turn_attribution: "UNKNOWN",
+    deduplication: "NOT_PERFORMED",
+    aggregation: "LATEST_NOTIFICATION_ONLY_NO_SUM",
+    notification_count: 1,
+    model: "UNKNOWN",
+    reasoning_effort: "UNKNOWN",
+    fast: "UNKNOWN",
+    token_usage: {
+      last: { inputTokens: 7, cachedInputTokens: 2, outputTokens: 3, reasoningOutputTokens: 1, totalTokens: 10, cacheWriteInputTokens: 0 },
+      total: { inputTokens: 70, cachedInputTokens: 20, outputTokens: 30, reasoningOutputTokens: 10, totalTokens: 100, cacheWriteInputTokens: 0 },
+    },
+  },
+};
+const syntheticAttribution = { agent_id: "writer-7", role: "Writer" };
+const renderedUsage = formatUsageObservationForF1(syntheticUsageEnvelope, syntheticAttribution);
+assert.equal(renderedUsage.agent_id, "writer-7");
+assert.equal(renderedUsage.role, "Writer");
+assert.match(renderedUsage.attribution, /CALLER_ASSERTED/);
+assert.match(renderedUsage.usage_cell, /Agent execution usage UNKNOWN/);
+assert.match(renderedUsage.usage_cell, /input=7/);
+assert.match(renderedUsage.usage_cell, /reported_total=100/);
+assert.match(renderedUsage.usage_cell, /latest matched notification only; no deduplication or sum/);
+assert.match(renderedUsage.usage_cell, /model\/reasoning\/Fast.*UNKNOWN/);
+assert.doesNotMatch(JSON.stringify(renderedUsage), /phr1.session.fixture.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/);
+
+const noNotificationEnvelope = structuredClone(syntheticUsageEnvelope);
+noNotificationEnvelope.usage_observation.status = "NO_NOTIFICATION_OBSERVED";
+noNotificationEnvelope.usage_observation.token_usage = null;
+noNotificationEnvelope.usage_observation.notification_count = 0;
+const noNotificationUsage = formatUsageObservationForF1(noNotificationEnvelope, syntheticAttribution);
+assert.match(noNotificationUsage.usage_cell, /does not prove the run had no usage/);
+assert.doesNotMatch(noNotificationUsage.usage_cell, /input=7|reported_total=100/);
+assert.equal(formatUsageObservationForF1(syntheticUsageEnvelope, { agent_id: "writer|injected", role: "Writer" }).agent_id, "UNKNOWN");
+const wrongSourceEnvelope = structuredClone(syntheticUsageEnvelope);
+wrongSourceEnvelope.usage_observation.source = "another-source";
+assert.match(formatUsageObservationForF1(wrongSourceEnvelope, syntheticAttribution).usage_cell, /^UNKNOWN/);
+const proxyEnvelope = new Proxy({}, { get() { throw new Error("getter must not execute"); } });
+assert.match(formatUsageObservationForF1(proxyEnvelope, syntheticAttribution).usage_cell, /^UNKNOWN/);
+const injectedTimestamp = structuredClone(syntheticUsageEnvelope);
+injectedTimestamp.usage_observation.observed_at = "2026-11-19 (private-sentinel)";
+const rejectedTimestamp = formatUsageObservationForF1(injectedTimestamp, syntheticAttribution);
+assert.match(rejectedTimestamp.usage_cell, /^UNKNOWN/);
+assert.doesNotMatch(rejectedTimestamp.usage_cell, /private-sentinel/);
+const outOfWindow = structuredClone(syntheticUsageEnvelope);
+outOfWindow.usage_observation.observed_at = "2026-11-19T10:03:00.000Z";
+assert.match(formatUsageObservationForF1(outOfWindow, syntheticAttribution).usage_cell, /^UNKNOWN/);
+const falseAbsence = structuredClone(noNotificationEnvelope);
+falseAbsence.usage_observation.notification_count = 1;
+assert.doesNotMatch(formatUsageObservationForF1(falseAbsence, syntheticAttribution).usage_cell, /no matching notification was observed/);
+falseAbsence.usage_observation.notification_count = 0;
+falseAbsence.usage_observation.source = "another-source";
+assert.doesNotMatch(formatUsageObservationForF1(falseAbsence, syntheticAttribution).usage_cell, /no matching notification was observed/);
+const unknownSession = structuredClone(syntheticUsageEnvelope);
+unknownSession.usage_observation.session_identity = "UNKNOWN";
+assert.doesNotMatch(formatUsageObservationForF1(unknownSession, syntheticAttribution).usage_cell, /input=7/);
+console.log("f1 usage observation formatter fixtures passed: 10/10");
+
+const usageFixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "f1-usage-observation-"));
+try {
+  const usageInputPath = path.join(usageFixtureDir, "observation.json");
+  fs.writeFileSync(usageInputPath, JSON.stringify(syntheticUsageEnvelope));
+  const usageConsumerCli = spawnSync(process.execPath, [
+    checkerPath,
+    "--usage-observation-json", usageInputPath,
+    "--usage-agent-id", "writer-7",
+    "--usage-role", "Writer",
+  ], {
+    cwd: os.tmpdir(),
+    encoding: "utf8",
+    timeout: 5000,
+  });
+  if (usageConsumerCli.error?.code === "EPERM") {
+    console.log("f1 usage observation consumer CLI fixture NOT_RUN: sandbox spawnSync EPERM");
+  } else {
+    assert.equal(usageConsumerCli.error, undefined, usageConsumerCli.error?.message);
+    assert.equal(usageConsumerCli.signal, null, usageConsumerCli.stderr);
+    assert.equal(usageConsumerCli.status, 0, usageConsumerCli.stderr);
+    const cliUsage = JSON.parse(usageConsumerCli.stdout);
+    assert.equal(cliUsage.mode, "MANUAL_F1_USAGE_CELL; not inserted into a report");
+    assert.equal(cliUsage.agent_id, "writer-7");
+    assert.match(cliUsage.usage_cell, /Agent execution usage UNKNOWN/);
+    assert.doesNotMatch(usageConsumerCli.stdout, /phr1.session.fixture.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/);
+    console.log("f1 usage observation formatter and CLI fixtures passed: 1 CLI + 7 contract cases");
+  }
+} finally {
+  fs.rmSync(usageFixtureDir, { recursive: true, force: true });
 }

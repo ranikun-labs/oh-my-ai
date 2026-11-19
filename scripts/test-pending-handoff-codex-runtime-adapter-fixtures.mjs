@@ -1,3 +1,4 @@
+import { formatUsageObservationForF1 } from "./f1-report-advisory.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
@@ -1495,6 +1496,10 @@ await group("protocol, failure, and cleanup safety", async () => {
     const invocationA = await adapter.resolveTargetSessionWithUsage({ runtime_id: "codex", session_identity: SESSION_A });
     assertResolutionSuccess(invocationA.result, "codex", SESSION_A);
     assert.equal(invocationA.usage_observation.token_usage.last.inputTokens, 7);
+    const f1Usage = formatUsageObservationForF1(invocationA, { agent_id: "writer-fixture", role: "Writer" });
+    assert.match(f1Usage.usage_cell, /input=7/);
+    assert.doesNotMatch(f1Usage.usage_cell, /phr1\.session/);
+
 
     const invocationB = await adapter.resolveTargetSessionWithUsage({ runtime_id: "other", session_identity: SESSION_A });
     assertResolutionFailure(invocationB.result, "runtime_unsupported");

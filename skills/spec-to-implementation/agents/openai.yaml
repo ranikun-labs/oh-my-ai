@@ -1,0 +1,7 @@
+interface:
+  display_name: "Spec to Implementation"
+  short_description: "Define and implement an approved substantial change"
+  default_prompt: "Use $spec-to-implementation to clarify requirements and acceptance criteria for this substantial change, then continue within verified approval."
+
+policy:
+  allow_implicit_invocation: false

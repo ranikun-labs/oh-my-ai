@@ -1297,9 +1297,26 @@ check_dev_main_flow_codex_installer() {
   assert_link "$target_root/skills/work-record-sync" "$REPO/skills/work-record-sync"
   [ ! -e "$target_root/skills/handoff-prompt" ] || fail "Handoff Skill installed with record-sync-only opt-in"
 
+  [ ! -e "$target_root/skills/spec-to-implementation" ] || fail "spec Skill installed without opt-in"
+  target_root="$TEMP_ROOT/dev-main-flow-install/spec-only agents"
+  output="$(env HOME="$home_dir" AGENT_DIR="$target_root" "$REPO/setup.sh" --install-dev-main-flow --with-spec --dry-run 2>&1)" \
+    || fail "spec Skill dry-run failed: $output"
+  [ ! -e "$target_root" ] || fail "spec Skill dry-run created its target root"
+  output="$(env HOME="$home_dir" AGENT_DIR="$target_root" "$REPO/setup.sh" --install-dev-main-flow --with-spec 2>&1)" \
+    || fail "spec Skill install failed: $output"
+  assert_link "$target_root/skills/spec-to-implementation" "$REPO/skills/spec-to-implementation"
+
+  output="$(env HOME="$home_dir" AGENT_DIR="$target_root" make --no-print-directory -C "$REPO" doctor-dev-main-flow 2>&1)" \
+    || fail "doctor failed after spec Skill install: $output"
+  require_fixed "spec-to-implementation: ready" "$output"
+  target_root="$TEMP_ROOT/dev-main-flow-install/spec-make agents"
+  output="$(env HOME="$home_dir" AGENT_DIR="$target_root" make --no-print-directory -C "$REPO" install-dev-main-flow WITH_SPEC=1 2>&1)" \
+    || fail "spec Skill install through Make failed: $output"
+  assert_link "$target_root/skills/spec-to-implementation" "$REPO/skills/spec-to-implementation"
+
   # These flags must be tied to the new explicit install mode. In particular,
   # an option by itself must not fall through to the legacy default installer.
-  for optional_flag in --with-handoff --with-record-sync; do
+  for optional_flag in --with-handoff --with-record-sync --with-spec; do
     option_home="$TEMP_ROOT/dev-main-flow-install/option alone ${optional_flag#--with-}"
     set +e
     output="$(run_setup "$REPO" "$option_home" "$optional_flag" 2>&1)"
