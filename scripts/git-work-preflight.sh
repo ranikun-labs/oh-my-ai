@@ -463,11 +463,15 @@ if [ "$base_gate_status" = 'READY' ]; then
   fi
 fi
 
-# Override status.showUntrackedFiles so local config cannot hide unknown paths.
-if status_output="$(git --no-optional-locks -C "$repository" status --short --ignored --untracked-files=normal 2>/dev/null)"; then
+# Inspect initialized submodules separately so their own config cannot hide changes.
+tree_observation="$(node "$(dirname -- "${BASH_SOURCE[0]}")/lib/git-work-preflight-tree.mjs" "$repository" 2>/dev/null)" || tree_observation='UNAVAILABLE'
+status_output=''
+if [[ "$tree_observation" = *$'\n'* ]]; then
+  status_output="${tree_observation#*$'\n'}"
+fi
+if [ "${tree_observation%%$'\n'*}" = 'VERIFIED' ]; then
   working_tree_gate_status='READY'
 else
-  status_output=''
   working_tree_status='NOT_VERIFIABLE'
   working_tree_gate_status='NOT_VERIFIABLE'
   working_tree_gate_blocking_item='Working Tree cannot be verified'

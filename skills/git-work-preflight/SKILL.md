@@ -81,7 +81,7 @@ using them as refs.
 The Runtime may use only these read-only operations after confirming the
 Repository and ref input are usable:
 
-- `git check-ref-format --branch`, `git rev-parse`, `git status`, `git branch --list`, `git branch -vv`, `git remote get-url`, `git remote get-url --push`
+- `git check-ref-format --branch`, `git rev-parse`, `git status`, `git ls-files --stage -z`, `git config --null --get-regexp`, `git check-attr --stdin -z`, `git branch --list`, `git branch -vv`, `git remote get-url`, `git remote get-url --push`
 - `git ls-remote`, `git rev-list`, `git merge-base`, `git log`
 - `gh repo view`, `gh pr list`, `gh pr view`
 
@@ -89,6 +89,15 @@ The Runtime reports executed Evidence separately from supplied Evidence. An
 unexecuted query is `NOT_CHECKED`, not a successful absence result. It parses
 `gh pr list` with Node.js JSON parsing, so PR state never depends on JSON key
 order; malformed, unavailable, or multiple records fail closed as appropriate.
+
+Working Tree inspection checks initialized submodules recursively using local
+Git state. It checks each worktree for tracked, staged, unmerged, and untracked
+changes regardless of Git status display settings. An absent or empty
+uninitialized submodule does not block a clean worktree. Unverifiable submodule
+metadata blocks readiness. A worktree whose indexed files use a configured
+external clean or process filter cannot be verified without running that
+filter. Unused filter registrations do not affect readiness. Changes verified
+elsewhere still produce their dirty-tree diagnosis when coverage is partial.
 
 For a Feature Branch, Local Base SHA is the merge base between current HEAD and
 the authoritative canonical Base SHA. This detects a stale integration point
