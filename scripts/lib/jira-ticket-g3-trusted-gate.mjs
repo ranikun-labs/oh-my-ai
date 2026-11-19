@@ -186,7 +186,7 @@ function isCurrentActivation(payload, now, stage) {
 
 function metadataContent(payload) {
   return { project: payload.project, issue_type: payload.issue_type,
-    issue_type_id: payload.issue_type_id, startAt: payload.startAt,
+    issue_type_id: payload.issue_type_id, site_origin: payload.site_origin, cloud_id: payload.cloud_id, startAt: payload.startAt,
     maxResults: payload.maxResults, total: payload.total, fields: payload.fields };
 }
 
@@ -403,6 +403,10 @@ function assertCreateRequestMetadata(request, metadata, policy, issueTypeBinding
     if (typeof field?.required !== "boolean" || typeof field?.hasDefaultValue !== "boolean")
       throw new Error(`live Jira required/default metadata is incomplete: ${id}`);
     const value = createValueForField(id, request, issueTypeBinding);
+    if (id === "duedate" && Object.hasOwn(request.fields, id)) {
+      assertMetadataValue(id, value, field);
+      continue;
+    }
     if (!hasCreateValue(value)) {
       if (field.required && !field.hasDefaultValue)
         throw new Error(`required live Jira Create field is missing: ${id}`);
@@ -462,9 +466,9 @@ export function inspectG3TaskPilotDryRunRequest({ metadata, request } = {}) {
     throw new Error("Task Target Product/Component/Concern metadata does not match the G3 contract");
 
   for (const id of ["customfield_10015", "duedate"]) {
-    if (fields[id]?.required !== true || fields[id]?.hasDefaultValue !== false
-      || fields[id]?.schema?.type !== "date")
-      throw new Error(`Task ${id} must remain a required date without a default`);
+    if (typeof fields[id]?.required !== "boolean" || (id !== "duedate" && !fields[id].required)
+      || fields[id]?.hasDefaultValue !== false || fields[id]?.schema?.type !== "date")
+      throw new Error(`Invalid Task date metadata: ${id}`);
   }
   if (fields.customfield_10045?.required !== true || fields.customfield_10045.hasDefaultValue !== true
     || fields.customfield_10045.schema?.type !== "array" || fields.customfield_10045.schema.items !== "user")
@@ -574,14 +578,21 @@ export function createG3TrustedGate({ source, trustedKeys, now = Date.now, maxEv
       throw new Error("G3 Activation scope mismatch");
     if (current && activation.scope.project !== context.project)
       throw new Error("current G3 Activation project mismatch");
+    const connection = context.jira_connection;
+    if (!connection || !/^https:\/\/[^/]+$/.test(connection.site_origin ?? "")
+      || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(connection.cloud_id ?? ""))
+      throw new Error("missing verified Jira site and cloud ID");
     const [policyEnvelope, metadataEnvelope] = await Promise.all([
       source.fetchPolicy({ policy_sha256: activation.policy_sha256 }),
-      source.fetchLiveMetadata({ project: activation.scope.project, issue_type: activation.scope.issue_type }),
+      source.fetchLiveMetadata({ project: activation.scope.project, issue_type: activation.scope.issue_type,
+        site_origin: connection.site_origin, cloud_id: connection.cloud_id }),
     ]);
     const time = now();
     if (!Number.isFinite(time)) throw new Error("invalid G3 gate clock");
     const policy = verifyG3SignedEvidence(policyEnvelope, pinnedKeys, { now: time, maxAgeMs: maxEvidenceAgeMs });
     const metadata = verifyG3SignedEvidence(metadataEnvelope, pinnedKeys, { now: time, maxAgeMs: maxEvidenceAgeMs });
+    if (metadata.site_origin !== connection.site_origin || metadata.cloud_id !== connection.cloud_id)
+      throw new Error("signed Jira metadata does not match the verified site and cloud ID");
     const matched = matchesPolicyAndMetadata(activation, policy, metadata);
     const ageLimit = Math.min(maxEvidenceAgeMs, policy.max_metadata_age_ms ?? maxEvidenceAgeMs);
     if (time - timestamp(metadata.observed_at, "metadata observed_at") > ageLimit)
@@ -624,7 +635,7 @@ export function createG3TrustedGate({ source, trustedKeys, now = Date.now, maxEv
     if (stage === "search") {
       const project = context.project;
       if (project !== "RPL") throw new Error("G3 project outside approved scope");
-      const records = await loadEvidence(stage, { project }, { current: true });
+      const records = await loadEvidence(stage, { project, jira_connection: context.jira_connection }, { current: true });
       if (!context.create_preflight)
         throw new Error("G3 Search requires a metadata-validated Create preflight");
       assertCreateRequestMetadata(context.create_preflight, records.metadata, records.policy,
@@ -641,7 +652,8 @@ export function createG3TrustedGate({ source, trustedKeys, now = Date.now, maxEv
     const project = stage === "create" ? request?.project : stage === "intent" ? "RPL" : binding?.project;
     const issueType = stage === "create" ? request?.issue_type : stage === "intent" ? context.issue_type : binding?.issue_type;
     const previewId = stage === "intent" ? context.approved_preview_id : binding?.approved_preview_id;
-    const records = await loadEvidence(stage, { activation_ref: activationRef, project, issue_type: issueType });
+    const records = await loadEvidence(stage, { activation_ref: activationRef, project, issue_type: issueType,
+      jira_connection: context.jira_connection });
     const { activation, policy, metadata } = records;
     if (activation.scope.ledger_ref !== context.ledger_ref && stage === "intent")
       throw new Error("G3 ledger reference is outside Activation scope");
@@ -740,6 +752,7 @@ export function createG3TrustedGate({ source, trustedKeys, now = Date.now, maxEv
     }
     return { allowed: true, evidence_ref: signedRef([records.activationEnvelope, records.policyEnvelope,
       records.metadataEnvelope, binding.approvalEnvelope]), cutover_approval_ref: binding.approval_ref,
-      ...(stage === "create" ? { issue_type_binding: records.issue_type_binding } : {}) };
+      ...(stage === "create" ? { issue_type_binding: records.issue_type_binding,
+        jira_connection: context.jira_connection } : {}) };
   };
 }

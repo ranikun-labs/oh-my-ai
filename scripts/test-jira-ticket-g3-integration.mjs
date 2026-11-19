@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { generateKeyPairSync, sign } from "node:crypto";
-import { mkdtemp, mkdir, open, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, open, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { CONTRACT_FIELDS, beginJiraTicketCreateWorkflow, applyJiraSearchResult,
@@ -25,12 +25,12 @@ const select = (id, value) => ({ required: true, hasDefaultValue: false,
 const fields = {
   project: { required: true, hasDefaultValue: false, schema: { type: "project" },
     allowedValues: [{ id: "fixture-project", key: "RPL" }] },
-  issuetype: { required: false, hasDefaultValue: false, schema: { type: "issuetype" },
+  issuetype: { required: true, hasDefaultValue: false, schema: { type: "issuetype" },
     allowedValues: [{ id: "10010", name: "작업" }] },
   summary: { required: true, hasDefaultValue: false, schema: { type: "string" } },
   description: { required: false, hasDefaultValue: false, schema: { type: "string" } },
-  // Synthetic values, but the same 22 field IDs and missing wrappers as the
-  // current RPL Task Create Metadata. No real account IDs are checked in.
+  // Synthetic values with the 19 field IDs and wrapper/Legacy omissions
+  // observed in RPL Task and Feature Create Metadata on 2026-11-18 KST.
   reporter: { required: true, hasDefaultValue: true, schema: { type: "user" } },
   ...Object.fromEntries([
     ["attachment", "array", "attachment"],
@@ -43,10 +43,8 @@ const fields = {
     ["parent", "issuelink"],
   ].map(([id, type, items]) => [id, { required: false, hasDefaultValue: false,
     schema: { type, ...(items ? { items } : {}) } }])),
-  ...Object.fromEntries(["customfield_10042", "customfield_10043", "customfield_10044"]
-    .map(id => [id, { required: false, hasDefaultValue: false }])),
   customfield_10015: { required: true, hasDefaultValue: false, schema: { type: "date" } },
-  duedate: { required: true, hasDefaultValue: false, schema: { type: "date" } },
+  duedate: { required: false, hasDefaultValue: false, schema: { type: "date" } },
   customfield_10045: { required: true, hasDefaultValue: true,
     defaultValue: [{ accountId: "offline-owner" }], schema: { type: "array", items: "user" } },
   customfield_10108: select("10027", "dev-harness"),
@@ -67,7 +65,7 @@ const target = {
     issue_type_id: "10010", observed_at: iso(at - 2000), fields },
   selection: { product: { id: "10027", value: "dev-harness" },
     component: { id: "10028", value: "backend" }, concerns: [] },
-  supplemental_fields: { customfield_10015: iso(at).slice(0, 10), duedate: iso(at + 86400000).slice(0, 10) },
+  supplemental_fields: { customfield_10015: iso(at).slice(0, 10) },
 };
 const metadata = { project: "RPL", issue_type: "Task", assignee: "offline-owner", priority: "High",
   product: "Dev Harness", repository: "oh-my-ai", area: "Jira", target_create: target };
@@ -100,6 +98,10 @@ try {
         assert.equal(Object.hasOwn(args.additional_fields, "priority"), false);
         assert.equal(Object.hasOwn(args.additional_fields, "labels"), false);
         assert.equal(args.additional_fields.customfield_10042, undefined);
+        assert.equal(Object.hasOwn(args.additional_fields, "duedate"), false,
+          "the Jira connector must omit the optional due date from the actual request");
+        assert.equal(args.additional_fields.customfield_10015, target.supplemental_fields.customfield_10015,
+          "the Jira connector must forward the approved start date unchanged");
         return { structuredContent: issue };
       }
       assert.equal(name, G3_JIRA_TOOL_NAMES.read); calls.read++;
@@ -120,7 +122,9 @@ try {
   const intent = approved.required_action.request, snapshot = approved.state.approved_snapshot;
   const expectedCreate = { project: snapshot.project, issue_type: snapshot.issue_type,
     summary: snapshot.contract.Summary, description: createDescription(snapshot), fields: intent.fields };
-  assert.equal(Object.keys(fields).length, 22, "offline fixture must mirror the live 22-field Task shape");
+  assert.equal(Object.keys(fields).length, 19, "offline fixture must mirror the observed 19-field Task and Feature shape");
+  assert.equal(Object.hasOwn(expectedCreate.fields, "duedate"), false,
+    "the signed Task workflow permits omission of the optional due date");
   for (const wrapper of ["assignee", "priority", "labels"]) {
     assert.equal(Object.hasOwn(fields, wrapper), false,
       "offline metadata must not fabricate unsupported Jira wrappers");
@@ -128,7 +132,7 @@ try {
       "G3 Create request must omit unsupported wrappers");
   }
   const policyHash = g3EvidenceSha256({ fixture: "policy", foundation_ref: "8d3ad283402e3a6d42b90ae457557b5751a041e4" });
-  const metadataContent = { project: "RPL", issue_type: "Task", issue_type_id: "10010",
+  const metadataContent = { site_origin: siteOrigin, cloud_id: cloudId, project: "RPL", issue_type: "Task", issue_type_id: "10010",
     startAt: 0, maxResults: 100, total: Object.keys(fields).length, fields };
   const activation = { kind: "g3_activation", status: "active", activation_ref: activationRef,
     owner_approval_ref: approvalRef, policy_sha256: policyHash, metadata_sha256: g3EvidenceSha256(metadataContent),
@@ -166,6 +170,62 @@ try {
   };
   const verifyGate = createG3TrustedGate({ source, trustedKeys });
   const adapter = createG3SupervisedAdapter({ jira, ledger, verifyGate, capabilityEvidence, siteOrigin });
+  const otherSite = "https://other.example.test";
+  const otherCloud = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const otherJira = await createG3JiraConnector({ siteOrigin: otherSite, cloudId: otherCloud,
+    session: { id: "offline-other-session" },
+    verifySession: async ({ capability, session }) => ({ allowed: true, capability,
+      session_id: session.id, site_origin: otherSite, cloud_id: otherCloud,
+      evidence_ref: "offline-other:" + capability, checked_at: iso(Date.now()), expires_at: times.expires_at }),
+    invokeTool: async () => { throw new Error("unexpected tool call on different connection"); },
+  });
+  assert.throws(() => { otherJira.capabilities = jira.capabilities; }, TypeError);
+  assert.throws(() => { otherJira.capabilities["jira.search"] = jira.capabilities["jira.search"]; }, TypeError);
+  assert.throws(() => { otherJira.capabilities["jira.search"].jira_cloud_id = cloudId; }, TypeError);
+  assert.throws(() => createG3SupervisedAdapter({
+    jira: otherJira, ledger, verifyGate, capabilityEvidence, siteOrigin,
+  }), /does not match the Jira connector/);
+  assert.deepEqual(await readdir(root), [], "wrong connector must not create a replay claim or Intent");
+
+  const featureMetadata = structuredClone(metadata);
+  featureMetadata.issue_type = "Feature";
+  featureMetadata.feature_progress = { planning: { status: "완료", evidence: "가상 설계 문서" }, next_action: "구현 확인" };
+  const featureCreateMetadata = featureMetadata.target_create.create_metadata;
+  featureCreateMetadata.issue_type = "Feature";
+  featureCreateMetadata.issue_type_id = "10009";
+  featureCreateMetadata.fields.issuetype.allowedValues = [{ id: "10009", name: "기능" }];
+  const rejectedFeature = beginJiraTicketCreateWorkflow({ ...input, metadata: featureMetadata });
+  assert.equal(rejectedFeature.required_action, null);
+  assert.match(rejectedFeature.report.allowed_next_step, /Legacy 필수\/기본값 해제 미검증/);
+  const rejectedFeatureReport = await runJiraTicketCreateWorkflow({ adapter, contract,
+    metadata: featureMetadata, approval: { current: true } });
+  assert.equal(rejectedFeatureReport.create_attempted, false);
+  assert.deepEqual(calls, { search: 0, create: 0, read: 0 });
+  assert.equal(rejectedFeatureReport.mutation_status, "0");
+  assert.deepEqual(await readdir(root), [], "Feature must not create any Intent or replay ledger state");
+  console.log("PASS: Feature with the observed Target-only field shape stops before Jira or ledger actions");
+
+  for (const [field, mismatch] of [
+    ["site_origin", "https://other.example.test"],
+    ["cloud_id", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"],
+  ]) {
+    const previous = liveMetadata[field];
+    const previousHash = liveMetadata.metadata_sha256;
+    liveMetadata[field] = mismatch;
+    liveMetadata.metadata_sha256 = activation.metadata_sha256 = g3EvidenceSha256({ ...metadataContent, [field]: mismatch });
+    await assert.rejects(() => adapter.search({ project: "RPL", create_preflight: expectedCreate }), /site and cloud ID/);
+    await assert.rejects(() => verifyGate({ stage: "intent", context: { ...intent, create_request: expectedCreate,
+      jira_connection: { site_origin: siteOrigin, cloud_id: cloudId } } }), /site and cloud ID/);
+    assert.deepEqual(calls, { search: 0, create: 0, read: 0 });
+    assert.deepEqual(await readdir(root), [], "mismatched identity must not claim replay or write Intent");
+    liveMetadata[field] = previous;
+    liveMetadata.metadata_sha256 = activation.metadata_sha256 = previousHash;
+  }
+  await assert.rejects(() => verifyGate({ stage: "search", context: {
+    project: "RPL", create_preflight: expectedCreate,
+  } }), /site and cloud ID/);
+  assert.deepEqual(await readdir(root), []);
+  console.log("PASS: signed metadata site and Cloud ID mismatch stop before Jira and replay claim");
   const report = await runJiraTicketCreateWorkflow({ adapter, contract, metadata, approval: { current: true } });
   assert.equal(report.verification_status, "verified", JSON.stringify(report));
   assert.equal(report.read_authority, "target"); assert.equal(calls.create, 1);

@@ -157,16 +157,17 @@ function validateTargetResult(value, issueKey, migrationProof) {
     if (!isRecord(value) || value.read_authority !== "target"
       || value.write_authority !== "target"
       || value.source !== "jira_get_and_durable_origin"
-      || (value.issue_key !== undefined && value.issue_key !== issueKey)
+      || value.issue_key !== issueKey
       || (value.key !== undefined && value.key !== issueKey)
       || !Object.hasOwn(TYPE_IDS, value.issue_type)) return null;
     const phase = value.origin === "target_create" ? "create_ready"
       : value.origin === "legacy_migration" ? "cutover" : null;
     if (phase === null || value.phase !== phase) return null;
-    if (value.issue_type_id !== undefined && value.issue_type_id !== TYPE_IDS[value.issue_type]) return null;
+    if (value.issue_type_id !== TYPE_IDS[value.issue_type]) return null;
     const fields = readTargetFields(value);
     if (!fields) return null;
     if (value.origin === "target_create") {
+      if (migrationProof !== null) return null;
       return { origin: "target_create", phase, fields, issue_type: value.issue_type };
     }
     if (value.origin !== "legacy_migration" || migrationProof?.kind !== "migrated_target"

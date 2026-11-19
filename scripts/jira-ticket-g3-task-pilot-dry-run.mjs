@@ -124,7 +124,10 @@ function createCoreRequest(input) {
     current_head: workflowMetadata.current_head ?? null,
     target_create: {
       selection,
-      supplemental_fields: { customfield_10015: task.start_date, duedate: task.due_date },
+      supplemental_fields: {
+        customfield_10015: task.start_date,
+        ...(Object.hasOwn(task, "due_date") ? { duedate: task.due_date } : {}),
+      },
     },
   };
   const request = buildJiraTicketCreateRequest(snapshot);

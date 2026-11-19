@@ -18,6 +18,7 @@ const CREATE_REQUEST = {
   fields: { customfield_10108: { id: "101" }, customfield_10109: { id: "202" } },
 };
 const CREATE_GATE_PROOF = {
+  jira_connection: { site_origin: SITE, cloud_id: CLOUD },
   allowed: true, evidence_ref: "synthetic:verified-metadata",
   issue_type_binding: { canonical_issue_type: "Task", issue_type_id: "10010",
     localized_issue_type_name: "Task", metadata_sha256: "a".repeat(64) },
@@ -321,6 +322,42 @@ async function rovoEnvelopeCompatibility() {
 }
 
 async function searchFailuresAndPagination() {
+  for (const result of [
+    { structuredContent: { issues: [] } },
+    { structuredContent: { issues: [], startAt: 100, total: 100 } },
+    { structuredContent: { issues: [], startAt: "0", total: 0 } },
+    { content: [{ type: "text", text: JSON.stringify({ issues: [], total: 100 }) }],
+      structuredContent: { issues: [], total: 0 } },
+    { content: [{ type: "text", text: JSON.stringify({ issues: [], errors: { permission: "denied" } }) }],
+      structuredContent: { issues: [], total: 0 } },
+    { structuredContent: { nextPageToken: "next", issues: { nodes: [], webUrl: `${SITE}/issues`,
+      pageInfo: { hasNextPage: false, endCursor: null } } } },
+    { content: [{ type: "text", text: JSON.stringify({ issues: [], startAt: 100, total: 100 }) }],
+      structuredContent: { issues: [], startAt: 0, total: 0 } },
+    { content: [{ type: "text", text: JSON.stringify({ issues: { nodes: [], startAt: 100,
+      pageInfo: { hasNextPage: false, endCursor: null } } }) }],
+      structuredContent: { issues: { nodes: [], webUrl: `${SITE}/issues`,
+        pageInfo: { hasNextPage: false, endCursor: null } }, context: {} } },
+    { content: [{ type: "text", text: JSON.stringify({ issues: { nodes: [],
+      pageInfo: { hasNextPage: false, endCursor: null, startAt: "0" } } }) }],
+      structuredContent: { issues: { nodes: [], webUrl: `${SITE}/issues`,
+        pageInfo: { hasNextPage: false, endCursor: null } }, context: {} } },
+    { content: [{ type: "text", text: JSON.stringify({ issues: [], startAt: 100, total: 0, isLast: true }) }],
+      structuredContent: { issues: { nodes: [], webUrl: `${SITE}/issues`,
+        pageInfo: { hasNextPage: false, endCursor: null } }, context: {} } },
+  ]) {
+    const laterPage = await connector(async () => result);
+    assert.deepEqual(await laterPage.search(SEARCH_REQUEST), { status: "failed", tool_call_count: 1 },
+      "a nonzero search offset cannot prove absence of duplicates");
+  }
+  for (const result of [
+    { structuredContent: { issues: [], startAt: 0, total: 0 } },
+    { structuredContent: { issues: [], isLast: true } },
+    rovoSearchResponse([]),
+  ]) {
+    const firstPage = await connector(async () => result);
+    assert.equal((await firstPage.search(SEARCH_REQUEST)).status, "none");
+  }
   let calls = 0;
   const paged = await connector(async () => {
     calls += 1;
@@ -528,7 +565,7 @@ async function supervisedWorkflowIntegration(rovoEnvelope = false) {
       ...(stage === "intent" ? { cutover_approval_ref: "synthetic:approval",
         issue_type_binding: { canonical_issue_type: "Task", issue_type_id: "10010",
           localized_issue_type_name: "작업", metadata_sha256: "b".repeat(64) } } : {}),
-      ...(stage === "create" ? { issue_type_binding: { canonical_issue_type: "Task",
+      ...(stage === "create" ? { jira_connection: { site_origin: SITE, cloud_id: CLOUD }, issue_type_binding: { canonical_issue_type: "Task",
         issue_type_id: "10010", localized_issue_type_name: "작업", metadata_sha256: "b".repeat(64) } } : {}) }),
     siteOrigin: SITE,
     capabilityEvidence,

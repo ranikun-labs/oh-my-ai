@@ -77,7 +77,8 @@ const metadataFields = {
     schema: { type: "array", items: "option", custom: "com.atlassian.jira.plugin.system.customfieldtypes:multicheckboxes" },
     allowedValues: options.concern },
 };
-const metadataContent = { project: "RPL", issue_type: "Task", issue_type_id: "10010",
+const jiraConnection = { site_origin: "https://jira.example.test", cloud_id: "123e4567-e89b-12d3-a456-426614174000" };
+const metadataContent = { ...jiraConnection, project: "RPL", issue_type: "Task", issue_type_id: "10010",
   startAt: 0, maxResults: 100, total: Object.keys(metadataFields).length, fields: metadataFields };
 const metadataFieldRow = (fieldId, required, hasDefaultValue, schema, extra = {}) =>
   ({ fieldId, name: fieldId, required, hasDefaultValue, schema, ...extra });
@@ -86,6 +87,7 @@ const metadataFieldRow = (fieldId, required, hasDefaultValue, schema, extra = {}
 // evidence. No production account IDs or option payloads are stored here;
 // empty allowedValues are redaction markers and cannot approve a Create option.
 const liveShapedMetadataContent = {
+  ...jiraConnection,
   project: "RPL", issue_type: "Task", issue_type_id: "10010", startAt: 0, maxResults: 100, total: 22,
   fields: [
     metadataFieldRow("attachment", false, false, { type: "array", items: "attachment" }),
@@ -202,7 +204,7 @@ function fixtureGate(options = {}) {
     async fetchLiveMetadata(input) {
       fetchCounts.metadata++;
       assert.deepEqual(input, { project: payloads.activation.scope.project,
-        issue_type: payloads.activation.scope.issue_type });
+        issue_type: payloads.activation.scope.issue_type, ...jiraConnection });
       return signed(payloads.metadata);
     },
     async fetchOwnerApproval(input) {
@@ -227,7 +229,8 @@ function fixtureGate(options = {}) {
         issued_at: stamp, expires_at: iso(clock + 60_000) });
     },
   };
-  const verifyGate = createG3TrustedGate({ source, trustedKeys, now: () => clock, maxEvidenceAgeMs: 5 * 60_000 });
+  const gate = createG3TrustedGate({ source, trustedKeys, now: () => clock, maxEvidenceAgeMs: 5 * 60_000 });
+  const verifyGate = ({ stage, context }) => gate({ stage, context: { jira_connection: jiraConnection, ...context } });
   return { verifyGate, source, payloads, fetchCounts, replay };
 }
 
@@ -611,7 +614,7 @@ const capabilityNames = ["jira.search", "jira.create", "jira.read", "jira.intent
 const capabilityEvidence = Object.fromEntries(capabilityNames.map(name => [name, {
   available: true, connection_verified: true, evidence_ref: `synthetic:${name}`,
   ...(name.startsWith("jira.") && ["jira.search", "jira.create", "jira.read"].includes(name)
-    ? { jira_site_origin: "https://jira.example.test" } : {}),
+    ? { jira_site_origin: jiraConnection.site_origin, jira_cloud_id: jiraConnection.cloud_id } : {}),
 }]));
 const blockedAdapter = createG3SupervisedAdapter({
   jira: {

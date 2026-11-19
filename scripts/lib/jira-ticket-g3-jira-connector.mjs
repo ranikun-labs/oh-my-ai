@@ -152,6 +152,7 @@ function validRovoEnvelope(result, data, expectedFields) {
   if (!payloads.length) return true;
   const raw = payloads[0];
   if (!isRecord(raw) || hasSemanticError(raw)) return false;
+  if (Object.hasOwn(wrapper, "pageInfo") && Object.hasOwn(raw, "startAt") && raw.startAt !== 0) return false;
   const structuredPageInfo = wrapper.pageInfo;
   const rawPageInfos = [];
   if (Object.hasOwn(raw, "pageInfo")) rawPageInfos.push(raw.pageInfo);
@@ -266,9 +267,34 @@ function validRovoSearchWebUrl(value, siteOrigin) {
   } catch { return false; }
 }
 
+// The search query starts at the first page. A later or malformed offset in
+// any returned representation cannot establish that earlier matches are absent.
+function validSearchEnvelope(result) {
+  const raw = parsedTextPayloads(result);
+  if (!raw) return false;
+  const sources = [result?.structuredContent, ...raw].filter(isRecord);
+  if (sources.some(hasSemanticError)) return false;
+  const totals = sources.filter(source => Object.hasOwn(source, "total")).map(source => source.total);
+  if (totals.some(total => !Number.isSafeInteger(total) || total < 0)
+    || totals.some(total => total !== totals[0])) return false;
+  for (const source of sources) {
+    const issueEnvelope = isRecord(source.issues) ? source.issues : null;
+    if (Array.isArray(issueEnvelope?.nodes) && (nonEmpty(source.nextPageToken)
+      || source.hasMore === true || source.isLast === false)) return false;
+    for (const value of [source, source.pageInfo, issueEnvelope, issueEnvelope?.pageInfo]) {
+      if (isRecord(value) && Object.hasOwn(value, "startAt") && value.startAt !== 0) return false;
+    }
+  }
+  if (sources.length > 1 && sources.some(source => source.hasMore === true
+    || source.isLast === false || nonEmpty(source.nextPageToken))) return false;
+  return true;
+}
+
 function searchOutcome(data, request, siteOrigin, cloudId) {
+  if (Object.hasOwn(data ?? {}, "startAt") && data.startAt !== 0) return { status: "failed", tool_call_count: 1 };
   if (isRecord(data?.issues) && Array.isArray(data.issues.nodes)) {
     const result = data.issues;
+    if (Object.hasOwn(result, "startAt") && result.startAt !== 0) return { status: "failed", tool_call_count: 1 };
     const pageInfo = result.pageInfo;
     if (!isRecord(pageInfo) || typeof pageInfo.hasNextPage !== "boolean"
       || !Object.hasOwn(pageInfo, "endCursor")
@@ -297,7 +323,8 @@ function searchOutcome(data, request, siteOrigin, cloudId) {
   const invalidTotal = hasTotal && (!Number.isSafeInteger(data.total) || data.total < issues.length || data.total < 0);
   const incomplete = issues.length >= 100 || nonEmpty(data.nextPageToken) || data.isLast === false || data.hasMore === true
     || invalidTotal || (Number.isSafeInteger(data.total) && data.total > issues.length);
-  if (!issues.length) return incomplete
+  const terminal = data.total === 0 || data.isLast === true || data.hasMore === false;
+  if (!issues.length) return incomplete || !terminal
     ? { status: "failed", tool_call_count: 1 }
     : { status: "none", tool_call_count: 1 };
 
@@ -331,11 +358,12 @@ function assertCreateRequest(request) {
     throw new Error("Jira Create request does not match the G3 approved request shape");
 }
 
-function createArgs(request, cloudId, gateProof) {
+function createArgs(request, siteOrigin, cloudId, gateProof) {
   assertCreateRequest(request);
   const binding = gateProof?.issue_type_binding;
   const expectedIssueTypeId = ISSUE_TYPE_IDS.get(request.issue_type);
   if (gateProof?.allowed !== true || !nonEmpty(gateProof.evidence_ref)
+    || gateProof.jira_connection?.site_origin !== siteOrigin || gateProof.jira_connection?.cloud_id !== cloudId
     || !binding || binding.canonical_issue_type !== request.issue_type
     || binding.issue_type_id !== expectedIssueTypeId
     || !nonEmpty(binding.localized_issue_type_name)
@@ -367,7 +395,7 @@ function validateProof(proof, { capability, session, siteOrigin, cloudId, maxPro
   if (!Number.isFinite(checked) || !Number.isFinite(expires) || checked > now
     || now - checked > maxProofAgeMs || expires <= now || expires <= checked) return null;
   return { available: true, connection_verified: true, evidence_ref: proof.evidence_ref,
-    jira_site_origin: siteOrigin };
+    jira_site_origin: siteOrigin, jira_cloud_id: cloudId };
 }
 
 /**
@@ -395,7 +423,7 @@ async function createG3JiraConnectorWithMode({ invokeTool, verifySession, sessio
 
   const capabilities = readOnly ? Object.create(null) : {};
   for (const operation of (readOnly ? ["search", "read"] : ["search", "create", "read"])) {
-    capabilities[CAPABILITY[operation]] = await authorize(operation);
+    capabilities[CAPABILITY[operation]] = Object.freeze(await authorize(operation));
   }
 
   // Capability evidence proves a current scoped session, not endpoint health;
@@ -408,11 +436,11 @@ async function createG3JiraConnectorWithMode({ invokeTool, verifySession, sessio
       let response;
       try { response = await invokeTool(TOOL.search, args); }
       catch { return { status: "failed", tool_call_count: 1 }; }
-      const data = responseObject(response, ["project", "issuetype", "summary"]);
+      const data = validSearchEnvelope(response) && responseObject(response, ["project", "issuetype", "summary"]);
       return data ? searchOutcome(data, request, siteOrigin, cloudId) : { status: "failed", tool_call_count: 1 };
     },
     ...(!readOnly ? { async create(request, gateProof) {
-      const args = createArgs(request, cloudId, gateProof);
+      const args = createArgs(request, siteOrigin, cloudId, gateProof);
       await authorize("create");
       let response;
       try { response = await invokeTool(TOOL.create, args); }
@@ -446,10 +474,9 @@ async function createG3JiraConnectorWithMode({ invokeTool, verifySession, sessio
     },
   };
   // Null prototypes prevent inherited Create or capability injection.
-  // Read-only evidence and methods are immutable; Full Create keeps its previous contract.
-  return readOnly ? Object.freeze(Object.assign(Object.create(null), {
-    ...connector, capabilities: Object.freeze(capabilities),
-  })) : connector;
+  // Bind the capability evidence to the connector that verified it.
+  Object.freeze(capabilities);
+  return Object.freeze(readOnly ? Object.assign(Object.create(null), connector) : connector);
 }
 
 export async function createG3JiraConnector(options) {

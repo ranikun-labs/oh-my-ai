@@ -176,6 +176,26 @@ assert.notEqual(g3EvidenceSha256(changedBaseReport.create_request), baseBoundReq
   "changing only Base SHA in the Dependencies contract must change the approved request digest");
 console.log("PASS: Base SHA in the existing Dependencies contract is bound by the Core request digest");
 
+const optionalDueInput = structuredClone(targetOnlyInput);
+optionalDueInput.metadata.fields.find(field => field.fieldId === "duedate").required = false;
+const optionalDuePresent = createG3TaskPilotDryRunReport(optionalDueInput);
+assert.equal(optionalDuePresent.status, "PREVIEW_ONLY", JSON.stringify(optionalDuePresent));
+assert.equal(optionalDuePresent.create_request.fields.duedate, "2026-11-10");
+delete optionalDueInput.task.due_date;
+const optionalDueAbsent = createG3TaskPilotDryRunReport(optionalDueInput);
+assert.equal(optionalDueAbsent.status, "PREVIEW_ONLY", JSON.stringify(optionalDueAbsent));
+assert.equal(Object.hasOwn(optionalDueAbsent.create_request.fields, "duedate"), false);
+assert.equal(Object.hasOwn(optionalDueAbsent.jira_create_tool_payload_without_runtime_identity.additional_fields, "duedate"), false);
+for (const invalidDue of [null, "", []]) {
+  const invalidOptionalDue = structuredClone(optionalDueInput);
+  invalidOptionalDue.task.due_date = invalidDue;
+  expectBlocked(invalidOptionalDue, /date/i);
+}
+const requiredDueAbsent = validInput();
+delete requiredDueAbsent.task.due_date;
+expectBlocked(requiredDueAbsent, /required.*duedate/i);
+console.log("PASS: optional Task due date can be supplied or omitted while required metadata still blocks omission");
+
 const missingSummary = validInput();
 missingSummary.task.contract.Summary = "";
 expectBlocked(missingSummary, /required|placeholder|Summary/i);

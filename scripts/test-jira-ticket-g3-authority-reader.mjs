@@ -57,7 +57,8 @@ function migratedTargetEvidence(issueKey, { fields = targetFields } = {}) {
 function targetResult(overrides = {}) {
   return {
     origin: "target_create", phase: "create_ready", read_authority: "target",
-    write_authority: "target", issue_type: "Task", source: "jira_get_and_durable_origin",
+    write_authority: "target", issue_type: "Task", issue_type_id: "10010",
+    issue_key: "FIXTURE_CURRENT_KEY", source: "jira_get_and_durable_origin",
     product: structuredClone(targetFields.customfield_10108),
     component: structuredClone(targetFields.customfield_10109),
     concern: structuredClone(targetFields.customfield_10110),
@@ -83,7 +84,8 @@ function dependencies({ evidenceFor, targetFor, jiraFor, calls = {} } = {}) {
     },
     targetReader: { async readVerifiedClassification(issueKey) {
       calls.targetRead = (calls.targetRead ?? 0) + 1;
-      return targetFor(issueKey);
+      const result = targetFor(issueKey);
+      return result?.issue_key === "FIXTURE_CURRENT_KEY" ? { ...result, issue_key: issueKey } : result;
     } },
     jira: { async read(request) {
       calls.jiraRead = (calls.jiraRead ?? 0) + 1;
@@ -200,7 +202,9 @@ console.log("PASS: Jira GET type and option mismatches quarantine Legacy classif
 
 for (const [name, resultValue] of [
   ["key", targetResult({ issue_key: "RPL-999" })],
+  ["missing key", targetResult({ issue_key: undefined })],
   ["type id", targetResult({ issue_type_id: "10012" })],
+  ["missing type id", targetResult({ issue_type_id: undefined })],
   ["duplicate option", targetResult({ concern: [{ id: "dup" }, { id: "dup" }] })],
   ["raw Ledger data", targetResult({ source: undefined })],
   ["malformed status", targetResult({ phase: "create_quarantined" })],
@@ -223,6 +227,15 @@ console.log("PASS: mismatched Target identity, type, options, and status fail cl
   assert.equal(result.migration_evidence.parity, "parity:RPL-209");
 }
 console.log("PASS: migrated Target requires and accepts separate approved cutover, snapshot, and parity sources");
+
+{
+  const d = dependencies({ evidenceFor: key => migratedTargetEvidence(key),
+    targetFor: () => targetResult(), jiraFor: () => null });
+  const result = await reader(d).readClassification("RPL-209");
+  assert.equal(result.read_authority, "none");
+  assert.equal(result.reason, "migrated_target_evidence_unverified");
+}
+console.log("PASS: migrated Target proof cannot promote a target-create Origin");
 
 {
   const d = dependencies({ evidenceFor: key => {

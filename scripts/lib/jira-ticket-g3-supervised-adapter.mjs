@@ -32,6 +32,21 @@ export function createG3SupervisedAdapter({ jira, ledger, verifyGate, siteOrigin
     capabilities[name] = { available: true, connection_verified: true,
       evidence_ref: proof.evidence_ref };
   }
+  const cloudIds = ["jira.search", "jira.create", "jira.read"]
+    .map(name => capabilityEvidence[name].jira_cloud_id);
+  const jiraConnection = { site_origin: siteOrigin,
+    cloud_id: cloudIds.every(value => value === cloudIds[0]) ? cloudIds[0] : undefined };
+  // A connector that provides verified capability evidence must be the same
+  // connection as the independently supplied composition evidence.
+  if (jira.capabilities != null) {
+    for (const name of ["jira.search", "jira.create", "jira.read"]) {
+      const proof = jira.capabilities[name];
+      if (proof?.available !== true || proof.connection_verified !== true
+        || proof.jira_site_origin !== jiraConnection.site_origin
+        || !jiraConnection.cloud_id || proof.jira_cloud_id !== jiraConnection.cloud_id)
+        throw new Error("G3 adapter capability evidence does not match the Jira connector");
+    }
+  }
   let active = null;
   let intentReserved = false;
   let createReserved = false;
@@ -53,7 +68,7 @@ export function createG3SupervisedAdapter({ jira, ledger, verifyGate, siteOrigin
   }
 
   async function gate(stage, context) {
-    const proof = await verifyGate({ stage, context: structuredClone(context) });
+    const proof = await verifyGate({ stage, context: structuredClone({ ...context, jira_connection: jiraConnection }) });
     if (proof?.allowed !== true || typeof proof?.evidence_ref !== "string"
       || !proof.evidence_ref.trim()) throw new Error("G3 trusted external authorization missing: " + stage);
     return proof;
@@ -89,7 +104,7 @@ export function createG3SupervisedAdapter({ jira, ledger, verifyGate, siteOrigin
     const actual = concern ?? [], expected = authority.concern;
     if (!Array.isArray(expected) || actual.some(x => typeof x?.id !== "string")
       || JSON.stringify(ids(actual)) !== JSON.stringify(ids(expected))) return fail;
-    return { ...authority, source: "jira_get_and_durable_origin" };
+    return { ...authority, issue_key: issueKey, source: "jira_get_and_durable_origin" };
   }
   return {
     runtime,
