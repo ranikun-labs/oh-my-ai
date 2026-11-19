@@ -274,13 +274,17 @@ function validSearchEnvelope(result) {
   if (!raw) return false;
   const sources = [result?.structuredContent, ...raw].filter(isRecord);
   if (sources.some(hasSemanticError)) return false;
-  const totals = sources.filter(source => Object.hasOwn(source, "total")).map(source => source.total);
+  const totals = sources.flatMap(source => [source, source.issues]
+    .filter(value => isRecord(value) && Object.hasOwn(value, "total"))
+    .map(value => value.total));
   if (totals.some(total => !Number.isSafeInteger(total) || total < 0)
     || totals.some(total => total !== totals[0])) return false;
   for (const source of sources) {
     const issueEnvelope = isRecord(source.issues) ? source.issues : null;
     if (Array.isArray(issueEnvelope?.nodes) && (nonEmpty(source.nextPageToken)
-      || source.hasMore === true || source.isLast === false)) return false;
+      || source.hasMore === true || source.isLast === false
+      || (issueEnvelope.pageInfo?.hasNextPage === false
+        && totals.some(total => total !== issueEnvelope.nodes.length)))) return false;
     for (const value of [source, source.pageInfo, issueEnvelope, issueEnvelope?.pageInfo]) {
       if (isRecord(value) && Object.hasOwn(value, "startAt") && value.startAt !== 0) return false;
     }

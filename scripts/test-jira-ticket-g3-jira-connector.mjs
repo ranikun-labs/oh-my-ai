@@ -322,7 +322,15 @@ async function rovoEnvelopeCompatibility() {
 }
 
 async function searchFailuresAndPagination() {
+  const emptyRovo = rovoSearchResponse([]).structuredContent;
+  const oneRovo = rovoSearchResponse([rovoIssue()]).structuredContent;
   for (const result of [
+    { structuredContent: { ...emptyRovo, total: 1 } },
+    { structuredContent: { ...emptyRovo, issues: { ...emptyRovo.issues, total: 1 } } },
+    { structuredContent: { ...emptyRovo, issues: { ...emptyRovo.issues, total: "0" } } },
+    { structuredContent: { ...oneRovo, total: 0 } },
+    { structuredContent: emptyRovo,
+      content: [{ type: "text", text: JSON.stringify({ issues: [], total: 1 }) }] },
     { structuredContent: { issues: [] } },
     { structuredContent: { issues: [], startAt: 100, total: 100 } },
     { structuredContent: { issues: [], startAt: "0", total: 0 } },
@@ -348,12 +356,13 @@ async function searchFailuresAndPagination() {
   ]) {
     const laterPage = await connector(async () => result);
     assert.deepEqual(await laterPage.search(SEARCH_REQUEST), { status: "failed", tool_call_count: 1 },
-      "a nonzero search offset cannot prove absence of duplicates");
+      "an incomplete or contradictory search cannot prove absence of duplicates");
   }
   for (const result of [
     { structuredContent: { issues: [], startAt: 0, total: 0 } },
     { structuredContent: { issues: [], isLast: true } },
     rovoSearchResponse([]),
+    { structuredContent: { ...emptyRovo, issues: { ...emptyRovo.issues, total: 0 }, total: 0 } },
   ]) {
     const firstPage = await connector(async () => result);
     assert.equal((await firstPage.search(SEARCH_REQUEST)).status, "none");
