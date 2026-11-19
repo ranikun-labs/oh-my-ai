@@ -90,6 +90,63 @@ assert.equal(ok.valid, true, ok.errors.join("; "));
 const legacyMissingAiStatus = validateF1Report(validReport);
 assert.equal(legacyMissingAiStatus.valid, true, "default F1 validation must stay backward compatible when AI status is not requested");
 
+const afterVerification = "## 아직 안 되는 것";
+const ciStatusPrefix = "- CI: NOT_RUN";
+const sectionEndingHeadings = [
+  "# 참고 자료",
+  "#",
+  "##",
+  "## ###",
+  "서론 예시\n2. 누적 관찰\n   # 부록",
+  "-\t샘플\n\n  # 부록",
+  "- \t샘플\n\n   # 부록",
+  "- - -\n\n  # 부록",
+  "-\n\n  # 부록",
+  "1.\n\n   # 부록",
+  "- 제목 예시\n  <div>확인</div>\n# 부록",
+  "- 제목 예시\n  <script>\n# 부록",
+];
+for (const heading of sectionEndingHeadings) {
+  expectInvalid(
+    `a top-level ${heading} heading ends verification`,
+    validReport.replace(ciStatusPrefix, `\n${heading}\n\n${ciStatusPrefix}`),
+    "CI must have exactly one explicit status line"
+  );
+}
+const sectionPreservingExamples = [
+  "### 하위 검증 내역",
+  "> # 인용 제목",
+  "- 제목 예시\n\n  # 목록 안 제목",
+  "- 제목 예시\n\n  ## 목록 안 제목",
+  "서론 예시\n\n2. 누적 관찰\n   # 목록 안 제목",
+  "1. 시작\n2. 누적 관찰\n   # 목록 안 제목",
+  "-     샘플\n\n  # 목록 안 제목",
+  "-\t샘플\n\n    # 목록 안 제목",
+  "<pre>\n예시\n</pre># 부록",
+  "-\n  # 목록 안 제목",
+  "1.\n   # 목록 안 제목",
+  "- 제목 예시\n  <div>\n  # HTML 블록 안 제목\n  </div>",
+  "- 제목 예시\n  <script>\n  # HTML 블록 안 제목\n  </script>",
+  "```markdown\n# 코드 예시 제목\n```",
+  "#제목처럼 보이는 일반 텍스트",
+];
+for (const headingExample of sectionPreservingExamples) {
+  const result = validateF1Report(validReport.replace(ciStatusPrefix, `\n${headingExample}\n\n${ciStatusPrefix}`));
+  assert.equal(result.valid, true, `${headingExample}: ${result.errors.join("; ")}`);
+}
+const closedVerificationHeading = validateF1Report(validReport.replace("## 검증\n", "## 검증 ###\n"));
+assert.equal(closedVerificationHeading.valid, true, closedVerificationHeading.errors.join("; "));
+expectInvalid(
+  "removing inline markup cannot turn literal title hashes into a closing hash sequence",
+  validReport.replace("## 검증\n", "## 검증 ## <!-- 메모 -->\n"),
+  "missing required section: ## 검증"
+);
+expectInvalid(
+  "a closing hash sequence cannot hide a duplicate verification section",
+  validReport.replace(afterVerification, `## 검증 ##\n\n중복 검증\n\n${afterVerification}`),
+  "duplicate required section: ## 검증"
+);
+
 const mainOnlyRequired = validateF1Report(fullReportWithMainOnly, {
   requireAiStatus: true,
   observedParticipants: ["Main"],
@@ -103,6 +160,13 @@ const mainOnlyPartial = validateAiStatus(mainOnlyAiStatus, {
 });
 assert.equal(mainOnlyPartial.valid, true, mainOnlyPartial.errors.join("; "));
 assert.equal(mainOnlyPartial.scope, "AI_STATUS_ONLY");
+const participantTableInAppendix = validateAiStatus(
+  mainOnlyAiStatus.replace("| Agent ID", "\n# 추가 관측 예시\n\n| Agent ID"),
+  { observedParticipants: ["Main"], observationCoverage: "complete" }
+);
+assert.equal(participantTableInAppendix.valid, false, "an appendix table cannot satisfy the AI section");
+assert.ok(participantTableInAppendix.errors.includes("AI status must contain the required participant table"));
+console.log(`f1 ATX section boundary fixtures passed: ${sectionEndingHeadings.length + sectionPreservingExamples.length + 4}`);
 for (const duplicateValue of ["YES", "NO"]) {
   const duplicateHeader = mainOnlyAiStatus.split("\n").map((line) => {
     if (line.startsWith("| Agent ID |")) return line + " 실제 참여 |";
@@ -517,7 +581,8 @@ const hiddenStatuses = validReport.replace(
 const hiddenStatusResult = validateF1Report(hiddenStatuses);
 assert.equal(hiddenStatusResult.valid, true, hiddenStatusResult.errors.join("; "));
 for (const indentation of [" ", "   "]) {
-  const indentedHeadings = validReport.replace(/^##/gm, `${indentation}##`);
+  // Indent headings after prose only. An indented heading after a list can belong to its last item.
+  const indentedHeadings = validReport.replace(/^## (?=문제|사용자에게 달라지는 점|서비스 기능)/gm, `${indentation}## `);
   const indentedHeadingsResult = validateF1Report(indentedHeadings);
   assert.equal(indentedHeadingsResult.valid, true, indentedHeadingsResult.errors.join("; "));
 }

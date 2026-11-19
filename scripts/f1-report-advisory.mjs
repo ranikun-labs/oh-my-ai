@@ -41,6 +41,9 @@ const STANDALONE_HTML_TAG = new RegExp(`^ {0,3}(?:</${HTML_TAG_NAME}[ \\t]*>|<${
 const THEMATIC_BREAK = /^ {0,3}(?:\*(?:[ \t]*\*){2,}|-(?:[ \t]*-){2,}|_(?:[ \t]*_){2,})[ \t]*$/u;
 const SETEXT_UNDERLINE = /^ {0,3}(?:=+|-+)[ \t]*$/u;
 const MARKDOWN_LIST_ITEM = /^ {0,3}([-+*]|\d{1,9}[.)])[ \t]{1,4}(?=\S)/u;
+const LIST_CONTEXT_ITEM = /^( {0,3})([-+*]|\d{1,9}[.)])(?:([ \t]+)|$)/u;
+const PARAGRAPH_INTERRUPTING_LIST_MARKER = /^(?:[-+*]|0*1[.)])$/u;
+const F1_SECTION_HEADING = /^ {0,3}(#{1,2})(?:[ \t]+(.*))?$/u;
 
 const EVIDENCE_STATUSES = new Set(["PASS", "FAIL", "NOT_RUN", "BLOCKED", "UNKNOWN"]);
 const OWNER_STATUSES = new Set(["APPROVED", "PENDING", "BLOCKED", "UNKNOWN", "NOT_REQUIRED"]);
@@ -68,8 +71,8 @@ const REPORT_LIST_LABELS = new Set([
 const CODEX_USAGE_SOURCE = "Codex App Server JSON-RPC thread/tokenUsage/updated";
 const MAX_USAGE_OBSERVATION_BYTES = 32 * 1024;
 
-function leadingIndentation(line) {
-  let columns = 0;
+function leadingIndentation(line, startColumn = 0) {
+  let columns = startColumn;
   let length = 0;
   for (const character of line) {
     if (character === " ") {
@@ -81,7 +84,7 @@ function leadingIndentation(line) {
     }
     length += 1;
   }
-  return { columns, length };
+  return { columns: columns - startColumn, length };
 }
 
 function isIndentedCodeLine(line) {
@@ -92,6 +95,23 @@ function relativeListLine(line, listIndent) {
   if (listIndent === 0) return line;
   const { columns, length } = leadingIndentation(line);
   return " ".repeat(Math.max(0, columns - listIndent)) + line.slice(length);
+}
+
+function readListContext(line, listIndent, canStartBlock, nextLine) {
+  const match = LIST_CONTEXT_ITEM.exec(line);
+  if (!match || THEMATIC_BREAK.test(line)) return null;
+  const [prefix, leading, marker, spacing = ""] = match;
+  const markerEnd = listIndent + leading.length + marker.length;
+  const text = line.slice(prefix.length);
+  if (!text) {
+    // Content can join an empty item immediately, but not across a blank line.
+    return canStartBlock && nextLine?.trim() ? { indent: markerEnd + 1, text } : null;
+  }
+  if (!canStartBlock && !PARAGRAPH_INTERRUPTING_LIST_MARKER.test(marker)) return null;
+  const { columns: gap } = leadingIndentation(spacing, markerEnd);
+  // Four or more spaces beyond the first padding column begin indented code in the item.
+  const padding = gap > 4 ? 1 : gap;
+  return { indent: markerEnd + padding, text: " ".repeat(gap - padding) + text };
 }
 
 function parseFenceStart(line) {
@@ -178,7 +198,7 @@ function findClosingBacktickRun(lines, startLine, startColumn, runLength, listIn
       // Any sibling item ends the current item. An ordered list entering a
       // paragraph can interrupt it only when it starts at one.
       const startsListItem = marker !== undefined
-        && (/^(?:[-+*]|0*1[.)])$/u.test(marker) || leadingIndentation(line).columns < listIndent);
+        && (PARAGRAPH_INTERRUPTING_LIST_MARKER.test(marker) || leadingIndentation(line).columns < listIndent);
       // Indent alone continues a paragraph. Fences and headings can end it.
       if (line.trim().length === 0 || startsListItem
         || parseFenceStart(blockLine) !== null || isAtxHeadingLine(blockLine)) {
@@ -229,29 +249,38 @@ function visibleMarkdownLines(markdown, statusEvidenceOnly = false) {
   let openFence = null;
   let insideHtmlComment = false;
   let insideHtmlPreBlock = false;
-  let rawHtmlBlockEnd = null;
-  let insideHtmlBlock = false;
+  let rawHtmlBlock = null;
   let inlineCodeDelimiterLength = 0;
   let atBlockBoundary = true;
   const listContexts = [];
 
   for (let lineIndex = 0; lineIndex < sourceLines.length; lineIndex += 1) {
-    let line = sourceLines[lineIndex];
+    const sourceLine = sourceLines[lineIndex];
+    let line = sourceLine;
+    let endedListItem = false;
     if (line.trim()) {
-      if (openFence === null && rawHtmlBlockEnd === null && !insideHtmlBlock
-        && !insideHtmlComment && !insideHtmlPreBlock && isAtxHeadingLine(line)) {
-        listContexts.length = 0;
-      }
       const { columns } = leadingIndentation(line);
-      while (listContexts.length && columns < listContexts.at(-1).indent) listContexts.pop();
+      while (listContexts.length && columns < listContexts.at(-1).indent) {
+        listContexts.pop();
+        endedListItem = true;
+      }
     }
     const parentItem = listContexts.at(-1);
     let listIndent = parentItem?.indent ?? 0;
     let blockLine = relativeListLine(line, listIndent);
-    // A raw HTML block ends at a blank line. Its contents cannot start Markdown blocks.
-    if (insideHtmlBlock) {
-      if (line.trim().length > 0) continue;
-      insideHtmlBlock = false;
+    if (rawHtmlBlock !== null) {
+      const hasContent = line.trim().length > 0;
+      if (hasContent && listIndent < rawHtmlBlock.listIndent) {
+        // A raw HTML block cannot outlive the list item containing it.
+        rawHtmlBlock = null;
+      } else if (rawHtmlBlock.endPattern) {
+        if (rawHtmlBlock.endPattern.test(line)) rawHtmlBlock = null;
+        continue;
+      } else if (hasContent) {
+        continue;
+      } else {
+        rawHtmlBlock = null;
+      }
     }
     if (openFence !== null) {
       if (line.trim() && listIndent < openFence.listIndent) {
@@ -261,11 +290,6 @@ function visibleMarkdownLines(markdown, statusEvidenceOnly = false) {
         if (isFenceClosing(blockLine, openFence)) openFence = null;
         continue;
       }
-    }
-
-    if (rawHtmlBlockEnd !== null) {
-      if (rawHtmlBlockEnd.test(line)) rawHtmlBlockEnd = null;
-      continue;
     }
 
     if (insideHtmlPreBlock) {
@@ -283,30 +307,29 @@ function visibleMarkdownLines(markdown, statusEvidenceOnly = false) {
       && isIndentedCodeLine(blockLine) && line.trim().length > 0) continue;
 
     if (inlineCodeDelimiterLength === 0 && !insideHtmlComment && !insideHtmlPreBlock) {
-      const listItem = MARKDOWN_LIST_ITEM.exec(blockLine);
-      const itemPrefixLength = listItem?.[0].length ?? 0;
-      const itemText = blockLine.slice(itemPrefixLength);
+      const listItem = readListContext(blockLine, listIndent, atBlockBoundary || endedListItem, sourceLines[lineIndex + 1]);
+      const itemText = listItem?.text ?? blockLine;
       if (listItem) {
         const itemLabel = itemText.split(":", 1)[0].trim().toLowerCase();
         listContexts.push({
-          indent: listIndent + itemPrefixLength,
+          indent: listItem.indent,
           reportContent: REPORT_LIST_LABELS.has(itemLabel),
         });
       }
       const fenceStart = parseFenceStart(itemText);
       if (fenceStart !== null) {
-        openFence = { ...fenceStart, listIndent: listIndent + itemPrefixLength };
+        openFence = { ...fenceStart, listIndent: listItem?.indent ?? listIndent };
         atBlockBoundary = true;
         continue;
       }
       const rawEnd = findRawHtmlBlockEnd(blockLine);
       if (rawEnd) {
-        if (!rawEnd.test(blockLine)) rawHtmlBlockEnd = rawEnd;
+        if (!rawEnd.test(blockLine)) rawHtmlBlock = { endPattern: rawEnd, listIndent };
         atBlockBoundary = true;
         continue;
       }
       if (startsHtmlBlock(blockLine, atBlockBoundary)) {
-        insideHtmlBlock = true;
+        rawHtmlBlock = { endPattern: null, listIndent };
         atBlockBoundary = true;
         continue;
       }
@@ -317,7 +340,13 @@ function visibleMarkdownLines(markdown, statusEvidenceOnly = false) {
       && !insideHtmlComment
       && !insideHtmlPreBlock
       && listIndent === 0
-      && /^ {0,3}##[ \t]+/.test(line);
+      && line === sourceLine
+      ? F1_SECTION_HEADING.exec(line)
+      : null;
+    if (headingCandidate?.[2]) {
+      // Recognize closing hashes before removing inline markup from the title.
+      line = line.replace(/[ \t]+#+[ \t]*$/u, "");
+    }
     let visible = "";
     let statusVisible = "";
     let fieldVisible = "";
@@ -440,10 +469,12 @@ function splitSections(markdown, statusEvidenceOnly = false) {
   };
 
   for (const { text: line, statusText, fieldText, tableText, headingCandidate, nestedReportEvidence, lineIndex } of visibleMarkdownLines(markdown, statusEvidenceOnly)) {
-    const heading = headingCandidate ? /^ {0,3}##[ \t]+(.+?)[ \t]*$/.exec(line) : null;
+    const heading = headingCandidate ? F1_SECTION_HEADING.exec(line) : null;
     if (heading) {
       flush();
-      current = heading[1];
+      // A top-level heading ends the preceding section. Only named H2s open a report section.
+      const title = (heading[2] ?? "").replace(/[ \t]+$/u, "");
+      current = heading[1] === "##" && title ? title : null;
       body.length = 0;
       fieldBody.length = 0;
     } else if (current !== null) {
