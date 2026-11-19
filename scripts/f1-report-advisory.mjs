@@ -39,7 +39,10 @@ const HTML_TAG_NAME = "[A-Za-z][A-Za-z0-9-]*";
 const HTML_ATTRIBUTE = "[ \\t]+[A-Za-z_:][A-Za-z0-9_.:-]*(?:[ \\t]*=[ \\t]*(?:\"[^\"]*\"|'[^']*'|[^ \\t\"'=<>`]+))?";
 const STANDALONE_HTML_TAG = new RegExp(`^ {0,3}(?:</${HTML_TAG_NAME}[ \\t]*>|<${HTML_TAG_NAME}(?:${HTML_ATTRIBUTE})*[ \\t]*/?>)[ \\t]*$`, "u");
 const THEMATIC_BREAK = /^ {0,3}(?:\*(?:[ \t]*\*){2,}|-(?:[ \t]*-){2,}|_(?:[ \t]*_){2,})[ \t]*$/u;
-const SETEXT_UNDERLINE = /^ {0,3}(?:=+|-+)[ \t]*$/u;
+const SETEXT_UNDERLINE = /^ {0,3}(=+|-+)[ \t]*$/u;
+const BLOCK_QUOTE_MARKER = /^ {0,3}>[ \t]?/u;
+const LINK_REFERENCE_START = /^ {0,3}\[(?:[^\[\]\\]|\\.)+\]:/u;
+const LINK_REFERENCE_DEFINITION = /^ {0,3}\[(?:[^\[\]\\]|\\.)+\]:[ \t]*(?:<[^<>]*>|[^<> \t]+)(?:[ \t]+(?:"[^"]*"|'[^']*'|\([^()]*\)))?[ \t]*$/u;
 const MARKDOWN_LIST_ITEM = /^ {0,3}([-+*]|\d{1,9}[.)])[ \t]{1,4}(?=\S)/u;
 const LIST_CONTEXT_ITEM = /^( {0,3})([-+*]|\d{1,9}[.)])(?:([ \t]+)|$)/u;
 const PARAGRAPH_INTERRUPTING_LIST_MARKER = /^(?:[-+*]|0*1[.)])$/u;
@@ -114,6 +117,43 @@ function readListContext(line, listIndent, canStartBlock, nextLine) {
   return { indent: markerEnd + padding, text: " ".repeat(gap - padding) + text };
 }
 
+function readContainerLeaf(line, listIndent, listItem, nextLine) {
+  let text = listItem?.text ?? line;
+  let quoteDepth = 0;
+  let containsList = listItem !== null;
+  let indent = listItem?.indent ?? listIndent;
+  for (;;) {
+    const quote = BLOCK_QUOTE_MARKER.exec(text);
+    if (quote) {
+      quoteDepth += 1;
+      text = text.slice(quote[0].length);
+      continue;
+    }
+    // The outer list item was already parsed with the active paragraph state.
+    if (!containsList && quoteDepth === 0) break;
+    const item = readListContext(text, indent, true, nextLine);
+    if (!item) break;
+    containsList = true;
+    indent = item.indent;
+    text = item.text;
+  }
+  return { text, quoteDepth, containsList };
+}
+
+function readLinkReferenceEnd(lines, start) {
+  let definition = lines[start];
+  if (!LINK_REFERENCE_START.test(definition)) return -1;
+  let end = LINK_REFERENCE_DEFINITION.test(definition) ? start : -1;
+  // The destination and optional title can each begin on the next physical line.
+  for (let index = start + 1; index <= start + 2 && index < lines.length; index += 1) {
+    const continuation = lines[index].trim();
+    if (!continuation || THEMATIC_BREAK.test(lines[index])) break;
+    definition += ` ${continuation}`;
+    if (LINK_REFERENCE_DEFINITION.test(definition)) end = index;
+  }
+  return end;
+}
+
 function parseFenceStart(line) {
   let index = 0;
   while (index < 3 && line[index] === " ") index += 1;
@@ -123,6 +163,7 @@ function parseFenceStart(line) {
   let end = index;
   while (line[end] === character) end += 1;
   if (end - index < 3) return null;
+  if (character === String.fromCharCode(96) && line.indexOf(character, end) !== -1) return null;
   return { character, length: end - index };
 }
 
@@ -248,10 +289,14 @@ function visibleMarkdownLines(markdown, statusEvidenceOnly = false) {
   const visibleLines = [];
   let openFence = null;
   let insideHtmlComment = false;
-  let insideHtmlPreBlock = false;
+  let htmlPreListIndent = null;
   let rawHtmlBlock = null;
   let inlineCodeDelimiterLength = 0;
   let atBlockBoundary = true;
+  let setextParagraph = null;
+  let inTopLevelTable = false;
+  let quotedParagraphDepth = 0;
+  let linkReferenceEnd = -1;
   const listContexts = [];
 
   for (let lineIndex = 0; lineIndex < sourceLines.length; lineIndex += 1) {
@@ -283,31 +328,59 @@ function visibleMarkdownLines(markdown, statusEvidenceOnly = false) {
       }
     }
     if (openFence !== null) {
-      if (line.trim() && listIndent < openFence.listIndent) {
-        // A fenced block inside a list also ends when its list item ends.
+      const quotedContent = openFence.quoteDepth > 0
+        ? readContainerLeaf(blockLine, listIndent, null, sourceLines[lineIndex + 1])
+        : null;
+      if ((line.trim() && listIndent < openFence.listIndent)
+        || (quotedContent && quotedContent.quoteDepth < openFence.quoteDepth)) {
+        // A fenced block ends when its enclosing list item or block quote ends.
         openFence = null;
       } else {
-        if (isFenceClosing(blockLine, openFence)) openFence = null;
+        const closingLine = quotedContent ? quotedContent.text : blockLine;
+        if ((!quotedContent || (!quotedContent.containsList && quotedContent.quoteDepth === openFence.quoteDepth))
+          && isFenceClosing(closingLine, openFence)) openFence = null;
         continue;
       }
     }
 
-    if (insideHtmlPreBlock) {
-      const preClose = findHtmlPreCloseOutsideComment(line, insideHtmlComment);
-      insideHtmlComment = preClose.insideHtmlComment;
-      if (preClose.end === null) continue;
-      line = line.slice(preClose.end);
-      listIndent = 0;
-      blockLine = line;
-      insideHtmlPreBlock = false;
-      insideHtmlComment = false;
+    if (htmlPreListIndent !== null) {
+      if (line.trim() && listIndent < htmlPreListIndent) {
+        htmlPreListIndent = null;
+        insideHtmlComment = false;
+        atBlockBoundary = true;
+      } else {
+        const preClose = findHtmlPreCloseOutsideComment(line, insideHtmlComment);
+        insideHtmlComment = preClose.insideHtmlComment;
+        if (preClose.end === null) continue;
+        line = line.slice(preClose.end);
+        listIndent = 0;
+        blockLine = line;
+        htmlPreListIndent = null;
+        insideHtmlComment = false;
+      }
     }
 
-    if (inlineCodeDelimiterLength === 0 && !insideHtmlComment && !insideHtmlPreBlock
-      && isIndentedCodeLine(blockLine) && line.trim().length > 0) continue;
+    if (setextParagraph && listIndent === 0 && line === sourceLine && !insideHtmlComment) {
+      const underline = SETEXT_UNDERLINE.exec(line);
+      if (underline) {
+        // The entire preceding paragraph becomes the heading, not section evidence.
+        const marker = underline[1].startsWith("=") ? "#" : "##";
+        visibleLines.length = setextParagraph.start;
+        visibleLines.push({ heading: [marker, setextParagraph.title.trim()] });
+        setextParagraph = null;
+        inlineCodeDelimiterLength = 0;
+        quotedParagraphDepth = 0;
+        atBlockBoundary = true;
+        continue;
+      }
+    }
 
-    if (inlineCodeDelimiterLength === 0 && !insideHtmlComment && !insideHtmlPreBlock) {
-      const listItem = readListContext(blockLine, listIndent, atBlockBoundary || endedListItem, sourceLines[lineIndex + 1]);
+    if (inlineCodeDelimiterLength === 0 && !insideHtmlComment && htmlPreListIndent === null
+      && isIndentedCodeLine(blockLine) && line.trim().length > 0 && !setextParagraph) continue;
+
+    let listItem = null;
+    if (inlineCodeDelimiterLength === 0 && !insideHtmlComment && htmlPreListIndent === null) {
+      listItem = readListContext(blockLine, listIndent, atBlockBoundary || endedListItem || inTopLevelTable, sourceLines[lineIndex + 1]);
       const itemText = listItem?.text ?? blockLine;
       if (listItem) {
         const itemLabel = itemText.split(":", 1)[0].trim().toLowerCase();
@@ -316,20 +389,30 @@ function visibleMarkdownLines(markdown, statusEvidenceOnly = false) {
           reportContent: REPORT_LIST_LABELS.has(itemLabel),
         });
       }
-      const fenceStart = parseFenceStart(itemText);
+      const fenceLeaf = readContainerLeaf(itemText, listItem?.indent ?? listIndent, null, sourceLines[lineIndex + 1]);
+      const fenceStart = fenceLeaf.containsList ? null : parseFenceStart(fenceLeaf.text);
       if (fenceStart !== null) {
-        openFence = { ...fenceStart, listIndent: listItem?.indent ?? listIndent };
+        openFence = { ...fenceStart, listIndent: listItem?.indent ?? listIndent, quoteDepth: fenceLeaf.quoteDepth };
+        setextParagraph = null;
+        inTopLevelTable = false;
+        quotedParagraphDepth = 0;
         atBlockBoundary = true;
         continue;
       }
       const rawEnd = findRawHtmlBlockEnd(blockLine);
       if (rawEnd) {
         if (!rawEnd.test(blockLine)) rawHtmlBlock = { endPattern: rawEnd, listIndent };
+        setextParagraph = null;
+        inTopLevelTable = false;
+        quotedParagraphDepth = 0;
         atBlockBoundary = true;
         continue;
       }
       if (startsHtmlBlock(blockLine, atBlockBoundary)) {
         rawHtmlBlock = { endPattern: null, listIndent };
+        setextParagraph = null;
+        inTopLevelTable = false;
+        quotedParagraphDepth = 0;
         atBlockBoundary = true;
         continue;
       }
@@ -338,7 +421,7 @@ function visibleMarkdownLines(markdown, statusEvidenceOnly = false) {
     const tableLine = !insideHtmlComment;
     const headingCandidate = inlineCodeDelimiterLength === 0
       && !insideHtmlComment
-      && !insideHtmlPreBlock
+      && htmlPreListIndent === null
       && listIndent === 0
       && line === sourceLine
       ? F1_SECTION_HEADING.exec(line)
@@ -354,7 +437,7 @@ function visibleMarkdownLines(markdown, statusEvidenceOnly = false) {
     const backtick = String.fromCharCode(96);
 
     while (cursor < line.length) {
-      if (insideHtmlPreBlock) {
+      if (htmlPreListIndent !== null) {
         const preClose = findHtmlPreCloseOutsideComment(line.slice(cursor), insideHtmlComment);
         insideHtmlComment = preClose.insideHtmlComment;
         if (preClose.end === null) {
@@ -362,7 +445,7 @@ function visibleMarkdownLines(markdown, statusEvidenceOnly = false) {
           break;
         }
         cursor += preClose.end;
-        insideHtmlPreBlock = false;
+        htmlPreListIndent = null;
         insideHtmlComment = false;
         continue;
       }
@@ -419,7 +502,7 @@ function visibleMarkdownLines(markdown, statusEvidenceOnly = false) {
 
       const preOpen = HTML_PRE_OPEN.exec(line.slice(cursor));
       if (preOpen && !isEscapedAt(line, cursor)) {
-        insideHtmlPreBlock = true;
+        htmlPreListIndent = listItem?.indent ?? listIndent;
         cursor += preOpen[0].length;
         continue;
       }
@@ -430,11 +513,32 @@ function visibleMarkdownLines(markdown, statusEvidenceOnly = false) {
       cursor += 1;
     }
 
+    const { text: blockText, quoteDepth, containsList } = readContainerLeaf(blockLine, listIndent, listItem, sourceLines[lineIndex + 1]);
+    const quotedSetext = quoteDepth > 0 && quoteDepth === quotedParagraphDepth && SETEXT_UNDERLINE.test(blockText);
+    if (lineIndex > linkReferenceEnd && atBlockBoundary && listIndent === 0 && !containsList && quoteDepth === 0) {
+      linkReferenceEnd = readLinkReferenceEnd(sourceLines, lineIndex);
+    }
+    // Containers with an empty leaf or a heading have no paragraph for lazy continuation.
+    const blankOrBlock = blockText.trim().length === 0 || isAtxHeadingLine(blockText) || quotedSetext
+      || THEMATIC_BREAK.test(blockText) || HTML_PRE_OPEN.test(blockText.trimStart()) || lineIndex <= linkReferenceEnd;
+    const hasTopLevelParagraphText = !blankOrBlock && !listItem && listIndent === 0
+      && line === sourceLine && quoteDepth === 0 && !insideHtmlComment && htmlPreListIndent === null;
+    if (!hasTopLevelParagraphText) {
+      setextParagraph = null;
+      inTopLevelTable = false;
+    } else if (setextParagraph?.lines === 1 && /^[ |:\t-]+$/u.test(line) && !isIndentedCodeLine(line)
+      && hasMarkdownTableDelimiter(splitMarkdownTableRow(sourceLines[lineIndex - 1]), splitMarkdownTableRow(line))) {
+      setextParagraph = null;
+      inTopLevelTable = true;
+    } else if (setextParagraph) {
+      setextParagraph.title += ` ${visible.trim()}`;
+      setextParagraph.lines += 1;
+    } else if (!inTopLevelTable && atBlockBoundary && !isIndentedCodeLine(line)) {
+      setextParagraph = { start: visibleLines.length, title: visible.trim(), lines: 1 };
+    }
     // Track whether a standalone HTML tag may start a block on the next line.
-    atBlockBoundary = line.trim().length === 0
-      || isAtxHeadingLine(line)
-      || THEMATIC_BREAK.test(line)
-      || (!atBlockBoundary && SETEXT_UNDERLINE.test(line));
+    atBlockBoundary = blankOrBlock || (listIndent > 0 && !atBlockBoundary && SETEXT_UNDERLINE.test(line));
+    quotedParagraphDepth = !blankOrBlock && !containsList ? quoteDepth : 0;
     if (isIndentedCodeLine(statusEvidenceOnly ? relativeListLine(visible, listIndent) : visible)) continue;
     const nestedReportEvidence = parentItem?.reportContent && isIndentedCodeLine(line);
     visibleLines.push({
@@ -442,7 +546,7 @@ function visibleMarkdownLines(markdown, statusEvidenceOnly = false) {
       statusText: relativeListLine(statusVisible, listIndent),
       fieldText: fieldVisible,
       tableText: tableLine ? visible : "",
-      headingCandidate,
+      heading: headingCandidate ? F1_SECTION_HEADING.exec(visible)?.slice(1) : null,
       nestedReportEvidence,
       lineIndex,
     });
@@ -468,13 +572,12 @@ function splitSections(markdown, statusEvidenceOnly = false) {
     fieldSections.set(current, [...fieldBody]);
   };
 
-  for (const { text: line, statusText, fieldText, tableText, headingCandidate, nestedReportEvidence, lineIndex } of visibleMarkdownLines(markdown, statusEvidenceOnly)) {
-    const heading = headingCandidate ? F1_SECTION_HEADING.exec(line) : null;
+  for (const { text: line, statusText, fieldText, tableText, heading, nestedReportEvidence, lineIndex } of visibleMarkdownLines(markdown, statusEvidenceOnly)) {
     if (heading) {
       flush();
       // A top-level heading ends the preceding section. Only named H2s open a report section.
-      const title = (heading[2] ?? "").replace(/[ \t]+$/u, "");
-      current = heading[1] === "##" && title ? title : null;
+      const [marker, title = ""] = heading;
+      current = marker === "##" && title.trimEnd() ? title.trimEnd() : null;
       body.length = 0;
       fieldBody.length = 0;
     } else if (current !== null) {
@@ -586,14 +689,18 @@ function normalizeTableHeader(value) {
     .toLocaleLowerCase();
 }
 
+function hasMarkdownTableDelimiter(headers, separators) {
+  return headers && separators && headers.length === separators.length
+    && separators.every((cell) => /^:?-+:?$/u.test(cell));
+}
+
 function readAiStatusTable(lines, errors) {
   let table = null;
   for (let index = 0; index < lines.length - 1; index += 1) {
     if (lines[index + 1].lineIndex !== lines[index].lineIndex + 1) continue;
     const headers = splitMarkdownTableRow(lines[index].tableText);
     const separators = splitMarkdownTableRow(lines[index + 1].tableText);
-    if (!headers || !separators || headers.length !== separators.length) continue;
-    if (!separators.every((cell) => /^:?-+:?$/u.test(cell))) continue;
+    if (!hasMarkdownTableDelimiter(headers, separators)) continue;
 
     // Data rows inside any table cannot start a second table.
     const rows = [];
