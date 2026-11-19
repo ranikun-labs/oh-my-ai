@@ -14,7 +14,7 @@ RUNTIME_FIXTURE="fixtures/jira-ticket/runtime-protocol-fixtures.json"
 
 fail() { echo "jira-ticket fixture failure: $*" >&2; exit 1; }
 require_file() { [ -f "$1" ] || fail "missing file: $1"; }
-require_text() { rg -q -F -- "$2" "$1" || fail "missing text '$2' in $1"; }
+require_text() { grep -q -F -- "$2" "$1" || fail "missing text '$2' in $1"; }
 
 for file in "$SKILL" "$CONTRACT" "$PREVIEW" "$BACKLOG" "$FIXTURE" "$WORKFLOW_FIXTURE" "$RUNTIME_FIXTURE"; do
   require_file "$file"
@@ -62,8 +62,8 @@ require_text "$SKILL" "Issue Type Decision Required"
 require_text "$SKILL" "Source order is Accepted Decision"
 require_text "$SKILL" "Branch-name fallback"
 
-backlog_boundary_line="$(rg -n -m 1 '^## Jira MCP-backed Create boundary$' "$BACKLOG" | cut -d: -f1)"
-approval_boundary_line="$(rg -n -m 1 '^## Approval Boundary$' "$BACKLOG" | cut -d: -f1)"
+backlog_boundary_line="$(grep -n -m 1 '^## Jira MCP-backed Create boundary$' "$BACKLOG" | cut -d: -f1)"
+approval_boundary_line="$(grep -n -m 1 '^## Approval Boundary$' "$BACKLOG" | cut -d: -f1)"
 [ -n "$backlog_boundary_line" ] && [ -n "$approval_boundary_line" ] && [ "$backlog_boundary_line" -lt "$approval_boundary_line" ] \
   || fail "Backlog Create boundary must appear before Approval Boundary"
 

@@ -278,9 +278,9 @@ const targetCapabilities = {
   "jira.intent.persist": { available: true, connection_verified: true },
   "jira.origin.persist": { available: true, connection_verified: true },
 };
-function startTarget(config = targetConfig(), caps = targetCapabilities) {
+function startTarget(config = targetConfig(), caps = targetCapabilities, issueType = metadata.issue_type) {
   return beginJiraTicketCreateWorkflow({
-    runtime: "codex", contract, metadata: { ...metadata, target_create: config },
+    runtime: "codex", contract, metadata: { ...metadata, issue_type: issueType, target_create: config },
     capabilities: caps, runtime_evidence: runtimeEvidence,
   });
 }
@@ -320,6 +320,40 @@ assert.equal(blockedTarget.required_action, null, "unknown Product option must s
 blockedTarget = startTarget({ ...targetConfig(), create_metadata: { ...targetConfig().create_metadata,
   fields: { ...targetConfig().create_metadata.fields, customfield_10042: { required: true, hasDefaultValue: false } } } });
 assert.equal(blockedTarget.required_action, null, "Legacy Required must block Target Create");
+const targetOnlyMetadataConfig = targetConfig();
+for (const id of ["customfield_10042", "customfield_10043", "customfield_10044"])
+  delete targetOnlyMetadataConfig.create_metadata.fields[id];
+blockedTarget = startTarget(targetOnlyMetadataConfig);
+assert.equal(blockedTarget.required_action.type, "jira.search_required",
+  "complete signed Target-only metadata may omit removed Legacy fields");
+assert.equal(blockedTarget.report.create_attempted, false);
+for (const [issueType, issueTypeId] of [["Epic", "10007"], ["Feature", "10009"],
+  ["Bug", "10012"], ["Research", "10013"]]) {
+  const nonTaskConfig = targetConfig();
+  nonTaskConfig.create_metadata.issue_type = issueType;
+  nonTaskConfig.create_metadata.issue_type_id = issueTypeId;
+  const fullLegacy = startTarget(nonTaskConfig, targetCapabilities, issueType);
+  assert.equal(fullLegacy.required_action.type, "jira.search_required",
+    `${issueType} retains its prior Create path when all Legacy metadata is present`);
+  const preview = applyJiraSearchResult(fullLegacy.state, searchNone);
+  const approval = applyJiraPreviewApproval(preview.state, { status: "approved", preview_id: preview.state.preview_id });
+  const request = storedIntent(approval).required_action.request;
+  assert.deepEqual([request.assignee, request.priority, request.labels], [metadata.assignee, metadata.priority, []],
+    `${issueType} retains the existing payload through approval and Intent`);
+  for (const id of ["customfield_10042", "customfield_10043", "customfield_10044"])
+    delete nonTaskConfig.create_metadata.fields[id];
+  const missingLegacy = startTarget(nonTaskConfig, targetCapabilities, issueType);
+  assert.equal(missingLegacy.required_action, null,
+    `${issueType} must not use the Task-only Legacy omission exception`);
+  assert.equal(missingLegacy.report.create_attempted, false);
+}
+const taskWithAssignee = targetConfig();
+taskWithAssignee.create_metadata.fields.assignee = { required: false, hasDefaultValue: false };
+const taskRequest = storedIntent(approvedTarget(taskWithAssignee)).required_action.request;
+assert.equal(taskRequest.assignee, metadata.assignee);
+assert.equal(Object.hasOwn(taskRequest, "priority"), false);
+assert.equal(Object.hasOwn(taskRequest, "labels"), false);
+console.log("passed: legacy-metadata-omission-is-task-only");
 blockedTarget = startTarget(targetConfig(), capabilities);
 assert.equal(blockedTarget.required_action, null, "Target persistence capabilities must be verified");
 blockedTarget = startTarget({ ...targetConfig(), selection: { ...targetConfig().selection,
@@ -353,6 +387,14 @@ assert.deepEqual(tg.required_action.request.fields, {
   customfield_10108: { id: "10027" }, customfield_10109: { id: "10028" },
   customfield_10110: [{ id: "10038" }], customfield_10015: "2030-01-01", duedate: "2030-01-02",
 });
+for (const wrapper of ["assignee", "priority", "labels"]) {
+  assert.equal(Object.hasOwn(tg.required_action.request, wrapper), false,
+    "G3 must omit wrappers absent from live Jira Task Create metadata: " + wrapper);
+}
+assert.ok(tg.required_action.request.description.includes("Assignee: "),
+  "logical owner remains in the approved G3 description");
+assert.ok(tg.required_action.request.description.includes("Priority: "),
+  "logical priority remains in the approved G3 description");
 assert.equal(tg.required_action.request.fields.customfield_10042, undefined);
 assert.equal(tg.required_action.request.fields.customfield_10043, undefined);
 assert.equal(tg.required_action.request.fields.customfield_10044, undefined);

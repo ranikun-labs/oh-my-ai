@@ -1,0 +1,30 @@
+name: Verify Jira G3 integration offline
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/verify-jira-g3-offline.yml'
+      - 'scripts/**/jira-ticket-*.mjs'
+      - 'scripts/test-jira-ticket-*.mjs'
+
+permissions:
+  contents: read
+
+jobs:
+  offline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify Jira preview, connector, and readback with fixtures
+        run: |
+          for test in scripts/test-jira-ticket-g3-*.mjs; do
+            node "$test" || exit 1
+          done
+          make test-jira-ticket-fixtures
