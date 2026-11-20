@@ -146,6 +146,7 @@ jobs:
           node scripts/test-pending-handoff-delivery-consumption-fixtures.mjs
           node scripts/test-f4-scope-preservation-checkpoint-fixtures.mjs
           node scripts/test-f4-scope-preservation-checkpoint-user-local-store-fixtures.mjs
+          node scripts/test-f4-worker-result.mjs
       - name: Run RPL-95 source fixture when integrated
         if: hashFiles('scripts/test-user-local-state-fixtures.mjs') != ''
         run: node scripts/test-user-local-state-fixtures.mjs

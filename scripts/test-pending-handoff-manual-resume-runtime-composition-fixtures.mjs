@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import * as moduleNamespace from "./lib/pending-handoff-manual-resume-runtime-composition.mjs";
 import * as f4NativeCompositionNamespace from "./lib/f4-native-runtime-composition.mjs";
+import { f4PhysicalStateBindingFromLocation } from "./lib/f4-physical-state-binding.mjs";
 import { createF4ScopePreservingCheckpoint } from "./lib/f4-scope-preservation-checkpoint.mjs";
 import { PENDING_HANDOFF_SCHEMA_VERSION } from "./lib/pending-handoff-core.mjs";
 import { createPendingHandoffManualResumeService } from "./lib/pending-handoff-manual-resume.mjs";
@@ -385,7 +386,7 @@ function capabilityMvpContextResult(candidateId, runtimeId, overrides = {}) {
 }
 
 function userLocalStateFixture(records = new Map()) {
-  const stats = { locations: [], readPaths: [], reads: 0, publishes: 0, locks: 0, asyncLockCallbacks: 0 };
+  const stats = { locations: [], readPaths: [], reads: 0, publishes: 0, publishPaths: [], locks: 0, asyncLockCallbacks: 0 };
   let publishDurabilityUnknown = false;
   const defaultRootPath = fs.mkdtempSync(path.join(os.tmpdir(), "f4-user-state-"));
   const overrideRootPaths = new Map();
@@ -417,6 +418,7 @@ function userLocalStateFixture(records = new Map()) {
     },
     publishUserLocalStateAtomically(location, contents) {
       stats.publishes += 1;
+      stats.publishPaths.push(location.relativePath);
       records.set(location.key, contents);
       if (publishDurabilityUnknown) {
         publishDurabilityUnknown = false;
@@ -591,7 +593,8 @@ function build(options = {}) {
       claimLease,
       runtimeEntries: dependencies.runtimeEntries,
       capabilityContext,
-      userLocalState: userLocalState.api,
+      userLocalState: options.workerResultHost === undefined ? userLocalState.api
+        : { ...userLocalState.api, confirmUserLocalStateDurability() { return true; } },
       repositoryCwd: options.repositoryCwd ?? "/repo",
       ...(options.omitWorktreeStateBindingVerifier === true ? {} : {
         verifyWorktreeStateBinding: options.verifyWorktreeStateBinding ?? (() => true),
@@ -610,6 +613,7 @@ function build(options = {}) {
           ?? (() => fixtureApprovedWorkstream()),
       }),
       ...(options.stateRootOptions === undefined ? {} : { stateRootOptions: options.stateRootOptions }),
+      ...(options.workerResultHost === undefined ? {} : { workerResultHost: options.workerResultHost }),
     });
   } else {
     built = moduleNamespace.createPendingHandoffManualResumeRuntimeComposition(dependencies);
@@ -1534,6 +1538,41 @@ await group("native RPL-95 and RPL-118 composition", async () => {
     assert.ok(persisted.some(record => record.checkpoint?.scopeRevision === FIXTURE_SCOPE.scopeRevision));
   });
 
+  await test("only a bound Result Host can record an authenticated dispatch result", async () => {
+    const userLocalState = userLocalStateFixture();
+    const location = userLocalState.api.resolveUserLocalStateLocation("/repo", "test.json");
+    const binding = f4PhysicalStateBindingFromLocation(location).value;
+    const proof = {};
+    let reconciliations = 0;
+    const built = build({
+      nativeComposition: true,
+      userLocalState,
+      workerResultHost: {
+        expectedBinding: binding,
+        verifyResult: observation => observation === proof ? {
+          objectiveId: FIXTURE_SCOPE.objectiveId, workstreamId: "RPL-120",
+          scopeRevision: FIXTURE_SCOPE.scopeRevision, candidateId: request().candidate_id,
+          actionKind: "manual_resume", attemptId: ATTEMPT, candidateRevision: 1,
+          claimRevision: 2, associationId: "association", actorId: SESSION_OWNER,
+          runtimeId: "codex", executionId: "provider-execution", repositoryId: REPOSITORY,
+          worktreeId: WORKTREE, stateRootId: binding.state_root_identity,
+          repositoryInstanceId: binding.repository_instance_id, physicalWorktreeId: binding.physical_worktree_id,
+          commit: "a".repeat(40), tree: "b".repeat(40), environmentId: "env",
+          testPlanId: "targeted", testPlanDigest: "c".repeat(64), outcome: "passed", evidenceRef: "evidence/1",
+        } : null,
+        reconcileInventory: () => { reconciliations++; return "applied"; },
+      },
+    });
+    assert.deepEqual(await built.composition.receiveWorkerResult(proof), { ok: false, reason: "worker_result_unverified" });
+    assert.equal((await built.composition.executeManualResume(request())).value.outcome, "resume_accepted");
+    assert.deepEqual(await built.composition.receiveWorkerResult({}), { ok: false, reason: "worker_result_unverified" });
+    assert.deepEqual(await built.composition.receiveWorkerResult(proof), {
+      ok: true, resultRecorded: true, reconciliation: "applied",
+    });
+    assert.equal(reconciliations, 1);
+    assert.equal(built.calls.filter(([name]) => name === "codex.resolveAndResume").length, 1);
+  });
+
   await test("Manual Resume and checkpoint access use separate Host verifier contracts", async () => {
     const manualRequests = [];
     const checkpointRequests = [];
@@ -1920,8 +1959,16 @@ await group("F4 scope checkpoint composition", async () => {
     assert.equal(built.calls.some(([name]) => name === "codex.resolveAndResume"), false);
   });
 
-  await test("a completed workstream makes zero executor calls on a new attempt", async () => {
-    const built = build({ nativeComposition: true });
+  await test("a completed workstream makes no Claim or executor calls and an independent READY can resume", async () => {
+    const approvedWorkstream = id => ({
+      ...fixtureApprovedWorkstream(id),
+      observedStatus: "READY",
+      inventorySourceRevision: "jira-snapshot/completed",
+    });
+    const built = build({
+      nativeComposition: true,
+      resolveApprovedWorkstreamForManualResume: () => approvedWorkstream("RPL-120"),
+    });
     const completed = await built.composition.reconcileScopeCheckpoint({
       approvedScope: FIXTURE_SCOPE,
       expectedCheckpointRevision: 1,
@@ -1932,7 +1979,10 @@ await group("F4 scope checkpoint composition", async () => {
         refreshScope: "INCREMENTAL_DELTA",
         coverage: "COMPLETE",
         partialReasons: [],
-        observations: [{ id: "RPL-120", status: "DONE" }],
+        observations: [
+          { id: "RPL-120", status: "DONE" },
+          { id: "BLOCKED-OTHER", status: "READY" },
+        ],
       },
       recentExecution: null,
       nextReadyId: null,
@@ -1940,11 +1990,44 @@ await group("F4 scope checkpoint composition", async () => {
     });
     assert.equal(completed.ok, true);
     assert.equal(completed.checkpoint.statusSummary.DONE, 1);
+    assert.equal(completed.checkpoint.nextReadyId, "BLOCKED-OTHER");
     built.calls.length = 0;
     const result = await built.composition.executeManualResume(request());
     assert.deepEqual(result, { ok: false, reason: "manual_resume_capability_preflight_blocked" });
     assert.equal(built.calls.some(([name]) => name === "acquireClaim"), false);
     assert.equal(built.calls.some(([name]) => name === "codex.resolveAndResume"), false);
+
+    const candidateId = "composition-candidate-002";
+    let resumeCalls = 0;
+    const independent = build({
+      nativeComposition: true,
+      seedScopeCheckpoint: false,
+      userLocalState: built.userLocalState,
+      stateReads: [successorState()],
+      resolveApprovedWorkstreamForManualResume: () => approvedWorkstream("BLOCKED-OTHER"),
+      executor: {
+        resolveAndResume: input => {
+          assert.equal(input.candidate_id, candidateId);
+          resumeCalls += 1;
+          return success({ ...receipt(), candidate_id: candidateId });
+        },
+      },
+    });
+    function successorState() {
+      const initial = state();
+      return { ...initial, candidate: { ...initial.candidate, candidate_id: candidateId } };
+    }
+    const beforeAcceptance = built.userLocalState.stats.publishPaths.length;
+    const ready = await independent.composition.executeManualResume(request({ candidate_id: candidateId }));
+    assert.equal(ready.ok, true, JSON.stringify(ready));
+    assert.equal(ready.value.outcome, "resume_accepted");
+    assert.equal(independent.calls.filter(([name]) => name === "acquireClaim").length, 1);
+    assert.equal(resumeCalls, 1);
+    const afterAcceptance = await independent.composition.readScopeCheckpoint({ objectiveId: FIXTURE_SCOPE.objectiveId });
+    assert.deepEqual(afterAcceptance.value, completed.checkpoint);
+    assert.ok(built.userLocalState.stats.publishPaths.length > beforeAcceptance);
+    assert.equal(built.userLocalState.stats.publishPaths.slice(beforeAcceptance)
+      .some(relativePath => relativePath.includes("/scope-preservation-checkpoints/")), false);
   });
 
   await test("rechecking a completed objective does not publish another revision", async () => {
