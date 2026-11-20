@@ -410,6 +410,7 @@ async function verifyApprovedReadyWorkstream(
   if (ownData(checkpoint, "objectiveId") !== approved.values.objectiveId
     || ownData(checkpoint, "scopeRevision") !== approved.values.scopeRevision
     || ownData(checkpoint, "scopeCoverage") !== "COMPLETE"
+    || ownData(checkpoint, "stopReason") !== null
     || ownData(checkpoint, "nextReadyId") !== approved.values.workstreamId
     || !Array.isArray(inventory)
     || !Array.isArray(requiredSources)
