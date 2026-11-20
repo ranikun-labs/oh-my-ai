@@ -10,4 +10,23 @@ if printf '%s' '{"items":[],"relations":[{}]}' | node scripts/oh-my-ai.mjs work-
 grep -q 'work-view input invalid' "$tmpdir/err"
 if head -c 8388609 /dev/zero | node scripts/oh-my-ai.mjs work-view --stdin-json --relations > "$tmpdir/out" 2> "$tmpdir/err"; then exit 1; fi
 grep -q 'exceeds 8388608 bytes' "$tmpdir/err"
+
+node --input-type=module <<'JS' > "$tmpdir/preview-input"
+const longValue = "x".repeat(1000);
+const items = Array.from({ length: 500 }, (_, index) => ({
+  key: `RPL-${index + 1}`,
+  title: longValue,
+  status: longValue,
+  source_ref: longValue,
+}));
+console.log(JSON.stringify({ items, relations: [] }));
+JS
+node scripts/oh-my-ai.mjs work-view --stdin-json --relations < "$tmpdir/preview-input" 2> "$tmpdir/err" | head -n 1 > "$tmpdir/out"
+grep -qx '# 업무 관계 보기' "$tmpdir/out"
+test ! -s "$tmpdir/err"
+
+if [[ -c /dev/full ]]; then
+  if printf '%s' '{"items":[],"relations":[]}' | node scripts/oh-my-ai.mjs work-view --stdin-json --relations > /dev/full 2> "$tmpdir/err"; then exit 1; fi
+  grep -q '^work-view output failed: .*ENOSPC' "$tmpdir/err"
+fi
 echo 'work-tree CLI tests passed'
