@@ -17,12 +17,14 @@ import { handleJiraTicketRuntimeInput } from "./lib/jira-ticket-runtime-entry.mj
 import { formatWorkStateObservationView } from "./lib/work-state-observation-view.mjs";
 import { formatWorkTree } from "./lib/work-tree-view.mjs";
 import { jiraObservations } from "./lib/jira-observations.mjs";
+import { runF1StopAdvisory } from "./f1-stop-advisory.mjs";
+import { updateF1TurnExpectation } from "./lib/f1-turn-expectation.mjs";
 
 const args = process.argv.slice(2);
 const command = args[0];
 
 if (command === "hook") {
-  runHook(args.slice(1));
+  await runHook(args.slice(1));
 } else if (command === "context-checkpoint") {
   runContextCheckpoint(args.slice(1));
 } else if (command === "work-start") {
@@ -81,7 +83,13 @@ function runWorkView(args) {
   try {
     if (args[1] === "--jira-observations") {
       const normalized = jiraObservations(input.issues, input.observed_at);
-      view = `조회 범위: PARTIAL — 수동 제공 관찰이며 Jira 자동 조회가 아닙니다.\n입력 범위 밖의 지원 관계(Parent·Blocks·Relates) 관찰: ${normalized.omitted_relation_observations}건; 표시하지 않은 기타 링크 관찰: ${normalized.unsupported_link_observations}건. 관찰 횟수이며 고유 관계 건수나 미조회 데이터 전체가 아닙니다.\n\n${formatWorkTree({items: normalized.items, relations: normalized.relations})}`;
+      const observationNote = normalized.observation_time === null
+        ? "확인 시각: UNKNOWN — 입력에서 유효한 시각을 확인할 수 없습니다."
+        : "";
+      const chronologyNote = normalized.source_updates_after_observation > 0
+        ? `시간 불일치: 이슈 수정 시각이 확인 시각보다 늦은 ${normalized.source_updates_after_observation}건의 수정 시각을 UNKNOWN으로 표시했습니다.`
+        : "";
+      view = `조회 범위: PARTIAL — 수동 제공 관찰이며 Jira 자동 조회가 아닙니다.\n입력 범위 밖의 지원 관계(Parent·Blocks·Relates) 관찰: ${normalized.omitted_relation_observations}건; 표시하지 않은 기타 링크 관찰: ${normalized.unsupported_link_observations}건. 관찰 횟수이며 고유 관계 건수나 미조회 데이터 전체가 아닙니다.\n${[observationNote, chronologyNote].filter(Boolean).map(note => `${note}\n`).join("")}\n${formatWorkTree({items: normalized.items, relations: normalized.relations})}`;
     } else view = args.length === 2 ? formatWorkTree(input) : formatWorkStateObservationView(input);
   } catch (error) {
     process.stderr.write(`work-view input invalid: ${error.message}\n`);
@@ -151,10 +159,23 @@ function workStartExecutionContext() {
   return { runtime: "", sessionId: "" };
 }
 
-function runHook(args) {
+async function runHook(args) {
   const runtime = args[0] || "";
   const eventName = args[1] || "";
+  if (eventName === "Stop" && ["codex", "claude"].includes(runtime)) {
+    return runF1StopAdvisory({
+      expectF1: process.env.OH_MY_AI_EXPECT_F1 === "1",
+      takeExpectation: event => updateF1TurnExpectation(findRepoRoot, runtime, event, "stop"),
+    });
+  }
   const input = readStdin();
+  if (eventName === "UserPromptSubmit" && ["codex", "claude"].includes(runtime)) {
+    try {
+      updateF1TurnExpectation(findRepoRoot, runtime, JSON.parse(input), "submit");
+    } catch {
+      // Invalid payload remains subject to the existing Hook handlers.
+    }
+  }
 
   if (
     runtime === "claude"

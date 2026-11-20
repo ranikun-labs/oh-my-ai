@@ -227,9 +227,52 @@ function normalizeScope(text) {
     : tokens).join(" ");
 }
 
+function omitFencedExamples(text) {
+  const prose = [];
+  let openFence = null;
+  let listIndent = 0;
+  let listQuote = "";
+  for (const line of text.split(/\r\n?|\n/u)) {
+    const quote = /^(?: {0,3}>[ \t]?)+/u.exec(line)?.[0] ?? "";
+    const quoteLevel = quote.replace(/[^>]/gu, "");
+    let content = line.slice(quote.length);
+    if (openFence && (openFence.quoteLevel !== quoteLevel
+      || (openFence.indent > 0 && content.trim() !== "" && !content.startsWith(" ".repeat(openFence.indent))))) {
+      openFence = null;
+    }
+    if (!openFence && (quoteLevel !== listQuote
+      || (content.trim() !== "" && !content.startsWith(" ".repeat(listIndent))))) {
+      listIndent = 0;
+    }
+    const list = !openFence && /^ {0,3}(?:[-+*]|\d{1,9}[.)]) {1,4}/u.exec(content)?.[0];
+    if (list) {
+      listIndent = list.length;
+      listQuote = quoteLevel;
+    }
+    content = content.slice(openFence?.indent ?? listIndent);
+    const fence = /^ {0,3}(`{3,}|~{3,})(.*)$/u.exec(content);
+    if (openFence) {
+      if (fence && fence[1][0] === openFence.marker[0] && fence[1].length >= openFence.marker.length &&
+          !fence[2].trim()) openFence = null;
+      continue;
+    }
+    if (fence && !(fence[1][0] === "`" && fence[2].includes("`"))) {
+      openFence = { marker: fence[1], quoteLevel, indent: listIndent };
+      prose.push(".");
+      continue;
+    }
+    prose.push(line);
+  }
+  return prose.join("\n");
+}
+
 export function needsJiraFirstDevelopmentPreflight(prompt) {
   if (typeof prompt !== "string") return false;
-  let limited = prompt.trim().slice(0, 2000);
+  const content = prompt.trimStart();
+  const leadingWhitespace = prompt.slice(0, prompt.length - content.length);
+  const firstLineIndent = leadingWhitespace.slice(leadingWhitespace.lastIndexOf("\n") + 1);
+  // Preserve fence indentation without charging leading whitespace to the prompt budget.
+  let limited = omitFencedExamples(firstLineIndent + content.slice(0, 2000)).trim();
   if (!limited || !DEVELOPMENT_TARGET.test(limited)) return false;
 
   // Remove only the nearest request explicitly withdrawn by the final correction

@@ -480,6 +480,24 @@ fx_completion_criteria_status() {
   echo "passed: FX-RS-completion-criteria-status"
 }
 
+fx_validation_result_names() {
+  local src="$FIXTURE_ROOT/FX-RS-good-complete-validation-performed.md"
+  local d out result
+  sandbox d
+  out="$d/validation.md"
+  result='- `visual diff`: `pass` - single-line typo fix, no other lines changed'
+
+  mutate_result "$src" "$out" "$result" "$result"$'\n- `visual diff`: `not_run` - no review run'
+  expect_invalid "$out" "Validation-Contradictory-Results" "duplicate Validation Results entry: visual diff"
+  mutate_result "$src" "$out" "$result" "$result"$'\n- ` visual diff `: `pass` - another source'
+  expect_invalid "$out" "Validation-Repeated-Name" "duplicate Validation Results entry: visual diff"
+  mutate_result "$src" "$out" "$result" "$result"$'\n- `smoke check`: `not_run` - outside this unit'
+  expect_valid "$out" "Validation-Distinct-Names"
+  mutate_result "$src" "$out" "$result" "$result"$'\n<!--\n- `visual diff`: `not_run` - example\n-->\n```markdown\n- `visual diff`: `not_run` - example\n```'
+  expect_valid "$out" "Validation-Examples-Are-Not-Results"
+  echo "passed: FX-RS-validation-result-names"
+}
+
 fx_required_metadata_unfilled() {
   local src="$FIXTURE_ROOT/FX-RS-good-complete-validation-performed.md"
   local d out
@@ -682,6 +700,7 @@ fx_result_section_boundaries
 fx_source_handoff_reference
 fx_required_metadata_unfilled
 fx_completion_criteria_status
+fx_validation_result_names
 fx_filled_current_template
 fx_sandbox_cleanup
 
