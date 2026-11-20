@@ -103,7 +103,6 @@ function buildPromptRoutingPayload(prompt, options = {}) {
   const explicitWorkStart = hasExplicitWorkStartInvocation(prompt, runtime);
   const executionStatus = getWorkStartExecutionStatus(process.cwd(), runtime, sessionId, prompt);
   const completedWorkStart = executionStatus.recent;
-  const routing = matchSkillCandidatesWithStatus(normalized, { limit: SKILL_CANDIDATE_LIMIT });
 
   // A Runtime can remove an explicit command token before a later
   // UserPromptSubmit event. Suppress only when the Engine supplied the same
@@ -114,6 +113,7 @@ function buildPromptRoutingPayload(prompt, options = {}) {
   }
 
   if (explicitWorkStart || completedWorkStart) {
+    const routing = matchSkillCandidatesWithStatus(normalized, { limit: SKILL_CANDIDATE_LIMIT });
     return {
       context: notes.length ? ["[HARNESS:prompt-routing]", ...notes].join("\n") : "",
       systemMessage: "",
@@ -189,7 +189,7 @@ function buildPromptRoutingPayload(prompt, options = {}) {
       .map(candidate => `\`${candidate.name}\` (matched: ${candidate.matched.join(", ")})`)
       .join(", ");
     notes.push(
-      `- Skill routing candidates: ${rendered}. routing_status=${routing.status}. Do not auto-execute skills; inspect fit before applying.`,
+      `- Skill routing candidates: ${rendered}. routing_status=${routedCandidates.status}. Do not auto-execute skills; inspect fit before applying.`,
     );
   }
 

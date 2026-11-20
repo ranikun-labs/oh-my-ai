@@ -183,4 +183,19 @@ printf '%s' "$work_json" | node -e '
 ' || fail "FX-RT-040: expected jira-ticket candidate"
 echo "passed: FX-RT-040-explicit-jira-create-routing"
 
+task="handoff 개발 결과 보고해줘"
+prompt_json="$(run_prompt_consumer "$real_index" "$task")"
+assert_field "FX-RT-041" "$prompt_json" routing_status matched
+assert_field "FX-RT-041" "$prompt_json" skill_candidates 1
+assert_field "FX-RT-041" "$prompt_json" skill_candidates.0.name engineering-communication-ko
+
+hook_json="$(printf '{"prompt":"%s"}' "$task" | XDG_STATE_HOME="$TMP_ROOT/state" OH_MY_AI_SKILL_INDEX="$real_index" \
+  node scripts/prompt-routing-hook.mjs --format=codex-json)"
+hook_context="$(printf '%s' "$hook_json" | json_field hookSpecificOutput.additionalContext)"
+[[ "$hook_context" == *'Handoff/PR signal: consider the `handoff-prompt` skill'* ]] \
+  || fail "FX-RT-041: expected the separate handoff advisory"
+[[ "$hook_context" == *'Skill routing candidates: `engineering-communication-ko` (matched: pattern). routing_status=matched.'* ]] \
+  || fail "FX-RT-041: F1 advisory status disagrees with the displayed candidates"
+echo "passed: FX-RT-041-filtered-f1-advisory-status"
+
 echo "all routing fixtures passed"
