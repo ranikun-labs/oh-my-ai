@@ -280,6 +280,11 @@ function findHtmlPreCloseOutsideComment(line, insideHtmlComment) {
 
     const closePre = /^<\/pre\s*>/i.exec(line.slice(cursor));
     if (closePre) return { end: cursor + closePre[0].length, insideHtmlComment: false, hasContent };
+    const codeTag = /^<\/?code(?:[ \t]+[^<>\n]*)?>/iu.exec(line.slice(cursor));
+    if (codeTag) {
+      cursor += codeTag[0].length;
+      continue;
+    }
     if (!hasContent && /\S/u.test(line[cursor])) hasContent = true;
     cursor += 1;
   }
@@ -594,10 +599,17 @@ function visibleMarkdownLines(markdown, statusEvidenceOnly = false, onOpaqueEvid
 export function readMarkdownEvidence(markdown) {
   let hasOpaqueEvidence = false;
   const lines = visibleMarkdownLines(markdown, true, () => { hasOpaqueEvidence = true; });
-  const emptyContainer = /^(?:>[ \t]*|(?:[-+*]|\d{1,9}[.)])(?:[ \t]+|$))*$/u;
+  const container = /^(?:(?:>[ \t]*|(?:[-+*]|\d{1,9}[.)])(?:[ \t]+|$)))+/u;
+  const thematicBreak = /^(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})$/u;
+  const referenceDefinition = /^\[[^\]\n]+\]:[ \t]*https?:\/\/[^\s<>]+$/iu;
+  const emptyHtmlContainer = /^<(div|span|p|section|blockquote|ul|ol|li|code)(?:[ \t]+[^<>\n]*)?>[ \t]*<\/\1\s*>$/iu;
   const text = lines
-    .filter((line) => !line.heading && !line.atxHeading && !emptyContainer.test(line.text.trim()))
-    .map((line) => line.text)
+    .filter((line) => !line.heading && !line.atxHeading)
+    .map((line) => line.text.trim())
+    .filter((line) => !thematicBreak.test(line))
+    .map((line) => line.replace(container, "").trim())
+    .filter((line) => line && !thematicBreak.test(line)
+      && !referenceDefinition.test(line) && !emptyHtmlContainer.test(line.replace(/<!--.*?-->/gu, "").trim()))
     .join("\n");
   return { text, hasOpaqueEvidence };
 }
