@@ -409,9 +409,11 @@ by the product owner before production behavior is added:
 * Retention, lifecycle/terminal states, and which actor may recover or clear
   records.
 
-Until those decisions and their canonical APIs exist, Result/Checkpoint
-persistence and retry remain unimplemented. A simulated saved Result is not
-durability evidence; a failed or ambiguous write remains blocked.
+The guarded Result intake and Scope Checkpoint projection exist behind injected
+Host ports. Production enablement still depends on the canonical Inventory
+owner, a Host that can guard the current approval through checkpoint publication,
+and a supported Runtime Result provider. Fixture success is not production
+durability evidence. An unconfirmed publication remains blocked.
 `resume_accepted` cannot be promoted into a completed Result or used to infer a
 Checkpoint.
 

@@ -30,7 +30,7 @@ export function createF4ScopePreservationCheckpointUserLocalStore(options) {
     "userLocalState",
     "verifyStateRootBinding",
     "expectedPhysicalStateBinding",
-  ], ["stateRootOptions"]);
+  ], ["stateRootOptions", "confirmDurability"]);
   if (!input.ok
     || typeof input.values.cwd !== "string"
     || !path.isAbsolute(input.values.cwd)
@@ -50,14 +50,18 @@ export function createF4ScopePreservationCheckpointUserLocalStore(options) {
   if (stateRootOptions === null) return failure("scope_checkpoint_store_invalid");
   const expectedPhysicalStateBinding = input.values.expectedPhysicalStateBinding;
   const verifyStateRootBinding = input.values.verifyStateRootBinding;
+  const confirmDurability = input.values.confirmDurability;
+  if (confirmDurability !== undefined && (typeof confirmDurability !== "function"
+    || utilTypes.isProxy(confirmDurability))) return failure("scope_checkpoint_store_invalid");
   return success(Object.freeze({
-    readCheckpoint: request => readCheckpoint(
+    readCheckpoint: (request, requireDurability = false) => readCheckpoint(
       userLocalState,
       cwd,
       stateRootOptions,
       expectedPhysicalStateBinding,
       verifyStateRootBinding,
       request,
+      requireDurability ? confirmDurability ?? (() => false) : null,
     ),
     compareAndSetCheckpoint: request => compareAndSetCheckpoint(
       userLocalState,
@@ -77,6 +81,7 @@ async function readCheckpoint(
   expectedPhysicalStateBinding,
   verifyStateRootBinding,
   request,
+  confirmDurability,
 ) {
   const inspected = inspectExactDataObject(request, ["objectiveId"]);
   if (!inspected.ok || !isObjectiveId(inspected.values.objectiveId)) {
@@ -91,6 +96,13 @@ async function readCheckpoint(
     inspected.values.objectiveId,
     location => {
     const stored = readStoredCheckpoint(userLocalState, location, inspected.values.objectiveId);
+    if (stored.ok && stored.value !== null && confirmDurability) {
+      const confirmation = confirmDurability(location);
+      if (confirmation !== true) {
+        Promise.resolve(confirmation).catch(() => {});
+        return failure("scope_checkpoint_durability_unconfirmed");
+      }
+    }
     return stored.ok ? success(stored.value) : stored;
     },
   );

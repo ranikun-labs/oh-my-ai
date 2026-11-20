@@ -1561,6 +1561,21 @@ await group("native RPL-95 and RPL-118 composition", async () => {
           testPlanId: "targeted", testPlanDigest: "c".repeat(64), outcome: "passed", evidenceRef: "evidence/1",
         } : null,
         reconcileInventory: () => { reconciliations++; return "applied"; },
+        withCurrentInventoryResult: ({ digest }, project) => project({
+          approvedScope: FIXTURE_SCOPE,
+          resultDigest: digest,
+          workstreamId: "RPL-120",
+          status: "DONE",
+          refresh: {
+            sourceUri: FIXTURE_SCOPE.requiredSources[0].uri,
+            sourceRevision: "jira-snapshot/canonical-result",
+            expectedPriorRevision: "jira-snapshot/f4-fixture-1",
+            refreshScope: "INCREMENTAL_DELTA",
+            coverage: "COMPLETE",
+            partialReasons: [],
+            observations: [{ id: "RPL-120", status: "DONE" }],
+          },
+        }),
       },
     });
     assert.deepEqual(await built.composition.receiveWorkerResult(proof), { ok: false, reason: "worker_result_unverified" });
@@ -1569,7 +1584,13 @@ await group("native RPL-95 and RPL-118 composition", async () => {
     assert.deepEqual(await built.composition.receiveWorkerResult(proof), {
       ok: true, resultRecorded: true, reconciliation: "applied",
     });
-    assert.equal(reconciliations, 1);
+    const checkpoint = await built.composition.readScopeCheckpoint({ objectiveId: FIXTURE_SCOPE.objectiveId });
+    assert.equal(checkpoint.value.statusSummary.DONE, 1);
+    assert.equal(checkpoint.value.checkpointRevision, 2);
+    assert.deepEqual(await built.composition.receiveWorkerResult(proof), {
+      ok: true, resultRecorded: true, reconciliation: "already_applied",
+    });
+    assert.equal(reconciliations, 2);
     assert.equal(built.calls.filter(([name]) => name === "codex.resolveAndResume").length, 1);
   });
 
