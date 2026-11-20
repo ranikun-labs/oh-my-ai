@@ -41,6 +41,7 @@ const REQUIRED_HEADINGS = [
 ];
 
 const EXECUTION_STATUS_VALUES = new Set(["complete", "partial", "failed", "blocked"]);
+const BLOCKED_REASON_PROMPT = "<reason the work is blocked>";
 const REQUIRED_METADATA_PLACEHOLDERS = new Map([
   ["schema_version", []],
   ["artifact_version", []],
@@ -91,6 +92,16 @@ function isNoneOrTemplatePrompt(body, prompts = []) {
     const inlineCode = /^`([^`]*)`$/.exec(item);
     return promptSet.has(inlineCode ? inlineCode[1] : item);
   });
+}
+
+function hasReportedBlocker(body) {
+  const evidence = readMarkdownEvidence(body, { proseOnly: true }).text
+    .replace(/<reason\s+the\s+work\s+is\s+blocked>/gu, BLOCKED_REASON_PROMPT)
+    .replace(/(`+)\s*(none\.?|<reason the work is blocked>)\s*\1/giu, "$2");
+  const reasons = evidence.split("\n")
+    .map((line) => line.trim().replace(/^(?:(?:[-+*]|\d{1,9}[.)])[ \t]+)+/u, ""))
+    .join("\n");
+  return !isNoneOrTemplatePrompt(reasons, [BLOCKED_REASON_PROMPT]);
 }
 
 function field(metadataBody, name) {
@@ -149,9 +160,8 @@ function validate(markdown) {
 
   // Untouched template prompts are instructions to the worker, not evidence
   // that a status gate was satisfied.
-  const blockedReasonsEmpty = isNoneOrTemplatePrompt(sections["Blocked Reasons"], [
-    "<reason the work is blocked>",
-  ]);
+  const blockedReasons = sections["Blocked Reasons"];
+  const blockedReasonsEmpty = isNoneOrTemplatePrompt(blockedReasons, [BLOCKED_REASON_PROMPT]);
   const validationPerformed = sections["Validation Performed"];
   const validationPrompts = ["<validation that was actually performed>"];
   const validationNotPerformedEmpty = isNoneOrTemplatePrompt(sections["Validation Not Performed"], [
@@ -174,8 +184,8 @@ function validate(markdown) {
     if (blockedReasonsEmpty) {
       errors.push("execution_status=blocked requires at least one entry under Blocked Reasons");
     }
-  } else if (!blockedReasonsEmpty) {
-    errors.push(`execution_status=${executionStatus} but Blocked Reasons is non-empty (Blocked Reasons is for status=blocked only)`);
+  } else if (executionStatus !== "partial" && !blockedReasonsEmpty) {
+    errors.push(`execution_status=${executionStatus} but Blocked Reasons is non-empty (Blocked Reasons is for status=blocked or partial)`);
   }
 
   if (executionStatus === "complete") {
@@ -220,8 +230,10 @@ function validate(markdown) {
   }
 
   if (executionStatus === "partial") {
-    if (validationNotPerformedEmpty && openIssuesEmpty) {
-      errors.push("execution_status=partial requires evidence of incompleteness under Validation Not Performed or Open Issues");
+    // Contract §§23 and 28 let a usable partial result explain why its
+    // remaining work is blocked. Only a stated reason supplies that evidence.
+    if (validationNotPerformedEmpty && openIssuesEmpty && !hasReportedBlocker(blockedReasons)) {
+      errors.push("execution_status=partial requires evidence of incompleteness under Validation Not Performed, Open Issues, or Blocked Reasons");
     }
   }
 
@@ -236,8 +248,8 @@ function validate(markdown) {
   // Truthfulness: never allow "Validation Not Performed" to be silently
   // absent from consideration -- it must be present as a heading (checked
   // above) and, if execution_status is not complete, having it fully empty
-  // AND Open Issues fully empty AND execution_status=partial is already
-  // caught. For complete/blocked/failed we do not force it non-empty, since
+  // AND Open Issues and Blocked Reasons fully empty for a partial result is
+  // already caught. For complete/blocked/failed we do not force it non-empty, since
   // a complete run legitimately can have performed every validation it needed.
 
   // The existing manual template requires the Handoff reference. A returned

@@ -42,7 +42,9 @@ const HTML_PRE_OPEN = /^<pre(?=[ \t/>])[^>]*>/iu;
 const HTML_BLOCK_TAG = /^ {0,3}<\/?(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|source|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)(?=[ \t/>]|$)/iu;
 const HTML_TAG_NAME = "[A-Za-z][A-Za-z0-9-]*";
 const HTML_ATTRIBUTE = "[ \\t]+[A-Za-z_:][A-Za-z0-9_.:-]*(?:[ \\t]*=[ \\t]*(?:\"[^\"]*\"|'[^']*'|[^ \\t\"'=<>`]+))?";
-const STANDALONE_HTML_TAG = new RegExp(`^ {0,3}(?:</${HTML_TAG_NAME}[ \\t]*>|<${HTML_TAG_NAME}(?:${HTML_ATTRIBUTE})*[ \\t]*/?>)[ \\t]*$`, "u");
+const HTML_TAG = `(?:</${HTML_TAG_NAME}[ \\t]*>|<${HTML_TAG_NAME}(?:${HTML_ATTRIBUTE})*[ \\t]*/?>)`;
+const STANDALONE_HTML_TAG = new RegExp(`^ {0,3}${HTML_TAG}[ \\t]*$`, "u");
+const HTML_TAGS_WITHOUT_TEXT = new RegExp(`^(?:${HTML_TAG}[ \\t]*)+$`, "u");
 const THEMATIC_BREAK = /^ {0,3}(?:\*(?:[ \t]*\*){2,}|-(?:[ \t]*-){2,}|_(?:[ \t]*_){2,})[ \t]*$/u;
 const SETEXT_UNDERLINE = /^ {0,3}(=+|-+)[ \t]*$/u;
 const BLOCK_QUOTE_MARKER = /^ {0,3}>[ \t]?/u;
@@ -291,7 +293,7 @@ function findHtmlPreCloseOutsideComment(line, insideHtmlComment) {
   return { end: null, insideHtmlComment, hasContent };
 }
 
-function visibleMarkdownLines(markdown, statusEvidenceOnly = false, onOpaqueEvidence) {
+function visibleMarkdownLines(markdown, statusEvidenceOnly = false, onOpaqueEvidence, classifyProse = false) {
   const sourceLines = String(markdown).split(/\r?\n/);
   const visibleLines = [];
   let openFence = null;
@@ -303,11 +305,17 @@ function visibleMarkdownLines(markdown, statusEvidenceOnly = false, onOpaqueEvid
   let setextParagraph = null;
   let inTopLevelTable = false;
   let quotedParagraphDepth = 0;
+  let quoteParagraphOpen = false;
+  let inQuotedHtmlBlock = false;
   let linkReferenceEnd = -1;
   const listContexts = [];
 
   for (let lineIndex = 0; lineIndex < sourceLines.length; lineIndex += 1) {
     const sourceLine = sourceLines[lineIndex];
+    const followsQuoteParagraph = quoteParagraphOpen;
+    const followsQuotedHtmlBlock = inQuotedHtmlBlock;
+    quoteParagraphOpen = false;
+    inQuotedHtmlBlock = false;
     let line = sourceLine;
     let endedListItem = false;
     const { columns: lineIndent } = leadingIndentation(line);
@@ -561,6 +569,19 @@ function visibleMarkdownLines(markdown, statusEvidenceOnly = false, onOpaqueEvid
     const atxHeading = isAtxHeadingLine(blockText);
     const blankOrBlock = blockText.trim().length === 0 || atxHeading || quotedSetext
       || THEMATIC_BREAK.test(blockText) || HTML_PRE_OPEN.test(blockText.trimStart()) || lineIndex <= linkReferenceEnd;
+    let isProse = false;
+    if (classifyProse) {
+      const startsComment = blockText.trimStart().startsWith("<!--");
+      inQuotedHtmlBlock = quoteDepth > 0 && blockText.trim().length > 0
+        && (followsQuotedHtmlBlock || startsHtmlBlock(blockText, !followsQuoteParagraph));
+      // An unmarked continuation belongs to a quoted paragraph until a new block starts.
+      const quotedText = quoteDepth > 0 || (followsQuoteParagraph && !listItem && !startsComment);
+      const visibleBlock = relativeListLine(visible, listIndent);
+      const visibleItem = listItem && readListContext(visibleBlock, listIndent, true, sourceLines[lineIndex + 1]);
+      const visibleLeaf = readContainerLeaf(visibleBlock, listIndent, visibleItem, sourceLines[lineIndex + 1]).text.trim();
+      quoteParagraphOpen = quotedText && !blankOrBlock && !startsComment && !inQuotedHtmlBlock && visibleLeaf.length > 0;
+      isProse = !blankOrBlock && !quotedText && visibleLeaf.length > 0 && !HTML_TAGS_WITHOUT_TEXT.test(visibleLeaf);
+    }
     const hasTopLevelParagraphText = !blankOrBlock && !listItem && listIndent === 0
       && line === sourceLine && quoteDepth === 0 && !insideHtmlComment && htmlPreListIndent === null;
     if (!hasTopLevelParagraphText) {
@@ -588,6 +609,7 @@ function visibleMarkdownLines(markdown, statusEvidenceOnly = false, onOpaqueEvid
       tableText: tableLine ? visible : "",
       heading: headingCandidate ? F1_SECTION_HEADING.exec(visible)?.slice(1) : null,
       atxHeading,
+      isProse,
       nestedReportEvidence,
       lineIndex,
     });
@@ -596,12 +618,13 @@ function visibleMarkdownLines(markdown, statusEvidenceOnly = false, onOpaqueEvid
   return visibleLines;
 }
 
-export function readMarkdownEvidence(markdown) {
+export function readMarkdownEvidence(markdown, { proseOnly = false } = {}) {
   let hasOpaqueEvidence = false;
-  const lines = visibleMarkdownLines(markdown, true, () => { hasOpaqueEvidence = true; });
+  const lines = visibleMarkdownLines(markdown, true, () => { hasOpaqueEvidence = true; }, proseOnly);
   const emptyContainer = /^(?:>[ \t]*|(?:[-+*]|\d{1,9}[.)])(?:[ \t]+|$))*$/u;
   const text = lines
-    .filter((line) => !line.heading && !line.atxHeading && !emptyContainer.test(line.text.trim()))
+    .filter((line) => !line.heading && !line.atxHeading && !emptyContainer.test(line.text.trim())
+      && (!proseOnly || line.isProse))
     .map((line) => line.text)
     .join("\n");
   return { text, hasOpaqueEvidence };

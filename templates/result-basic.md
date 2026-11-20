@@ -12,6 +12,8 @@ Every entry is a required criterion of the current approved completion unit refe
 
 Keep optional checks and later work in Validation Results, Validation Not Performed, or Open Issues. Do not automatically add integration, deployment, or merge requirements. A user-approved unmerged candidate completion unit can be complete when its own AC and DoD are met. Treat an exclusion as valid only when the existing contract supports it. A reference or evidence link alone does not establish approval, scope agreement, or truth; Human Review still checks those claims against the approved Handoff.
 
+When a usable partial result has remaining work that is blocked, use `execution_status: partial` and record the blocker under Blocked Reasons.
+
 ## Contract Metadata
 
 - `schema_version`: `1.0`
