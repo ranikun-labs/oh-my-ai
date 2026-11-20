@@ -136,8 +136,8 @@ export async function* boundedJsonlLines(readable, limits = {}) {
 
 /**
  * Read one caller-supplied stdin JSONL stream and preserve each turn.completed
- * usage occurrence. Count thread.started markers without retaining their
- * identifiers. Non-usage event bodies are never retained or emitted. This does not deduplicate.
+ * usage occurrence. Count thread and turn markers without retaining their
+ * bodies or identifiers. This does not deduplicate.
  */
 export async function summarizeCodexExecJsonl(lines, callerScope, limits = {}) {
   const scope = {
@@ -154,6 +154,9 @@ export async function summarizeCodexExecJsonl(lines, callerScope, limits = {}) {
   let inputLineCount = 0;
   let threadStartRecordCount = 0;
   let firstThreadStartEventIndex = null;
+  let turnStartedRecordCount = 0;
+  let turnFailedRecordCount = 0;
+  let turnStartedAfterCompletion = false;
 
   for await (const line of lines) {
     inputLineCount += 1;
@@ -171,6 +174,11 @@ export async function summarizeCodexExecJsonl(lines, callerScope, limits = {}) {
       threadStartRecordCount += 1;
       firstThreadStartEventIndex ??= inputLineCount;
     }
+    if (event.type === "turn.started") {
+      turnStartedRecordCount += 1;
+      if (records.length > 0) turnStartedAfterCompletion = true;
+    }
+    if (event.type === "turn.failed") turnFailedRecordCount += 1;
     const extracted = extractUsage(event, inputLineCount);
     if (extracted === null) continue;
     if (records.length >= caps.maxUsageRecords) throw invalidInput("JSONL stream exceeds the local usage-record limit");
@@ -209,7 +217,10 @@ export async function summarizeCodexExecJsonl(lines, callerScope, limits = {}) {
     caller_scope: scope,
     observed_thread_start_record_count: threadStartRecordCount,
     first_thread_start_event_index: firstThreadStartEventIndex,
+    observed_turn_started_record_count: turnStartedRecordCount,
     observed_turn_completed_record_count: records.length,
+    observed_turn_failed_record_count: turnFailedRecordCount,
+    observed_turn_started_after_completion: turnStartedAfterCompletion,
     observed_usage_records: records,
     event_identity: {
       event_id: "UNKNOWN_not_in_turn.completed_schema",
