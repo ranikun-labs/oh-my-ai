@@ -48,4 +48,21 @@ assert.equal(writes, 2);
 current = { ...initial, scopeRevision: "revoked" };
 assert.equal(await reconcile(result), "pending");
 assert.equal(writes, 2);
+let escapedCallback;
+let releaseRead;
+let escapedProjection;
+const prematureHost = createF4WorkerResultCheckpointReconciler({
+  withCurrentInventoryResult(_request, project) {
+    escapedCallback = project;
+    escapedProjection = project(observation);
+    return "applied";
+  },
+  readScopeCheckpoint: () => new Promise(resolve => { releaseRead = resolve; }),
+  projectScopeCheckpoint: () => ({ ok: true, checkpoint: saved }),
+  reconcileScopeCheckpoint: () => assert.fail("checkpoint published after its Host guard returned"),
+});
+assert.equal(await prematureHost(result), "pending");
+releaseRead({ ok: true, value: initial });
+assert.equal(await escapedProjection, "pending");
+assert.equal(await escapedCallback(observation), "pending");
 console.log("F4 Result/Checkpoint reconciliation PASS");

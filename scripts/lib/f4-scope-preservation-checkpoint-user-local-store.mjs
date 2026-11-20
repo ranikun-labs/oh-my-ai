@@ -63,13 +63,14 @@ export function createF4ScopePreservationCheckpointUserLocalStore(options) {
       request,
       requireDurability ? confirmDurability ?? (() => false) : null,
     ),
-    compareAndSetCheckpoint: request => compareAndSetCheckpoint(
+    compareAndSetCheckpoint: (request, canPublish = () => true) => compareAndSetCheckpoint(
       userLocalState,
       cwd,
       stateRootOptions,
       expectedPhysicalStateBinding,
       verifyStateRootBinding,
       request,
+      canPublish,
     ),
   }));
 }
@@ -115,6 +116,7 @@ async function compareAndSetCheckpoint(
   expectedPhysicalStateBinding,
   verifyStateRootBinding,
   request,
+  canPublish,
 ) {
   const inspected = inspectExactDataObject(request, CHECKPOINT_KEYS);
   if (!inspected.ok
@@ -152,6 +154,8 @@ async function compareAndSetCheckpoint(
     } catch {
       return failure("scope_checkpoint_record_invalid");
     }
+    // The Host may return while we await its binding check or the physical lock.
+    if (canPublish() !== true) return failure("scope_checkpoint_publication_guard_closed");
     const publication = userLocalState.publishUserLocalStateAtomically(location, serialized);
     if (!isPlainObject(publication) || publication.published !== true) {
       return failure("scope_checkpoint_publish_failed");
