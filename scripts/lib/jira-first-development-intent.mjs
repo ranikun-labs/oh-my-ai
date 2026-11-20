@@ -227,13 +227,21 @@ function normalizeScope(text) {
     : tokens).join(" ");
 }
 
-function omitFencedExamples(text) {
+function retainRequestProse(text) {
   const prose = [];
   let openFence = null;
   let listIndent = 0;
   let listQuote = "";
+  let quoteParagraph = false;
+  let pendingQuotedContext = false;
   for (const line of text.split(/\r\n?|\n/u)) {
-    const quote = /^(?: {0,3}>[ \t]?)+/u.exec(line)?.[0] ?? "";
+    const listQuoteIndent = listIndent > 0 && listQuote === "" && line.startsWith(" ".repeat(listIndent))
+      ? listIndent : 0;
+    const quoteMarker = /^(?: {0,3}(?:(?:[-+*]|\d{1,9}[.)]) +)?(?: {0,3}>[ \t]?)+)/u.exec(line.slice(listQuoteIndent))?.[0];
+    const quote = quoteMarker ? line.slice(0, listQuoteIndent) + quoteMarker : "";
+    const lazyQuote = quoteParagraph && !quote && line.trim() !== ""
+      && !/^ {0,3}(?:#{1,6} |[-+*] |\d{1,9}[.)] |`{3,}|~{3,}|(?:-[ \t]*){3,}$|(?:\*[ \t]*){3,}$|(?:_[ \t]*){3,}$)/u.test(line);
+    quoteParagraph = (quote !== "" || lazyQuote) && line.slice(quote.length).trim() !== "";
     const quoteLevel = quote.replace(/[^>]/gu, "");
     let content = line.slice(quote.length);
     if (openFence && (openFence.quoteLevel !== quoteLevel
@@ -253,15 +261,35 @@ function omitFencedExamples(text) {
     const fence = /^ {0,3}(`{3,}|~{3,})(.*)$/u.exec(content);
     if (openFence) {
       if (fence && fence[1][0] === openFence.marker[0] && fence[1].length >= openFence.marker.length &&
-          !fence[2].trim()) openFence = null;
+          !fence[2].trim()) {
+        openFence = null;
+        quoteParagraph = false;
+      }
       continue;
     }
     if (fence && !(fence[1][0] === "`" && fence[2].includes("`"))) {
       openFence = { marker: fence[1], quoteLevel, indent: listIndent };
+      quoteParagraph = false;
       prose.push(".");
       continue;
     }
-    prose.push(line);
+    // Preserve the target title for explicit follow-ups and scoped withdrawals.
+    const quoteText = line.slice(quote.length);
+    if (!quote && !lazyQuote && line.trim() !== "" && pendingQuotedContext) {
+      if (/^\s*(?:(?:이|위)\s*)?(?:요청의\s*)?(?:문장|문구|표현|맞춤법)\s*(?:을|를|은|는)?\s*(?:수정|고쳐|다듬|변경)|^\s*(?:fix|rewrite|edit)\s+(?:(?:the|this)\s+)?(?:wording|sentence|phrasing)\b/iu.test(line)) {
+        prose.push(".");
+      }
+      pendingQuotedContext = false;
+    }
+    if ((quote || lazyQuote) && !pendingQuotedContext) {
+      prose.push(".");
+      pendingQuotedContext = true;
+    }
+    prose.push(quote || lazyQuote ? quoteText
+      .replace(new RegExp(NO_IMPLEMENTATION.source, "giu"), "")
+      .replace(new RegExp(EXPLANATION_ONLY.source, "giu"), "")
+      .replace(new RegExp(DEVELOPMENT_ACTION.source, "giu"), "")
+      .replace(/[.!?。;]/gu, " ") : line);
   }
   return prose.join("\n");
 }
@@ -272,7 +300,7 @@ export function needsJiraFirstDevelopmentPreflight(prompt) {
   const leadingWhitespace = prompt.slice(0, prompt.length - content.length);
   const firstLineIndent = leadingWhitespace.slice(leadingWhitespace.lastIndexOf("\n") + 1);
   // Preserve fence indentation without charging leading whitespace to the prompt budget.
-  let limited = omitFencedExamples(firstLineIndent + content.slice(0, 2000)).trim();
+  let limited = retainRequestProse(firstLineIndent + content.slice(0, 2000)).trim();
   if (!limited || !DEVELOPMENT_TARGET.test(limited)) return false;
 
   // Remove only the nearest request explicitly withdrawn by the final correction
