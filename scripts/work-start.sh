@@ -105,19 +105,21 @@ if [ -z "$slug" ]; then
   slug="task"
 fi
 
-# The timestamp is second-granular and non-ASCII tasks all reduce to the "task"
-# slug, so two runs in the same second can resolve to the same directory. Left
-# unguarded the second run silently overwrites the first run's artifact, so pick
-# the next free suffix instead of clobbering an existing Candidate.
-OUT_DIR=".oh-my-ai/work-start/${timestamp}-${slug}"
-if [ -e "$OUT_DIR" ]; then
-  collision_index=2
-  while [ -e "${OUT_DIR}-${collision_index}" ]; do
-    collision_index=$((collision_index + 1))
-  done
-  OUT_DIR="${OUT_DIR}-${collision_index}"
-fi
-mkdir -p "$OUT_DIR"
+artifact_root=".oh-my-ai/work-start"
+mkdir -p "$artifact_root"
+artifact_base="$artifact_root/${timestamp}-${slug}"
+OUT_DIR="$artifact_base"
+collision_index=2
+# Reserve the directory atomically because concurrent runs can have the same
+# timestamp and slug. Only an occupied path calls for a different suffix.
+until mkdir "$OUT_DIR" 2>/dev/null; do
+  if [ ! -e "$OUT_DIR" ] && [ ! -L "$OUT_DIR" ]; then
+    printf 'Work-start could not create artifact directory: %s\n' "$OUT_DIR" >&2
+    exit 1
+  fi
+  OUT_DIR="${artifact_base}-${collision_index}"
+  collision_index=$((collision_index + 1))
+done
 
 SOURCES_TMP="$OUT_DIR/.sources.tmp"
 DOCS_TMP="$OUT_DIR/.docs.tmp"
@@ -671,7 +673,7 @@ printf '\n%s\n' "$skill_md" >> "$OUT_DIR/starter-prompt.md"
   echo "## Contract Metadata"
   echo "- schema_version: \"1.0\""
   echo "- artifact_version: 1"
-  echo "- handoff_ref: handoff-${timestamp}-${slug}"
+  echo "- handoff_ref: handoff-${OUT_DIR##*/}"
   echo "- lifecycle_status: draft"
   echo "- review_state: not_reviewed"
   echo "- created_at: $timestamp"
