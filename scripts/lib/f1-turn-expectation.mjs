@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { updateWindowsF1TurnMarker } from "./f1-windows-turn-marker.mjs";
 import {
   publishUserLocalStateAtomically, readUserLocalState, resolveUserLocalStateLocation,
   withPhysicalStateLock,
@@ -23,6 +24,7 @@ export function updateF1TurnExpectation(root, runtime, event, phase) {
   const hash = createHash("sha256").update(JSON.stringify([runtime, event.session_id, event.turn_id])).digest("hex");
   try {
     const location = resolveUserLocalStateLocation(root(), STATE_FILE, { protectedRepositoryCwds: [event.cwd] });
+    if (process.platform === "win32") return updateWindowsF1TurnMarker(location, hash, phase);
     return withPhysicalStateLock(location, () => {
       const text = readUserLocalState(location);
       const rows = text === null ? {} : JSON.parse(text);
