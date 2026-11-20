@@ -153,6 +153,7 @@ export async function summarizeCodexExecJsonl(lines, callerScope, limits = {}) {
   let inputBytes = 0;
   let inputLineCount = 0;
   let threadStartRecordCount = 0;
+  let firstThreadStartEventIndex = null;
 
   for await (const line of lines) {
     inputLineCount += 1;
@@ -166,7 +167,10 @@ export async function summarizeCodexExecJsonl(lines, callerScope, limits = {}) {
     if (line.length === 0) throw invalidInput(`empty JSONL event at line ${inputLineCount}`);
 
     const event = parseJsonlEvent(line, inputLineCount);
-    if (event.type === "thread.started") threadStartRecordCount += 1;
+    if (event.type === "thread.started") {
+      threadStartRecordCount += 1;
+      firstThreadStartEventIndex ??= inputLineCount;
+    }
     const extracted = extractUsage(event, inputLineCount);
     if (extracted === null) continue;
     if (records.length >= caps.maxUsageRecords) throw invalidInput("JSONL stream exceeds the local usage-record limit");
@@ -204,6 +208,7 @@ export async function summarizeCodexExecJsonl(lines, callerScope, limits = {}) {
     missing_required_usage_fields: missingRequiredUsageFields,
     caller_scope: scope,
     observed_thread_start_record_count: threadStartRecordCount,
+    first_thread_start_event_index: firstThreadStartEventIndex,
     observed_turn_completed_record_count: records.length,
     observed_usage_records: records,
     event_identity: {

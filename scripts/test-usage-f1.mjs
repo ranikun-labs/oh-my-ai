@@ -22,7 +22,17 @@ assert.match(usageF1Cell(await summarizeCodexExecJsonl([item,item],scope),'a','r
 const threadStart = JSON.stringify({type:'thread.started',thread_id:'fixture-thread'});
 const otherThreadStart = JSON.stringify({type:'thread.started',thread_id:'other-fixture-thread'});
 const singleThread = await summarizeCodexExecJsonl([threadStart,item],scope);
-assert.match(usageF1Cell(singleThread,'a','r'), /입력 13/);
+assert.equal(singleThread.first_thread_start_event_index, 1);
+assert.equal(s.first_thread_start_event_index, null);
+assert.equal(usageF1Cell(singleThread,'a','r'), usageF1Cell(s,'a','r'));
+for (const events of [[item,threadStart],[JSON.stringify({type:'turn.started'}),threadStart,item]]) {
+ const lateStart = await summarizeCodexExecJsonl(events,scope);
+ assert.equal(lateStart.observed_thread_start_record_count, 1);
+ assert.equal(lateStart.first_thread_start_event_index, 2);
+ assert.equal(lateStart.observed_turn_completed_record_count, 1);
+ assert.match(usageF1Cell(lateStart,'a','r'), /^공식 토큰 UNKNOWN \/ 비용 UNKNOWN · 관측값 UNKNOWN \(첫 이벤트가 스레드 시작이 아님\)$/);
+ assert.doesNotMatch(JSON.stringify(lateStart), /fixture-thread/);
+}
 for (const events of [[threadStart,item,otherThreadStart],[threadStart,threadStart,item]]) {
  const mixed = await summarizeCodexExecJsonl(events,scope);
  assert.match(usageF1Cell(mixed,'a','r'), /^공식 토큰 UNKNOWN \/ 비용 UNKNOWN · 관측값 UNKNOWN \(스레드 시작 이벤트 여러 건\)$/);

@@ -11,6 +11,7 @@ export function usageF1Cell(summary, agentId, runId) {
   runId = runId.trim();
   if (!summary || summary.caller_scope?.agent_id !== agentId || summary.caller_scope?.run_id !== runId) return `${OBSERVATION_UNKNOWN} (범위 불일치)`;
   if (summary.observed_thread_start_record_count > 1) return `${OBSERVATION_UNKNOWN} (스레드 시작 이벤트 여러 건)`;
+  if (summary.first_thread_start_event_index > 1) return `${OBSERVATION_UNKNOWN} (첫 이벤트가 스레드 시작이 아님)`;
   if (summary.observed_turn_completed_record_count !== 1 || !Array.isArray(summary.observed_usage_records) || summary.observed_usage_records.length !== 1) return `${OBSERVATION_UNKNOWN} (완료 이벤트 없음 또는 단일 기록 확인 불가)`;
   const u = summary.observed_usage_records[0]?.usage;
   if (!u || typeof u !== 'object') return `${OBSERVATION_UNKNOWN} (형식 불명)`;
