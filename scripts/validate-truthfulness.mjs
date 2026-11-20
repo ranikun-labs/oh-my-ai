@@ -31,13 +31,30 @@ function checkObservedVsInferred(claim) {
 // FX-TR-002 Validation Scope Overclaim
 // Only some tests ran; claiming the full suite passed is a Truthfulness
 // violation (must report failed / partial-scope, not full-suite pass).
-function checkValidationScopeOverclaim(claim) {
-  const errors = [];
-  const ranAll = claim.tests_run >= claim.tests_total;
-  if (!ranAll && claim.claimed_status === "full_suite_passed") {
-    errors.push(`only ${claim.tests_run}/${claim.tests_total} tests ran; claiming full_suite_passed is a Validation Scope Overclaim`);
+function checkValidationScopeOverclaim(claim, countTokens = {}) {
+  if (claim.claimed_status !== "full_suite_passed") return [];
+  const { tests_run, tests_total } = claim;
+  if (!isExactSafeInteger(tests_run, countTokens.tests_run) || tests_run < 0 ||
+      !isExactSafeInteger(tests_total, countTokens.tests_total) || tests_total <= 0) {
+    return ["Validation Scope Overclaim: full_suite_passed requires exact safe-integer JSON counts and a positive suite total"];
   }
-  return errors;
+  if (tests_run !== tests_total) {
+    return [`reported ${tests_run}/${tests_total} tests ran; claiming full_suite_passed is a Validation Scope Overclaim`];
+  }
+  return [];
+}
+
+function isExactSafeInteger(value, source) {
+  if (!Number.isSafeInteger(value) || typeof source !== "string") return false;
+  const token = /^-?(\d+)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$/.exec(source);
+  if (!token) return false;
+  const [, whole, fraction = "", exponent = "0"] = token;
+  const digits = whole + fraction;
+  if (!/[1-9]/.test(digits)) return true;
+  let end = digits.length;
+  while (digits[end - 1] === "0") end -= 1;
+  const trailingZeros = digits.length - end;
+  return Number(exponent) >= fraction.length - trailingZeros;
 }
 
 // FX-TR-003 Unknown Repository State
@@ -104,13 +121,22 @@ function main() {
     process.exit(2);
   }
   let claim;
+  const countTokens = new WeakMap();
   try {
-    claim = JSON.parse(claimJson);
+    claim = JSON.parse(claimJson, function (key, value, context) {
+      if (id === "FX-TR-002" && (key === "tests_run" || key === "tests_total")) {
+        // The parsed Number alone cannot distinguish a rounded fraction from an integer.
+        const tokens = countTokens.get(this) ?? {};
+        tokens[key] = context?.source;
+        countTokens.set(this, tokens);
+      }
+      return value;
+    });
   } catch (err) {
     console.error(`invalid claim JSON: ${err.message}`);
     process.exit(2);
   }
-  const errors = check(claim);
+  const errors = check(claim, countTokens.get(claim));
   if (errors.length > 0) {
     for (const e of errors) console.error(`invalid: ${e}`);
     process.exit(1);

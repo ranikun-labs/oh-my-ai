@@ -65,9 +65,27 @@ fx_tr_001() {
 # --- FX-TR-002 Validation Scope Overclaim ------------------------------------
 
 fx_tr_002() {
+  local zeros
+  printf -v zeros '%0*d' 60000 0
   expect_valid "FX-TR-002" '{"tests_run":5,"tests_total":5,"claimed_status":"full_suite_passed"}' "FX-TR-002-full-run-honest-claim"
+  expect_valid "FX-TR-002" '{"tests_run":10.0,"tests_total":1e1,"claimed_status":"full_suite_passed"}' "FX-TR-002-exact-integer-forms"
+  expect_valid "FX-TR-002" '{"tests_run":1.000e3,"tests_total":100000e-2,"claimed_status":"full_suite_passed"}' "FX-TR-002-exact-scaled-integers"
+  expect_valid "FX-TR-002" '{"tests_run":9007199254740991.0000,"tests_total":9007199254740991,"claimed_status":"full_suite_passed"}' "FX-TR-002-largest-safe-count"
   expect_valid "FX-TR-002" '{"tests_run":2,"tests_total":5,"claimed_status":"partial_scope"}' "FX-TR-002-partial-run-honest-claim"
+  expect_valid "FX-TR-002" '{"tests_run":0,"tests_total":0,"claimed_status":"partial_scope"}' "FX-TR-002-no-tests-not-a-pass"
   expect_invalid "FX-TR-002" '{"tests_run":2,"tests_total":5,"claimed_status":"full_suite_passed"}' "FX-TR-002-partial-run-overclaim" "Validation Scope Overclaim"
+  expect_invalid "FX-TR-002" '{"tests_run":"9","tests_total":"10","claimed_status":"full_suite_passed"}' "FX-TR-002-string-counts-overclaim" "Validation Scope Overclaim"
+  expect_invalid "FX-TR-002" '{"tests_run":0,"tests_total":0,"claimed_status":"full_suite_passed"}' "FX-TR-002-empty-suite-overclaim" "Validation Scope Overclaim"
+  expect_invalid "FX-TR-002" '{"tests_run":6,"tests_total":5,"claimed_status":"full_suite_passed"}' "FX-TR-002-inconsistent-counts-overclaim" "Validation Scope Overclaim"
+  expect_invalid "FX-TR-002" '{"tests_run":1.5,"tests_total":1.5,"claimed_status":"full_suite_passed"}' "FX-TR-002-fractional-counts" "Validation Scope Overclaim"
+  expect_invalid "FX-TR-002" '{"tests_run":9.9999999999999999,"tests_total":10,"claimed_status":"full_suite_passed"}' "FX-TR-002-fraction-rounded-up" "Validation Scope Overclaim"
+  expect_invalid "FX-TR-002" '{"tests_run":10,"tests_total":1.00000000000000001e1,"claimed_status":"full_suite_passed"}' "FX-TR-002-exponent-fraction-rounded-down" "Validation Scope Overclaim"
+  expect_invalid "FX-TR-002" '{"tests_run":9007199254740991,"tests_total":9007199254740991.1,"claimed_status":"full_suite_passed"}' "FX-TR-002-fraction-rounds-to-largest-safe-count" "Validation Scope Overclaim"
+  expect_invalid "FX-TR-002" '{"tests_\u0072un":9.9999999999999999,"nested":{"tests_run":10},"tests_total":10,"claimed_status":"full_suite_passed"}' "FX-TR-002-nested-count-cannot-override-root-token" "Validation Scope Overclaim"
+  expect_valid "FX-TR-002" "{\"tests_run\":10.${zeros},\"tests_total\":10,\"claimed_status\":\"full_suite_passed\"}" "FX-TR-002-long-integer-tail"
+  expect_invalid "FX-TR-002" "{\"tests_run\":10.${zeros}1,\"tests_total\":10,\"claimed_status\":\"full_suite_passed\"}" "FX-TR-002-long-fraction-tail" "Validation Scope Overclaim"
+  expect_invalid "FX-TR-002" '{"tests_run":true,"tests_total":1,"claimed_status":"full_suite_passed"}' "FX-TR-002-boolean-count" "Validation Scope Overclaim"
+  expect_invalid "FX-TR-002" '{"tests_run":9007199254740992,"tests_total":9007199254740992,"claimed_status":"full_suite_passed"}' "FX-TR-002-imprecise-counts" "Validation Scope Overclaim"
   echo "passed: FX-TR-002-validation-scope-overclaim"
 }
 
