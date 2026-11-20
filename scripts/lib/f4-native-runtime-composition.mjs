@@ -1,5 +1,6 @@
 import path from "node:path";
 import { sameF4PhysicalStateBinding } from "./f4-physical-state-binding.mjs";
+import { createF4WorkerResultCheckpointReconciler } from "./f4-worker-result-checkpoint.mjs";
 import { createF4ManagedWorkerResultHandler } from "./f4-worker-result-store.mjs";
 import { createPendingHandoffManualResumeAttemptOutcomeService } from "./pending-handoff-manual-resume-attempt-outcome.mjs";
 import { isDeepStrictEqual, types as utilTypes } from "node:util";
@@ -118,6 +119,7 @@ export function createPendingHandoffF4NativeRuntimeComposition(options) {
     userLocalState,
     stateRootOptions: recordProvider.stateRootOptions,
     expectedPhysicalStateBinding: initialPhysicalBinding.value,
+    ...(resultStatePorts ? { confirmDurability: resultStatePorts.confirmUserLocalStateDurability } : {}),
     verifyStateRootBinding: input.values.verifyScopeCheckpointStateRootBinding
       ?? (() => false),
   });
@@ -145,7 +147,7 @@ export function createPendingHandoffF4NativeRuntimeComposition(options) {
   const manualResume = createPendingHandoffManualResumeRuntimeComposition(compositionOptions);
   if (!manualResume.ok) return manualResume;
 
-  const resultFacade = bindWorkerResultHost(input.values, recordProvider, initialPhysicalBinding.value, attemptStoreResult.value, resultStatePorts);
+  const resultFacade = bindWorkerResultHost(input.values, recordProvider, initialPhysicalBinding.value, attemptStoreResult.value, resultStatePorts, checkpointStore.value);
   if (!resultFacade.ok) return resultFacade;
   return success(Object.freeze({
     ...resultFacade.value,
@@ -155,11 +157,11 @@ export function createPendingHandoffF4NativeRuntimeComposition(options) {
   }));
 }
 
-function bindWorkerResultHost(options, recordProvider, physicalBinding, attemptStore, statePorts) {
+function bindWorkerResultHost(options, recordProvider, physicalBinding, attemptStore, statePorts, checkpointStore) {
   if (!Object.hasOwn(options, "workerResultHost")) return success({});
   const host = inspectExactDataObject(options.workerResultHost, [
     "expectedBinding", "verifyResult", "reconcileInventory",
-  ]);
+  ], ["withCurrentInventoryResult"]);
   const expected = host.ok && inspectExactDataObject(host.values.expectedBinding, [
     "contract", "state_root_identity", "repository_instance_id", "physical_worktree_id",
   ]);
@@ -169,6 +171,17 @@ function bindWorkerResultHost(options, recordProvider, physicalBinding, attemptS
     || typeof host.values.reconcileInventory !== "function" || utilTypes.isProxy(host.values.reconcileInventory)) {
     return failure("worker_result_host_unverified");
   }
+  const { verifyResult, reconcileInventory, withCurrentInventoryResult } = host.values;
+  if (Object.hasOwn(host.values, "withCurrentInventoryResult")
+    && (typeof withCurrentInventoryResult !== "function" || utilTypes.isProxy(withCurrentInventoryResult))) {
+    return failure("worker_result_host_unverified");
+  }
+  const projectResult = withCurrentInventoryResult === undefined ? null : createF4WorkerResultCheckpointReconciler({
+    withCurrentInventoryResult,
+    projectScopeCheckpoint: createF4ScopePreservingCheckpoint,
+    readScopeCheckpoint: request => checkpointStore.readCheckpoint(request, true),
+    reconcileScopeCheckpoint: request => reconcileScopeCheckpoint(checkpointStore, request),
+  });
   const attempt = createPendingHandoffManualResumeAttemptOutcomeService({ store: attemptStore });
   if (!attempt.ok) return attempt;
   return success({
@@ -178,8 +191,14 @@ function bindWorkerResultHost(options, recordProvider, physicalBinding, attemptS
       stateRootOptions: recordProvider.stateRootOptions,
       expectedBinding: physicalBinding,
       attemptOutcome: attempt.value,
-      verifyResult: host.values.verifyResult,
-      reconcileInventory: host.values.reconcileInventory,
+      verifyResult,
+      reconcileInventory: async request => {
+        const inventoryStatus = await reconcileInventory(request);
+        if (projectResult && ["applied", "already_applied"].includes(inventoryStatus)) {
+          return projectResult(request);
+        }
+        return inventoryStatus;
+      },
     }),
   });
 }
