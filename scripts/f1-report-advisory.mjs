@@ -1097,6 +1097,11 @@ function isNonEmptyF1Label(value) {
     && /^[\p{L}\p{N} ._@-]+$/u.test(value.trim());
 }
 
+function isF1AgentId(value) {
+  return isNonEmptyF1Label(value)
+    || (typeof value === "string" && value.length <= 128 && /^\/root(?:\/[a-z0-9_]+)*$/u.test(value.trim()));
+}
+
 function projectUsageCounterBreakdown(value) {
   const inspected = inspectF1DataObject(value, [
     "inputTokens",
@@ -1132,7 +1137,7 @@ function unknownUsageCell(reason) {
 // the adapter event itself does not carry either identity and its token counters are not verified billing.
 export function formatUsageObservationForF1(envelope, attribution) {
   const attributed = inspectF1DataObject(attribution, ["agent_id", "role"]);
-  if (!attributed || !isNonEmptyF1Label(attributed.agent_id) || !isNonEmptyF1Label(attributed.role)) {
+  if (!attributed || !isF1AgentId(attributed.agent_id) || !isNonEmptyF1Label(attributed.role)) {
     return Object.freeze({
       agent_id: "UNKNOWN",
       role: "UNKNOWN",
