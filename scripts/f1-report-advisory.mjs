@@ -137,7 +137,7 @@ function readContainerLeaf(line, listIndent, listItem, nextLine) {
     indent = item.indent;
     text = item.text;
   }
-  return { text, quoteDepth, containsList };
+  return { text, quoteDepth, containsList, indent };
 }
 
 function readLinkReferenceEnd(lines, start) {
@@ -303,9 +303,9 @@ function visibleMarkdownLines(markdown, statusEvidenceOnly = false) {
     const sourceLine = sourceLines[lineIndex];
     let line = sourceLine;
     let endedListItem = false;
+    const { columns: lineIndent } = leadingIndentation(line);
     if (line.trim()) {
-      const { columns } = leadingIndentation(line);
-      while (listContexts.length && columns < listContexts.at(-1).indent) {
+      while (listContexts.length && lineIndent < listContexts.at(-1).indent) {
         listContexts.pop();
         endedListItem = true;
       }
@@ -315,7 +315,7 @@ function visibleMarkdownLines(markdown, statusEvidenceOnly = false) {
     let blockLine = relativeListLine(line, listIndent);
     if (rawHtmlBlock !== null) {
       const hasContent = line.trim().length > 0;
-      if (hasContent && listIndent < rawHtmlBlock.listIndent) {
+      if (hasContent && lineIndent < rawHtmlBlock.listIndent) {
         // A raw HTML block cannot outlive the list item containing it.
         rawHtmlBlock = null;
       } else if (rawHtmlBlock.endPattern) {
@@ -382,6 +382,7 @@ function visibleMarkdownLines(markdown, statusEvidenceOnly = false) {
     if (inlineCodeDelimiterLength === 0 && !insideHtmlComment && htmlPreListIndent === null) {
       listItem = readListContext(blockLine, listIndent, atBlockBoundary || endedListItem || inTopLevelTable, sourceLines[lineIndex + 1]);
       const itemText = listItem?.text ?? blockLine;
+      const itemIndent = listItem?.indent ?? listIndent;
       if (listItem) {
         const itemLabel = itemText.split(":", 1)[0].trim().toLowerCase();
         listContexts.push({
@@ -389,27 +390,32 @@ function visibleMarkdownLines(markdown, statusEvidenceOnly = false) {
           reportContent: REPORT_LIST_LABELS.has(itemLabel),
         });
       }
-      const fenceLeaf = readContainerLeaf(itemText, listItem?.indent ?? listIndent, null, sourceLines[lineIndex + 1]);
+      const fenceLeaf = readContainerLeaf(itemText, itemIndent, null, sourceLines[lineIndex + 1]);
       const fenceStart = fenceLeaf.containsList ? null : parseFenceStart(fenceLeaf.text);
       if (fenceStart !== null) {
-        openFence = { ...fenceStart, listIndent: listItem?.indent ?? listIndent, quoteDepth: fenceLeaf.quoteDepth };
+        openFence = { ...fenceStart, listIndent: itemIndent, quoteDepth: fenceLeaf.quoteDepth };
         setextParagraph = null;
         inTopLevelTable = false;
         quotedParagraphDepth = 0;
         atBlockBoundary = true;
         continue;
       }
-      const rawEnd = findRawHtmlBlockEnd(blockLine);
+      // A block may start directly after a list marker and end with that item.
+      const listLeaf = listItem ? readContainerLeaf(blockLine, listIndent, listItem, sourceLines[lineIndex + 1]) : null;
+      const htmlLeaf = listLeaf?.quoteDepth === 0 ? listLeaf : null;
+      const htmlLine = htmlLeaf?.text ?? blockLine;
+      const htmlIndent = htmlLeaf?.indent ?? listIndent;
+      const rawEnd = findRawHtmlBlockEnd(htmlLine);
       if (rawEnd) {
-        if (!rawEnd.test(blockLine)) rawHtmlBlock = { endPattern: rawEnd, listIndent };
+        if (!rawEnd.test(htmlLine)) rawHtmlBlock = { endPattern: rawEnd, listIndent: htmlIndent };
         setextParagraph = null;
         inTopLevelTable = false;
         quotedParagraphDepth = 0;
         atBlockBoundary = true;
         continue;
       }
-      if (startsHtmlBlock(blockLine, atBlockBoundary)) {
-        rawHtmlBlock = { endPattern: null, listIndent };
+      if (startsHtmlBlock(htmlLine, htmlLeaf !== null || atBlockBoundary)) {
+        rawHtmlBlock = { endPattern: null, listIndent: htmlIndent };
         setextParagraph = null;
         inTopLevelTable = false;
         quotedParagraphDepth = 0;
