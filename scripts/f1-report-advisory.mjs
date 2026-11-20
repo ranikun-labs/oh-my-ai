@@ -262,10 +262,11 @@ function findClosingBacktickRun(lines, startLine, startColumn, runLength, listIn
 
 function findHtmlPreCloseOutsideComment(line, insideHtmlComment) {
   let cursor = 0;
+  let hasContent = false;
   while (cursor < line.length) {
     if (insideHtmlComment) {
       const closeComment = line.indexOf("-->", cursor);
-      if (closeComment === -1) return { end: null, insideHtmlComment: true };
+      if (closeComment === -1) return { end: null, insideHtmlComment: true, hasContent };
       insideHtmlComment = false;
       cursor = closeComment + 3;
       continue;
@@ -278,13 +279,14 @@ function findHtmlPreCloseOutsideComment(line, insideHtmlComment) {
     }
 
     const closePre = /^<\/pre\s*>/i.exec(line.slice(cursor));
-    if (closePre) return { end: cursor + closePre[0].length, insideHtmlComment: false };
+    if (closePre) return { end: cursor + closePre[0].length, insideHtmlComment: false, hasContent };
+    if (!hasContent && /\S/u.test(line[cursor])) hasContent = true;
     cursor += 1;
   }
-  return { end: null, insideHtmlComment };
+  return { end: null, insideHtmlComment, hasContent };
 }
 
-function visibleMarkdownLines(markdown, statusEvidenceOnly = false) {
+function visibleMarkdownLines(markdown, statusEvidenceOnly = false, onOpaqueEvidence) {
   const sourceLines = String(markdown).split(/\r?\n/);
   const visibleLines = [];
   let openFence = null;
@@ -339,6 +341,7 @@ function visibleMarkdownLines(markdown, statusEvidenceOnly = false) {
         const closingLine = quotedContent ? quotedContent.text : blockLine;
         if ((!quotedContent || (!quotedContent.containsList && quotedContent.quoteDepth === openFence.quoteDepth))
           && isFenceClosing(closingLine, openFence)) openFence = null;
+        else if (onOpaqueEvidence && closingLine.trim()) onOpaqueEvidence();
         continue;
       }
     }
@@ -350,6 +353,7 @@ function visibleMarkdownLines(markdown, statusEvidenceOnly = false) {
         atBlockBoundary = true;
       } else {
         const preClose = findHtmlPreCloseOutsideComment(line, insideHtmlComment);
+        if (preClose.hasContent) onOpaqueEvidence?.();
         insideHtmlComment = preClose.insideHtmlComment;
         if (preClose.end === null) continue;
         line = line.slice(preClose.end);
@@ -366,7 +370,11 @@ function visibleMarkdownLines(markdown, statusEvidenceOnly = false) {
         // The entire preceding paragraph becomes the heading, not section evidence.
         const marker = underline[1].startsWith("=") ? "#" : "##";
         visibleLines.length = setextParagraph.start;
-        visibleLines.push({ heading: [marker, setextParagraph.title.trim()] });
+        visibleLines.push({
+          heading: [marker, setextParagraph.title.trim()],
+          headingStartLine: setextParagraph.lineIndex,
+          lineIndex,
+        });
         setextParagraph = null;
         inlineCodeDelimiterLength = 0;
         quotedParagraphDepth = 0;
@@ -376,7 +384,10 @@ function visibleMarkdownLines(markdown, statusEvidenceOnly = false) {
     }
 
     if (inlineCodeDelimiterLength === 0 && !insideHtmlComment && htmlPreListIndent === null
-      && isIndentedCodeLine(blockLine) && line.trim().length > 0 && !setextParagraph) continue;
+      && isIndentedCodeLine(blockLine) && line.trim().length > 0 && !setextParagraph) {
+      onOpaqueEvidence?.();
+      continue;
+    }
 
     let listItem = null;
     if (inlineCodeDelimiterLength === 0 && !insideHtmlComment && htmlPreListIndent === null) {
@@ -391,6 +402,19 @@ function visibleMarkdownLines(markdown, statusEvidenceOnly = false) {
         });
       }
       const fenceLeaf = readContainerLeaf(itemText, itemIndent, null, sourceLines[lineIndex + 1]);
+      const listLeaf = listItem ? readContainerLeaf(blockLine, listIndent, listItem, sourceLines[lineIndex + 1]) : null;
+      if (onOpaqueEvidence) {
+        const leaf = listLeaf ?? fenceLeaf;
+        const startsContainerBlock = leaf.containsList || (leaf.quoteDepth > 0 && (atBlockBoundary || leaf.quoteDepth > quotedParagraphDepth));
+        if (startsContainerBlock && isIndentedCodeLine(leaf.text) && leaf.text.trim()) {
+          onOpaqueEvidence();
+          setextParagraph = null;
+          inTopLevelTable = false;
+          quotedParagraphDepth = 0;
+          atBlockBoundary = true;
+          continue;
+        }
+      }
       const fenceStart = fenceLeaf.containsList ? null : parseFenceStart(fenceLeaf.text);
       if (fenceStart !== null) {
         openFence = { ...fenceStart, listIndent: itemIndent, quoteDepth: fenceLeaf.quoteDepth };
@@ -401,12 +425,14 @@ function visibleMarkdownLines(markdown, statusEvidenceOnly = false) {
         continue;
       }
       // A block may start directly after a list marker and end with that item.
-      const listLeaf = listItem ? readContainerLeaf(blockLine, listIndent, listItem, sourceLines[lineIndex + 1]) : null;
       const htmlLeaf = listLeaf?.quoteDepth === 0 ? listLeaf : null;
       const htmlLine = htmlLeaf?.text ?? blockLine;
       const htmlIndent = htmlLeaf?.indent ?? listIndent;
-      const rawEnd = findRawHtmlBlockEnd(htmlLine);
+      // Result evidence can follow the comment terminator on the same line.
+      const preserveCommentSuffix = onOpaqueEvidence && htmlLine.trimStart().startsWith("<!--");
+      const rawEnd = preserveCommentSuffix ? null : findRawHtmlBlockEnd(htmlLine);
       if (rawEnd) {
+        if (onOpaqueEvidence) visibleLines.push({ text: htmlLine, lineIndex });
         if (!rawEnd.test(htmlLine)) rawHtmlBlock = { endPattern: rawEnd, listIndent: htmlIndent };
         setextParagraph = null;
         inTopLevelTable = false;
@@ -415,6 +441,7 @@ function visibleMarkdownLines(markdown, statusEvidenceOnly = false) {
         continue;
       }
       if (startsHtmlBlock(htmlLine, htmlLeaf !== null || atBlockBoundary)) {
+        if (onOpaqueEvidence) visibleLines.push({ text: htmlLine, lineIndex });
         rawHtmlBlock = { endPattern: null, listIndent: htmlIndent };
         setextParagraph = null;
         inTopLevelTable = false;
@@ -445,6 +472,7 @@ function visibleMarkdownLines(markdown, statusEvidenceOnly = false) {
     while (cursor < line.length) {
       if (htmlPreListIndent !== null) {
         const preClose = findHtmlPreCloseOutsideComment(line.slice(cursor), insideHtmlComment);
+        if (preClose.hasContent) onOpaqueEvidence?.();
         insideHtmlComment = preClose.insideHtmlComment;
         if (preClose.end === null) {
           cursor = line.length;
@@ -525,7 +553,8 @@ function visibleMarkdownLines(markdown, statusEvidenceOnly = false) {
       linkReferenceEnd = readLinkReferenceEnd(sourceLines, lineIndex);
     }
     // Containers with an empty leaf or a heading have no paragraph for lazy continuation.
-    const blankOrBlock = blockText.trim().length === 0 || isAtxHeadingLine(blockText) || quotedSetext
+    const atxHeading = isAtxHeadingLine(blockText);
+    const blankOrBlock = blockText.trim().length === 0 || atxHeading || quotedSetext
       || THEMATIC_BREAK.test(blockText) || HTML_PRE_OPEN.test(blockText.trimStart()) || lineIndex <= linkReferenceEnd;
     const hasTopLevelParagraphText = !blankOrBlock && !listItem && listIndent === 0
       && line === sourceLine && quoteDepth === 0 && !insideHtmlComment && htmlPreListIndent === null;
@@ -540,7 +569,7 @@ function visibleMarkdownLines(markdown, statusEvidenceOnly = false) {
       setextParagraph.title += ` ${visible.trim()}`;
       setextParagraph.lines += 1;
     } else if (!inTopLevelTable && atBlockBoundary && !isIndentedCodeLine(line)) {
-      setextParagraph = { start: visibleLines.length, title: visible.trim(), lines: 1 };
+      setextParagraph = { start: visibleLines.length, lineIndex, title: visible.trim(), lines: 1 };
     }
     // Track whether a standalone HTML tag may start a block on the next line.
     atBlockBoundary = blankOrBlock || (listIndent > 0 && !atBlockBoundary && SETEXT_UNDERLINE.test(line));
@@ -553,12 +582,32 @@ function visibleMarkdownLines(markdown, statusEvidenceOnly = false) {
       fieldText: fieldVisible,
       tableText: tableLine ? visible : "",
       heading: headingCandidate ? F1_SECTION_HEADING.exec(visible)?.slice(1) : null,
+      atxHeading,
       nestedReportEvidence,
       lineIndex,
     });
   }
 
   return visibleLines;
+}
+
+export function readMarkdownEvidence(markdown) {
+  let hasOpaqueEvidence = false;
+  const lines = visibleMarkdownLines(markdown, true, () => { hasOpaqueEvidence = true; });
+  const emptyContainer = /^(?:>[ \t]*|(?:[-+*]|\d{1,9}[.)])(?:[ \t]+|$))*$/u;
+  const text = lines
+    .filter((line) => !line.heading && !line.atxHeading && !emptyContainer.test(line.text.trim()))
+    .map((line) => line.text)
+    .join("\n");
+  return { text, hasOpaqueEvidence };
+}
+
+export function readTopLevelSectionHeadings(markdown) {
+  return visibleMarkdownLines(markdown).flatMap(({ heading, headingStartLine, lineIndex }) => {
+    if (!heading) return [];
+    const [marker, title = ""] = heading;
+    return [{ marker, title: title.trim(), startLine: headingStartLine ?? lineIndex, endLine: lineIndex }];
+  });
 }
 
 function splitSections(markdown, statusEvidenceOnly = false) {
@@ -1048,6 +1097,11 @@ function isNonEmptyF1Label(value) {
     && /^[\p{L}\p{N} ._@-]+$/u.test(value.trim());
 }
 
+function isF1AgentId(value) {
+  return isNonEmptyF1Label(value)
+    || (typeof value === "string" && value.length <= 128 && /^\/root(?:\/[a-z0-9_]+)*$/u.test(value.trim()));
+}
+
 function projectUsageCounterBreakdown(value) {
   const inspected = inspectF1DataObject(value, [
     "inputTokens",
@@ -1083,7 +1137,7 @@ function unknownUsageCell(reason) {
 // the adapter event itself does not carry either identity and its token counters are not verified billing.
 export function formatUsageObservationForF1(envelope, attribution) {
   const attributed = inspectF1DataObject(attribution, ["agent_id", "role"]);
-  if (!attributed || !isNonEmptyF1Label(attributed.agent_id) || !isNonEmptyF1Label(attributed.role)) {
+  if (!attributed || !isF1AgentId(attributed.agent_id) || !isNonEmptyF1Label(attributed.role)) {
     return Object.freeze({
       agent_id: "UNKNOWN",
       role: "UNKNOWN",
