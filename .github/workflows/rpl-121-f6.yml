@@ -9,6 +9,7 @@ on:
       - 'Makefile'
       - 'scripts/lib/portfolio-briefing-mcp-adapter.mjs'
       - 'scripts/lib/portfolio-briefing-snapshot.mjs'
+      - 'scripts/lib/source-observation-timestamp.mjs'
       - 'scripts/test-portfolio-briefing-mcp-adapter.mjs'
       - 'scripts/test-portfolio-briefing-snapshot.mjs'
       - 'scripts/test-portfolio-briefing-phony-target.sh'
@@ -19,6 +20,7 @@ on:
       - 'Makefile'
       - 'scripts/lib/portfolio-briefing-mcp-adapter.mjs'
       - 'scripts/lib/portfolio-briefing-snapshot.mjs'
+      - 'scripts/lib/source-observation-timestamp.mjs'
       - 'scripts/test-portfolio-briefing-mcp-adapter.mjs'
       - 'scripts/test-portfolio-briefing-snapshot.mjs'
       - 'scripts/test-portfolio-briefing-phony-target.sh'
@@ -46,6 +48,7 @@ jobs:
         run: |
           node --check scripts/lib/portfolio-briefing-mcp-adapter.mjs
           node --check scripts/lib/portfolio-briefing-snapshot.mjs
+          node --check scripts/lib/source-observation-timestamp.mjs
           node --check scripts/test-portfolio-briefing-mcp-adapter.mjs
           node --check scripts/test-portfolio-briefing-snapshot.mjs
 

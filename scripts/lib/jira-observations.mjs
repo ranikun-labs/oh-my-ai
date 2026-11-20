@@ -1,17 +1,5 @@
 // Transform caller-supplied Jira observations. This module never fetches or mutates Jira.
-const JIRA_TIMESTAMP = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})$/;
-
-function sourceUpdatedAt(value) {
-  if (typeof value !== 'string' || value.length > 1000) return null;
-  const clock = JIRA_TIMESTAMP.exec(value)?.[1];
-  if (!clock || !Number.isFinite(Date.parse(value))) return null;
-
-  // Date.parse normalizes impossible dates. Round-trip the local calendar and clock
-  // in UTC, separately from the original offset and fractional seconds.
-  const utcClock = new Date(`${clock}Z`);
-  return Number.isFinite(utcClock.valueOf()) && utcClock.toISOString().slice(0, 19) === clock
-    ? value : null;
-}
+import { sourceTimestampOrNull } from "./source-observation-timestamp.mjs";
 
 export function jiraObservations(issues, observedAt) {
   if (!Array.isArray(issues) || issues.length > 500 || typeof observedAt !== 'string' || !observedAt.trim() || observedAt.length > 1000) throw new Error('invalid observations');
@@ -25,7 +13,7 @@ export function jiraObservations(issues, observedAt) {
       title: typeof issue.fields?.summary === 'string' ? issue.fields.summary.slice(0, 500) : 'UNKNOWN',
       status: typeof issue.fields?.status?.name === 'string' ? issue.fields.status.name.slice(0, 500) : 'UNKNOWN',
       source_ref: `jira:${issue.key}`,
-      source_updated_at: sourceUpdatedAt(issue.fields?.updated),
+      source_updated_at: sourceTimestampOrNull(issue.fields?.updated),
       observed_at: observedAt,
     });
   }
