@@ -13,6 +13,9 @@ export function usageF1Cell(summary, agentId, runId) {
   if (summary.observed_thread_start_record_count > 1) return `${OBSERVATION_UNKNOWN} (스레드 시작 이벤트 여러 건)`;
   if (summary.first_thread_start_event_index > 1) return `${OBSERVATION_UNKNOWN} (첫 이벤트가 스레드 시작이 아님)`;
   if (summary.observed_turn_completed_record_count !== 1 || !Array.isArray(summary.observed_usage_records) || summary.observed_usage_records.length !== 1) return `${OBSERVATION_UNKNOWN} (완료 이벤트 없음 또는 단일 기록 확인 불가)`;
+  if (summary.observed_turn_started_record_count > 1) return `${OBSERVATION_UNKNOWN} (턴 시작 이벤트 여러 건)`;
+  if (summary.observed_turn_failed_record_count > 0) return `${OBSERVATION_UNKNOWN} (턴 종료 이벤트 여러 건)`;
+  if (summary.observed_turn_started_after_completion) return `${OBSERVATION_UNKNOWN} (턴 완료 후 시작 이벤트 수신)`;
   const u = summary.observed_usage_records[0]?.usage;
   if (!u || typeof u !== 'object') return `${OBSERVATION_UNKNOWN} (형식 불명)`;
   const source = `codex exec --json ${child ? '자식 stdout' : 'stdin'}`;

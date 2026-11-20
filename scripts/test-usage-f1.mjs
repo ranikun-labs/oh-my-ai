@@ -21,6 +21,8 @@ for (const events of [[],[JSON.stringify({type:'thread.started'})]]) {
 assert.match(usageF1Cell(await summarizeCodexExecJsonl([item,item],scope),'a','r'),/^공식 토큰 UNKNOWN \/ 비용 UNKNOWN · 관측값 UNKNOWN \(완료 이벤트 없음 또는 단일 기록 확인 불가\)$/);
 const threadStart = JSON.stringify({type:'thread.started',thread_id:'fixture-thread'});
 const otherThreadStart = JSON.stringify({type:'thread.started',thread_id:'other-fixture-thread'});
+const turnStart = JSON.stringify({type:'turn.started'});
+const turnFailure = JSON.stringify({type:'turn.failed',error:{message:'fixture-turn-error-body'}});
 const singleThread = await summarizeCodexExecJsonl([threadStart,item],scope);
 assert.equal(singleThread.first_thread_start_event_index, 1);
 assert.equal(s.first_thread_start_event_index, null);
@@ -49,6 +51,43 @@ const child={...s,source:'codex exec --json child stdout; allowlisted usage fiel
 assert.match(usageF1Cell(child,'a','r'), /^공식 토큰 UNKNOWN \/ 비용 UNKNOWN · codex exec --json 자식 stdout 관측값 /);
 assert.match(usageF1Cell(child,'a','r'),/재개 시 이전 턴 누적 가능·이번 턴 사용량 미확인/);
 assert.match(usageF1Cell({...child,caller_scope:{...child.caller_scope,agent_id:'UNKNOWN',agent_attribution:'UNKNOWN'}},'UNKNOWN','r'),officialUnknown);
+const singleTurn = await summarizeCodexExecJsonl([threadStart,turnStart,item],scope);
+assert.equal(usageF1Cell(singleTurn,'a','r'), usageF1Cell(s,'a','r'));
+assert.equal(singleTurn.observed_turn_started_record_count, 1);
+assert.equal(singleTurn.observed_turn_failed_record_count, 0);
+assert.equal(singleTurn.observed_turn_started_after_completion, false);
+assert.equal(s.observed_turn_started_after_completion, false);
+assert.equal(usageF1Cell(await summarizeCodexExecJsonl([turnStart,item],scope),'a','r'), usageF1Cell(s,'a','r'));
+
+const mixedOutcomes = /^공식 토큰 UNKNOWN \/ 비용 UNKNOWN · 관측값 UNKNOWN \(턴 종료 이벤트 여러 건\)$/;
+for (const events of [[turnFailure,item],[item,turnFailure],[threadStart,turnStart,turnFailure,item]]) {
+  const mixed = await summarizeCodexExecJsonl(events,scope);
+  assert.match(usageF1Cell(mixed,'a','r'), mixedOutcomes);
+  assert.match(usageF1Cell({...mixed,source:child.source,caller_scope:child.caller_scope},'a','r'), mixedOutcomes);
+  assert.equal(mixed.observed_turn_failed_record_count, 1);
+  assert.equal(mixed.observed_turn_completed_record_count, 1);
+  assert.equal(mixed.observed_usage_records[0].usage.input_tokens, 13);
+  assert.doesNotMatch(JSON.stringify(mixed), /fixture-turn-error-body/);
+}
+const repeatedStarts = /^공식 토큰 UNKNOWN \/ 비용 UNKNOWN · 관측값 UNKNOWN \(턴 시작 이벤트 여러 건\)$/;
+for (const events of [[turnStart,turnStart,item],[threadStart,turnStart,item,turnStart]]) {
+  const mixed = await summarizeCodexExecJsonl(events,scope);
+  assert.match(usageF1Cell(mixed,'a','r'), repeatedStarts);
+  assert.match(usageF1Cell({...mixed,source:child.source,caller_scope:child.caller_scope},'a','r'), repeatedStarts);
+  assert.equal(mixed.observed_turn_started_record_count, 2);
+}
+const startedAfterCompletion = /^공식 토큰 UNKNOWN \/ 비용 UNKNOWN · 관측값 UNKNOWN \(턴 완료 후 시작 이벤트 수신\)$/;
+for (const events of [[item,turnStart],[threadStart,item,turnStart]]) {
+  const mixed = await summarizeCodexExecJsonl(events,scope);
+  assert.match(usageF1Cell(mixed,'a','r'), startedAfterCompletion);
+  assert.match(usageF1Cell({...mixed,source:child.source,caller_scope:child.caller_scope},'a','r'), startedAfterCompletion);
+  assert.equal(mixed.observed_turn_started_record_count, 1);
+  assert.equal(mixed.observed_turn_started_after_completion, true);
+}
+const failedTurn = await summarizeCodexExecJsonl([threadStart,turnStart,turnFailure],scope);
+assert.match(usageF1Cell(failedTurn,'a','r'), /^공식 토큰 UNKNOWN \/ 비용 UNKNOWN · 관측값 UNKNOWN \(완료 이벤트 없음 또는 단일 기록 확인 불가\)$/);
+assert.equal(failedTurn.observed_turn_failed_record_count, 1);
+assert.equal(failedTurn.observed_turn_completed_record_count, 0);
 const zero = JSON.stringify({type:'turn.completed',usage:{input_tokens:0,cached_input_tokens:0,cache_write_input_tokens:0,output_tokens:0,reasoning_output_tokens:0}});
 assert.match(usageF1Cell(await summarizeCodexExecJsonl([zero],scope),'a','r'),/^공식 토큰 UNKNOWN \/ 비용 UNKNOWN · codex exec --json stdin 관측값 UNKNOWN \(수신 0 또는 미확인 값/);
 const partialZero = await summarizeCodexExecJsonl([JSON.stringify({type:'turn.completed',usage:{input_tokens:0}})],scope);
