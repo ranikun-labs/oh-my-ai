@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { sourceTimestampOrNull } from "./lib/source-observation-timestamp.mjs";
 
 process.umask(0o077);
 
@@ -129,11 +130,40 @@ function emit(args) {
   appendTelemetry(record);
 }
 
+function reportCutoff(args, now) {
+  const options = args.filter(arg => arg === "--since-days" || arg.startsWith("--since-days="));
+  if (options.length === 0) return null;
+  const days = options.length === 1 && options[0] === "--since-days"
+    ? option(args, "--since-days")?.trim()
+    : undefined;
+  const [, sign, significand, exponent = "0"] =
+    days?.match(/^([+-]?)(\d+(?:\.\d*)?|\.\d+)(?:e([+-]?\d+))?$/i) ?? [];
+  const [whole, decimal = ""] = significand?.split(".") ?? [];
+  const digits = significand ? (whole + decimal).replace(/^0+/, "") : undefined;
+  if (digits === "") return null;
+  const approximateMs = Number(days) * 86400000;
+  if (!digits || sign === "-" || !Number.isFinite(approximateMs) || approximateMs === 0) {
+    fail("invalid --since-days: expected one '--since-days DAYS' with a finite non-negative number");
+  }
+
+  // Compute the cutoff from the original decimal digits, keeping its
+  // fractional milliseconds separate from the whole epoch milliseconds.
+  const places = decimal.length - Number(exponent);
+  const unit = places > 0 ? 10n ** BigInt(places) : 1n;
+  let duration = BigInt(digits) * 86400000n;
+  if (places < 0) duration *= 10n ** BigInt(-places);
+  const wholeCutoff = BigInt(now) - duration / unit;
+  const remainder = duration % unit;
+  if (remainder === 0n) return { milliseconds: wholeCutoff, fraction: "" };
+  const fraction = (unit - remainder).toString().padStart(places, "0").replace(/0+$/, "");
+  return { milliseconds: wholeCutoff - 1n, fraction };
+}
+
 function report(args) {
   const all = args.includes("--all");
   const repo = all ? null : option(args, "--repo") || gitContext().repo;
-  const sinceDays = Number(option(args, "--since-days") || 0);
-  const cutoff = sinceDays > 0 ? Date.now() - sinceDays * 86400000 : 0;
+  const now = Date.now();
+  const cutoff = reportCutoff(args, now);
   const counts = new Map();
 
   for (const log of statePaths()) {
@@ -146,9 +176,21 @@ function report(args) {
       } catch {
         continue;
       }
-      if (record.event !== "skill_start") continue;
+      if (record?.event !== "skill_start") continue;
       if (repo && record.repo !== repo) continue;
-      if (cutoff && Date.parse(record.timestamp) < cutoff) continue;
+      if (cutoff) {
+        const timestamp = sourceTimestampOrNull(record.timestamp);
+        if (!timestamp) continue;
+        // Parse at millisecond precision and compare any excess digits separately.
+        const eventTime = Date.parse(timestamp.replace(/(\.\d{3})\d+/, "$1"));
+        const eventMs = BigInt(eventTime);
+        if (eventMs < cutoff.milliseconds || eventTime > now) continue;
+        if (eventMs === cutoff.milliseconds || eventTime === now) {
+          const fraction = /\.\d{3}(\d+)/.exec(timestamp)?.[1].replace(/0+$/, "") ?? "";
+          if (eventTime === now && fraction) continue;
+          if (eventMs === cutoff.milliseconds && fraction < cutoff.fraction) continue;
+        }
+      }
       const key = `${record.repo}\t${record.runtime}\t${record.skill}`;
       counts.set(key, (counts.get(key) || 0) + 1);
     }
