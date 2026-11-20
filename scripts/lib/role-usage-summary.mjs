@@ -136,8 +136,8 @@ export async function* boundedJsonlLines(readable, limits = {}) {
 
 /**
  * Read one caller-supplied stdin JSONL stream and preserve each turn.completed
- * usage occurrence. Non-usage event payloads are parsed only to select the
- * event type and are never retained or emitted. This does not deduplicate.
+ * usage occurrence. Count thread.started markers without retaining their
+ * identifiers. Non-usage event bodies are never retained or emitted. This does not deduplicate.
  */
 export async function summarizeCodexExecJsonl(lines, callerScope, limits = {}) {
   const scope = {
@@ -152,6 +152,7 @@ export async function summarizeCodexExecJsonl(lines, callerScope, limits = {}) {
   const fieldsWithMissingValues = new Set();
   let inputBytes = 0;
   let inputLineCount = 0;
+  let threadStartRecordCount = 0;
 
   for await (const line of lines) {
     inputLineCount += 1;
@@ -165,6 +166,7 @@ export async function summarizeCodexExecJsonl(lines, callerScope, limits = {}) {
     if (line.length === 0) throw invalidInput(`empty JSONL event at line ${inputLineCount}`);
 
     const event = parseJsonlEvent(line, inputLineCount);
+    if (event.type === "thread.started") threadStartRecordCount += 1;
     const extracted = extractUsage(event, inputLineCount);
     if (extracted === null) continue;
     if (records.length >= caps.maxUsageRecords) throw invalidInput("JSONL stream exceeds the local usage-record limit");
@@ -201,6 +203,7 @@ export async function summarizeCodexExecJsonl(lines, callerScope, limits = {}) {
         : "NONCONFORMANT_PARTIAL_MISSING_REQUIRED_FIELDS",
     missing_required_usage_fields: missingRequiredUsageFields,
     caller_scope: scope,
+    observed_thread_start_record_count: threadStartRecordCount,
     observed_turn_completed_record_count: records.length,
     observed_usage_records: records,
     event_identity: {
