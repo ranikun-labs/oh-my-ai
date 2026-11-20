@@ -41,6 +41,7 @@ on:
       - "skills/harness-automation/SKILL.md"
   pull_request:
     branches:
+      - dev
       - master
       - feat/rpl-120-durable-claim-integration-20261030
       - feat/rpl-118-capability-preflight-mvp-20261102
