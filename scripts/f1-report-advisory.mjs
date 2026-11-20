@@ -49,7 +49,10 @@ const THEMATIC_BREAK = /^ {0,3}(?:\*(?:[ \t]*\*){2,}|-(?:[ \t]*-){2,}|_(?:[ \t]*
 const SETEXT_UNDERLINE = /^ {0,3}(=+|-+)[ \t]*$/u;
 const BLOCK_QUOTE_MARKER = /^ {0,3}>[ \t]?/u;
 const LINK_REFERENCE_START = /^ {0,3}\[(?:[^\[\]\\]|\\.)+\]:/u;
-const LINK_REFERENCE_DEFINITION = /^ {0,3}\[(?:[^\[\]\\]|\\.)+\]:[ \t]*(?:<[^<>]*>|[^<> \t]+)(?:[ \t]+(?:"[^"]*"|'[^']*'|\([^()]*\)))?[ \t]*$/u;
+const LINK_REFERENCE_DEFINITION = /^ {0,3}\[((?:[^\[\]\\]|\\.)+)\]:[ \t]*(?:<([^<>]*)>|([^<> \t]+))(?:[ \t]+(?:"[^"]*"|'[^']*'|\([^()]*\)))?[ \t]*$/u;
+// Recognize a plain-text line with a single full reference link. Other bracket
+// or angle syntax may enclose apparent links in Markdown or HTML attributes.
+const EXPLICIT_REFERENCE_LINK = /^([^\[\]<>]*)\[[^\[\]\\\x00<>]+\]\[((?:[^\[\]\\\x00<>]|\\[^\x00]){1,999})\][^\[\]<>]*$/u;
 const MARKDOWN_LIST_ITEM = /^ {0,3}([-+*]|\d{1,9}[.)])[ \t]{1,4}(?=\S)/u;
 const LIST_CONTEXT_ITEM = /^( {0,3})([-+*]|\d{1,9}[.)])(?:([ \t]+)|$)/u;
 const PARAGRAPH_INTERRUPTING_LIST_MARKER = /^(?:[-+*]|0*1[.)])$/u;
@@ -147,18 +150,52 @@ function readContainerLeaf(line, listIndent, listItem, nextLine) {
   return { text, quoteDepth, containsList, indent };
 }
 
-function readLinkReferenceEnd(lines, start) {
+function readLinkReferenceEnd(lines, start, references) {
   let definition = lines[start];
   if (!LINK_REFERENCE_START.test(definition)) return -1;
-  let end = LINK_REFERENCE_DEFINITION.test(definition) ? start : -1;
+  let match = LINK_REFERENCE_DEFINITION.exec(definition);
+  let end = match ? start : -1;
   // The destination and optional title can each begin on the next physical line.
   for (let index = start + 1; index <= start + 2 && index < lines.length; index += 1) {
     const continuation = lines[index].trim();
     if (!continuation || THEMATIC_BREAK.test(lines[index])) break;
     definition += ` ${continuation}`;
-    if (LINK_REFERENCE_DEFINITION.test(definition)) end = index;
+    const continued = LINK_REFERENCE_DEFINITION.exec(definition);
+    if (continued) {
+      match = continued;
+      end = index;
+    }
+  }
+  if (references && match && (match[3] === undefined || hasBalancedLinkDestination(match[3]))) {
+    const label = normalizeLinkReferenceLabel(match[1]);
+    if (label && !references.has(label)) references.set(label, match[2] ?? match[3]);
   }
   return end;
+}
+
+function normalizeLinkReferenceLabel(label) {
+  if (label.length > 999) return "";
+  return label.trim().replace(/[ \t]+/gu, " ").replace(/[A-Z]/gu, (letter) => letter.toLowerCase());
+}
+
+function hasBalancedLinkDestination(destination) {
+  let depth = 0;
+  for (const { 0: character, index } of destination.matchAll(/[()]/gu)) {
+    if (isEscapedAt(destination, index)) continue;
+    depth += character === "(" ? 1 : -1;
+    if (depth < 0 || depth > 32) return false;
+  }
+  return depth === 0;
+}
+
+function readReferenceLinkLabels(line) {
+  const item = MARKDOWN_LIST_ITEM.exec(line);
+  const text = item ? line.slice(item[0].length).replace(/^\[[ xX]\][ \t]+/u, "") : line;
+  const reference = EXPLICIT_REFERENCE_LINK.exec(text);
+  if (!reference) return [];
+  const [, prefix, label] = reference;
+  if (isEscapedAt(prefix, prefix.length) || (prefix.endsWith("!") && !isEscapedAt(prefix, prefix.length - 1))) return [];
+  return [normalizeLinkReferenceLabel(label)];
 }
 
 function parseFenceStart(line) {
@@ -293,7 +330,7 @@ function findHtmlPreCloseOutsideComment(line, insideHtmlComment) {
   return { end: null, insideHtmlComment, hasContent };
 }
 
-function visibleMarkdownLines(markdown, statusEvidenceOnly = false, onOpaqueEvidence, classifyProse = false) {
+function visibleMarkdownLines(markdown, statusEvidenceOnly = false, onOpaqueEvidence, classifyProse = false, linkReferences) {
   const sourceLines = String(markdown).split(/\r?\n/);
   const visibleLines = [];
   let openFence = null;
@@ -464,6 +501,19 @@ function visibleMarkdownLines(markdown, statusEvidenceOnly = false, onOpaqueEvid
       }
     }
 
+    const { text: blockText, quoteDepth, containsList } = readContainerLeaf(blockLine, listIndent, listItem, sourceLines[lineIndex + 1]);
+    if (linkReferences && atBlockBoundary && listIndent === 0 && !containsList && quoteDepth === 0
+      && line === sourceLine && !insideHtmlComment && inlineCodeDelimiterLength === 0) {
+      const end = readLinkReferenceEnd(sourceLines, lineIndex, linkReferences);
+      if (end >= lineIndex) {
+        lineIndex = end;
+        setextParagraph = null;
+        inTopLevelTable = false;
+        quotedParagraphDepth = 0;
+        continue;
+      }
+    }
+
     const tableLine = !insideHtmlComment;
     const headingCandidate = inlineCodeDelimiterLength === 0
       && !insideHtmlComment
@@ -479,11 +529,14 @@ function visibleMarkdownLines(markdown, statusEvidenceOnly = false, onOpaqueEvid
     let visible = "";
     let statusVisible = "";
     let fieldVisible = "";
+    // Preserve a boundary where hidden markup separates adjacent visible characters.
+    let referenceText = "";
     let cursor = 0;
     const backtick = String.fromCharCode(96);
 
     while (cursor < line.length) {
       if (htmlPreListIndent !== null) {
+        referenceText += "\x00";
         const preClose = findHtmlPreCloseOutsideComment(line.slice(cursor), insideHtmlComment);
         if (preClose.hasContent) onOpaqueEvidence?.();
         insideHtmlComment = preClose.insideHtmlComment;
@@ -498,6 +551,7 @@ function visibleMarkdownLines(markdown, statusEvidenceOnly = false, onOpaqueEvid
       }
 
       if (insideHtmlComment) {
+        referenceText += "\x00";
         const close = line.indexOf("-->", cursor);
         if (close === -1) break;
         insideHtmlComment = false;
@@ -506,6 +560,7 @@ function visibleMarkdownLines(markdown, statusEvidenceOnly = false, onOpaqueEvid
       }
 
       if (inlineCodeDelimiterLength > 0) {
+        referenceText += "\x00";
         const close = findClosingBacktickRun(sourceLines, lineIndex, cursor, inlineCodeDelimiterLength, listIndent);
         if (close !== null && close.lineIndex === lineIndex) {
           visible += line.slice(cursor, close.end);
@@ -520,6 +575,7 @@ function visibleMarkdownLines(markdown, statusEvidenceOnly = false, onOpaqueEvid
       }
 
       if (line[cursor] === backtick && !isEscapedAt(line, cursor)) {
+        referenceText += "\x00";
         const runLength = backtickRunLength(line, cursor);
         const close = findClosingBacktickRun(sourceLines, lineIndex, cursor + runLength, runLength, listContexts.at(-1)?.indent ?? 0);
         if (close !== null) {
@@ -557,12 +613,12 @@ function visibleMarkdownLines(markdown, statusEvidenceOnly = false, onOpaqueEvid
       visible += line[cursor];
       statusVisible += line[cursor];
       fieldVisible += line[cursor];
+      if (linkReferences) referenceText += line[cursor];
       cursor += 1;
     }
 
-    const { text: blockText, quoteDepth, containsList } = readContainerLeaf(blockLine, listIndent, listItem, sourceLines[lineIndex + 1]);
     const quotedSetext = quoteDepth > 0 && quoteDepth === quotedParagraphDepth && SETEXT_UNDERLINE.test(blockText);
-    if (lineIndex > linkReferenceEnd && atBlockBoundary && listIndent === 0 && !containsList && quoteDepth === 0) {
+    if (!linkReferences && lineIndex > linkReferenceEnd && atBlockBoundary && listIndent === 0 && !containsList && quoteDepth === 0) {
       linkReferenceEnd = readLinkReferenceEnd(sourceLines, lineIndex);
     }
     // Containers with an empty leaf or a heading have no paragraph for lazy continuation.
@@ -570,17 +626,18 @@ function visibleMarkdownLines(markdown, statusEvidenceOnly = false, onOpaqueEvid
     const blankOrBlock = blockText.trim().length === 0 || atxHeading || quotedSetext
       || THEMATIC_BREAK.test(blockText) || HTML_PRE_OPEN.test(blockText.trimStart()) || lineIndex <= linkReferenceEnd;
     let isProse = false;
-    if (classifyProse) {
+    let isQuoted = false;
+    if (classifyProse || linkReferences) {
       const startsComment = blockText.trimStart().startsWith("<!--");
       inQuotedHtmlBlock = quoteDepth > 0 && blockText.trim().length > 0
         && (followsQuotedHtmlBlock || startsHtmlBlock(blockText, !followsQuoteParagraph));
       // An unmarked continuation belongs to a quoted paragraph until a new block starts.
-      const quotedText = quoteDepth > 0 || (followsQuoteParagraph && !listItem && !startsComment);
+      isQuoted = quoteDepth > 0 || (followsQuoteParagraph && !listItem && !startsComment);
       const visibleBlock = relativeListLine(visible, listIndent);
       const visibleItem = listItem && readListContext(visibleBlock, listIndent, true, sourceLines[lineIndex + 1]);
       const visibleLeaf = readContainerLeaf(visibleBlock, listIndent, visibleItem, sourceLines[lineIndex + 1]).text.trim();
-      quoteParagraphOpen = quotedText && !blankOrBlock && !startsComment && !inQuotedHtmlBlock && visibleLeaf.length > 0;
-      isProse = !blankOrBlock && !quotedText && visibleLeaf.length > 0 && !HTML_TAGS_WITHOUT_TEXT.test(visibleLeaf);
+      quoteParagraphOpen = isQuoted && !blankOrBlock && !startsComment && !inQuotedHtmlBlock && visibleLeaf.length > 0;
+      isProse = !blankOrBlock && !isQuoted && visibleLeaf.length > 0 && !HTML_TAGS_WITHOUT_TEXT.test(visibleLeaf);
     }
     const hasTopLevelParagraphText = !blankOrBlock && !listItem && listIndent === 0
       && line === sourceLine && quoteDepth === 0 && !insideHtmlComment && htmlPreListIndent === null;
@@ -611,6 +668,8 @@ function visibleMarkdownLines(markdown, statusEvidenceOnly = false, onOpaqueEvid
       atxHeading,
       isProse,
       nestedReportEvidence,
+      referenceLabels: linkReferences && !isQuoted ? readReferenceLinkLabels(referenceText) : [],
+      quotedLeaf: linkReferences && isQuoted ? { text: blockText, depth: quoteDepth } : null,
       lineIndex,
     });
   }
@@ -638,7 +697,7 @@ export function readTopLevelSectionHeadings(markdown) {
   });
 }
 
-function splitSections(markdown, statusEvidenceOnly = false) {
+function splitSections(markdown, statusEvidenceOnly = false, linkReferences) {
   const sections = new Map();
   const fieldSections = new Map();
   const duplicates = new Set();
@@ -655,7 +714,7 @@ function splitSections(markdown, statusEvidenceOnly = false) {
     fieldSections.set(current, [...fieldBody]);
   };
 
-  for (const { text: line, statusText, fieldText, tableText, heading, nestedReportEvidence, lineIndex } of visibleMarkdownLines(markdown, statusEvidenceOnly)) {
+  for (const { text: line, statusText, fieldText, tableText, heading, nestedReportEvidence, referenceLabels, quotedLeaf, lineIndex } of visibleMarkdownLines(markdown, statusEvidenceOnly, undefined, false, linkReferences)) {
     if (heading) {
       flush();
       // A top-level heading ends the preceding section. Only named H2s open a report section.
@@ -665,7 +724,7 @@ function splitSections(markdown, statusEvidenceOnly = false) {
       fieldBody.length = 0;
     } else if (current !== null) {
       body.push(line);
-      fieldBody.push({ text: line, fieldText, tableText, statusText, nestedReportEvidence, lineIndex });
+      fieldBody.push({ text: line, fieldText, tableText, statusText, nestedReportEvidence, referenceLabels, quotedLeaf, lineIndex });
     }
   }
   flush();
@@ -996,6 +1055,35 @@ function hasHttpUrl(text) {
   return false;
 }
 
+function readSourceEvidenceText(lines) {
+  const source = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const { text, quotedLeaf, lineIndex } = lines[index];
+    if (quotedLeaf && LINK_REFERENCE_START.test(quotedLeaf.text)) {
+      const definition = [quotedLeaf.text];
+      for (const next of lines.slice(index + 1, index + 3)) {
+        // A continuation must be on the next physical line in the same quote.
+        if (next.lineIndex !== lineIndex + definition.length || next.quotedLeaf?.depth !== quotedLeaf.depth) break;
+        definition.push(next.quotedLeaf.text);
+      }
+      const end = readLinkReferenceEnd(definition, 0);
+      if (end >= 0) {
+        index += end;
+        continue;
+      }
+    }
+    source.push(text);
+  }
+  return source.join("\n");
+}
+
+function hasLinkedReferenceUrl(labels, references) {
+  return labels.some((label) => {
+    const destination = references.get(label);
+    return destination !== undefined && /^https?:\/\//iu.test(destination) && hasHttpUrl(destination);
+  });
+}
+
 function parseStatusLines(lines) {
   const found = new Map();
   const canonicalLabels = new Map(STATUS_LABELS.map((label) => [label.toLowerCase(), label]));
@@ -1004,7 +1092,7 @@ function parseStatusLines(lines) {
     "i"
   );
   const statusPattern = /^(\*{1,3}|_{1,3}|`+)?([A-Z_]+)\1(?:[ \t]*[—-][ \t]*(.*))?[ \t]*$/i;
-  for (const { statusText: line, nestedReportEvidence } of lines) {
+  for (const { statusText: line, nestedReportEvidence, referenceLabels } of lines) {
     const item = MARKDOWN_LIST_ITEM.exec(line);
     // A nested report-field list item can expose a contradiction, but is not
     // standalone evidence for a required status.
@@ -1028,7 +1116,7 @@ function parseStatusLines(lines) {
     const label = canonicalLabels.get(rawLabel.toLowerCase());
     const [, , status, detail] = value;
     const items = found.get(label) ?? [];
-    items.push({ status: status.toUpperCase(), detail: (detail ?? "").trim(), nestedReportEvidence });
+    items.push({ status: status.toUpperCase(), detail: (detail ?? "").trim(), nestedReportEvidence, referenceLabels });
     found.set(label, items);
   }
   return found;
@@ -1042,7 +1130,8 @@ function validateF1Report(markdown, options = {}) {
   } else if (requireAiStatus) {
     errors.push(...validateAiStatus(markdown, options).errors);
   }
-  const sectionScan = splitSections(markdown);
+  const linkReferences = new Map();
+  const sectionScan = splitSections(markdown, false, linkReferences);
   const sections = sectionScan.sections;
   for (const duplicate of sectionScan.duplicates) {
     if (REQUIRED_SECTIONS.includes(duplicate)) {
@@ -1060,7 +1149,7 @@ function validateF1Report(markdown, options = {}) {
 
   errors.push(...validateRequiredReportFields(sectionScan));
 
-  const statusSections = splitSections(markdown, true).fieldSections;
+  const statusSections = splitSections(markdown, true, linkReferences).fieldSections;
   const statusLines = parseStatusLines(statusSections.get("검증") ?? []);
   for (const label of STATUS_LABELS) {
     const entries = statusLines.get(label) ?? [];
@@ -1069,7 +1158,8 @@ function validateF1Report(markdown, options = {}) {
       continue;
     }
 
-    const { status, detail } = entries[0];
+    const { status, detail, referenceLabels } = entries[0];
+    const hasEvidenceUrl = hasHttpUrl(detail) || hasLinkedReferenceUrl(referenceLabels, linkReferences);
     const allowed = label === "Owner Gate" ? OWNER_STATUSES : EVIDENCE_STATUSES;
     if (!allowed.has(status)) {
       errors.push(`${label} has unsupported status: ${status}`);
@@ -1082,13 +1172,13 @@ function validateF1Report(markdown, options = {}) {
     if (label === "Native Test" && status === "PASS" && !/(?:\bnode\b|\bnpm\b|\bmake\b|\bpytest\b|\bgo test\b|\bcargo test\b|\b\d+\/\d+\b)/i.test(detail)) {
       errors.push("Native Test PASS requires a command or a passed/total count");
     }
-    if (label === "CI" && status === "PASS" && !hasHttpUrl(detail)) {
+    if (label === "CI" && status === "PASS" && !hasEvidenceUrl) {
       errors.push("CI PASS requires a run URL");
     }
     if (label === "Owner Gate" && status === "APPROVED" && detail.length === 0) {
       errors.push("Owner Gate APPROVED requires an approval evidence reference");
     }
-    if (label === "Owner Gate" && status === "APPROVED" && !hasHttpUrl(detail) && !/(?:\bRPL-\d+\b|comment\s*#\d+)/i.test(detail)) {
+    if (label === "Owner Gate" && status === "APPROVED" && !hasEvidenceUrl && !/(?:\bRPL-\d+\b|comment\s*#\d+)/i.test(detail)) {
       errors.push("Owner Gate APPROVED requires a linked issue, comment, or approval URL");
     }
     if (label === "Independent Review" && status === "PASS") {
@@ -1103,14 +1193,17 @@ function validateF1Report(markdown, options = {}) {
       if (!/runtime\s*[:=]\s*\S+/i.test(detail)) {
         errors.push("Runtime E2E PASS requires the runtime name");
       }
-      if (!hasHttpUrl(detail) && !/\b[a-f0-9]{7,40}\b/i.test(detail)) {
+      if (!hasEvidenceUrl && !/\b[a-f0-9]{7,40}\b/i.test(detail)) {
         errors.push("Runtime E2E PASS requires an evidence URL or SHA");
       }
     }
   }
 
   const evidence = sections.get("근거") ?? "";
-  if (hasUsableContent(evidence) && !hasHttpUrl(evidence) && !/\b[a-f0-9]{7,40}\b/i.test(evidence)) {
+  const evidenceLines = sectionScan.fieldSections.get("근거") ?? [];
+  const sourceText = readSourceEvidenceText(evidenceLines);
+  const hasLinkedSourceUrl = evidenceLines.some(({ referenceLabels }) => hasLinkedReferenceUrl(referenceLabels, linkReferences));
+  if (hasUsableContent(evidence) && !hasHttpUrl(sourceText) && !hasLinkedSourceUrl && !/\b[a-f0-9]{7,40}\b/i.test(sourceText)) {
     errors.push("근거 must include a URL or a source SHA");
   }
 

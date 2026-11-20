@@ -601,6 +601,69 @@ for (const [label, original, prefix, expectedError, otherReferences = []] of url
   }
 }
 console.log(`f1 URL evidence fixtures passed: ${urlEvidenceFixtureCount}/${urlEvidenceFixtureCount}`);
+
+const referenceUrl = "https://ci.example.invalid/run/42";
+const referenceDefinition = `[ci-run]: ${referenceUrl}`;
+const ciReferenceReport = (usage, definition) => validReport.replace(/CI: NOT_RUN[^\n]*/, `CI: PASS — ${usage}`)
+  + (definition ? `\n\n${definition}\n` : "");
+const referenceUsage = "[GitHub CI][ci-run]";
+const matchingDefinitions = [
+  referenceDefinition,
+  `[CI-RUN]:\n   <${referenceUrl}>\n  "GitHub Actions run"`,
+];
+for (const definition of matchingDefinitions) {
+  const result = validateF1Report(ciReferenceReport(referenceUsage, definition));
+  assert.equal(result.valid, true, result.errors.join("; "));
+}
+for (const definition of [
+  "",
+  `\`\`\`text\n${referenceDefinition}\n\`\`\``,
+  `> ${referenceDefinition}`,
+  `> Quoted prose\n${referenceDefinition}`,
+  `<!--\n${referenceDefinition}\n-->`,
+  `    ${referenceDefinition}`,
+  `[ci-run]: /relative\n${referenceDefinition}`,
+  "[ci-run]: https://",
+  `[ci-run]: ${referenceUrl}/(unclosed`,
+]) {
+  expectInvalid(`CI rejects unavailable definition ${definition}`, ciReferenceReport(referenceUsage, definition), "CI PASS requires a run URL");
+}
+for (const usage of [
+  "[GitHub CI][unresolved]",
+  `\`${referenceUsage}\``,
+  `![GitHub CI][ci-run]`,
+  `\\${referenceUsage}`,
+  "[GitHub CI]<!-- comment -->[ci-run]",
+  `[path](/relative/${referenceUsage})`,
+  `[Docs](/relative "title ) ${referenceUsage}")`,
+  `<span title="${referenceUsage}">description</span>`,
+]) {
+  expectInvalid(`CI rejects unused reference in ${usage}`, ciReferenceReport(usage, referenceDefinition), "CI PASS requires a run URL");
+}
+const withSourceSection = (source) => validReport.replace(/## 근거[\s\S]*/, `## 근거\n${source}\n`);
+expectInvalid("reference definition alone does not fill source evidence", withSourceSection(referenceDefinition), "section must contain a concrete statement: ## 근거");
+for (const definition of [referenceDefinition, `> ${referenceDefinition}`, `> Quoted prose\n${referenceDefinition}`]) {
+  expectInvalid("unused definition does not supply a source URL", withSourceSection(`Source pending\n\n${definition}`), "근거 must include a URL or a source SHA");
+}
+for (const source of [
+  `> [GitHub CI](${referenceUrl})`,
+  `> Run URL: ${referenceUrl}`,
+  "> Base SHA: deadbeef",
+  `> [ci-run]: /relative\n> [GitHub CI](${referenceUrl})`,
+]) {
+  const result = validateF1Report(withSourceSection(source));
+  assert.equal(result.valid, true, `${source}: ${result.errors.join("; ")}`);
+}
+for (const definition of [
+  `> ${referenceDefinition}`,
+  `> [ci-run]:\n>   <${referenceUrl}>`,
+  `> [ci-run]: /relative\n>   "${referenceUrl} deadbeef"`,
+]) {
+  expectInvalid("quoted definition alone does not supply source evidence", withSourceSection(definition), "근거 must include a URL or a source SHA");
+}
+const linkedSource = validateF1Report(withSourceSection(`- ${referenceUsage}\n\n${referenceDefinition}`));
+assert.equal(linkedSource.valid, true, linkedSource.errors.join("; "));
+console.log("f1 reference-style URL evidence fixtures passed");
 const ownerGateLine = "- Owner Gate: PENDING — Source Merge 승인은 별도다.";
 const visibleConflictingGateLines = [
   "- owner gate: BLOCKED — another decision",
