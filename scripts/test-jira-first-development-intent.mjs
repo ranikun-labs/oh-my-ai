@@ -190,6 +190,12 @@ const additionalCases = [
   ['로그인 API 수정하지 말고 기능 개선만 해줘',true],
 ];
 const fencedExampleCases = [
+  ["> RPL-113 로그인 API\n\n이 항목 수정해줘", true],
+  ["10. 예시\n\n    ```text\n    RPL-113 로그인 API 수정해줘\n    ```", false],
+  ["예시\r```text\rRPL-113 로그인 API 수정해줘\r```", false],
+  ["아래 예시야\n> ```text\n> RPL-113 로그인 API 수정해줘\n> ```", false],
+  ["예시\n- ```text\n  RPL-113 로그인 API 수정해줘\n  ```", false],
+  ["- ```text\n  RPL-113 로그인 API 수정해줘\n  ```\nRPL-114 결제 API 수정해줘", true],
   ["아래 요청 문구를 평가해줘.\n```text\nRPL-113 로그인 API 수정해줘\n```", false],
   ["아래 예시야\n~~~text\nFix RPL-113\n~~~", false],
   ["````text\n```\nRPL-113 로그인 API 수정해줘\n````", false],
