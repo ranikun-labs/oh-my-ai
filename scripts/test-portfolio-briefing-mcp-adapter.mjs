@@ -161,16 +161,41 @@ for (const [name, change] of [
   });
 }
 
-test("reports closed draft as unknown rather than open and preserves open and merged controls", () => {
+test("reports closed unmerged PRs only with explicit merge evidence and preserves open and merged controls", () => {
   for (const [fields, expected] of [
-    [{ state: "closed", draft: true, merged: false }, "UNKNOWN"],
+    [{ state: "closed", draft: true, merged: false }, "CLOSED_UNMERGED"],
+    [{ state: "closed", draft: false, merged: false, merged_at: null }, "CLOSED_UNMERGED"],
+    [{ state: "closed", draft: false, merged: false, merged_at: "2026-10-30T10:30:00Z" }, "UNKNOWN"],
+    [{ state: "closed", draft: true, merged: false, merged_at: "2026-10-30T10:30:00Z" }, "UNKNOWN"],
+    [{ state: "closed", draft: false, merged: false, merged_at: "invalid" }, "UNKNOWN"],
+    [{ state: "closed", draft: true, merged: undefined }, "UNKNOWN"],
+    [{ state: "closed", draft: false, merged: null }, "UNKNOWN"],
+    [{ state: "closed", draft: false, merged: "false" }, "UNKNOWN"],
     [{ state: "open", draft: true, merged: false }, "DRAFT_OPEN_UNMERGED"],
     [{ state: "open", draft: false, merged: false }, "OPEN_UNMERGED"],
-    [{ state: "closed", draft: false, merged: true }, "MERGED"],
+    [{ state: "closed", draft: false, merged: true, merged_at: "2026-10-30T10:30:00Z" }, "MERGED"],
     [{ state: null, draft: true, merged: false }, "UNKNOWN"],
   ]) {
-    assert.equal(wrappedPortfolio(wrappedGithubResult(88, fields)).pull_requests[0].merge_state, expected);
+    for (const entry of [githubResult(88, fields), wrappedGithubResult(88, fields)]) {
+      const result = wrappedPortfolio(entry);
+      assert.equal(result.pull_requests[0].merge_state, expected);
+      assert.equal(result.issues[0].jira_status, "할 일");
+      assert.equal(result.issues[0].execution.state, "UNKNOWN");
+    }
   }
+});
+
+test("reports drift when two exact PR observations disagree about a closed PR's merge", () => {
+  const result = buildPortfolioBriefingFromMcpResults({
+    captured_at: capturedAt,
+    github_results: [
+      githubResult(88, { state: "closed", merged: false }),
+      wrappedGithubResult(88, { state: "closed", merged: true }),
+    ],
+    required_sources: ["github"],
+  });
+  assert.equal(result.pull_requests[0].merge_state, "DRIFT");
+  assert.deepEqual(result.pull_requests[0].conflicts.merge_state, ["CLOSED_UNMERGED", "MERGED"]);
 });
 
 test("does not infer a Jira association from non-primary PR body references", () => {

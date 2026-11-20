@@ -113,6 +113,14 @@ function normalizeGithubResults(entries) {
     const primaryKey = extractPrimaryJiraKey(nonEmptyString(info.body) || "");
     const jiraKeys = primaryKey ? [primaryKey] : titleKeys.length === 1 ? titleKeys : [];
     const updatedAt = nonEmptyString(info.updated_at);
+    let mergeState = "UNKNOWN";
+    if (info.merged === true) {
+      mergeState = "MERGED";
+    } else if (info.state === "open") {
+      mergeState = info.draft === true ? "DRAFT_OPEN_UNMERGED" : "OPEN_UNMERGED";
+    } else if (info.state === "closed" && info.merged === false && info.merged_at == null) {
+      mergeState = "CLOSED_UNMERGED";
+    }
 
     return {
       name: "github",
@@ -133,11 +141,7 @@ function normalizeGithubResults(entries) {
         base_sha: nonEmptyString(info.base_sha),
         ci_state: ciState,
         review_state: reviewState,
-        merge_state: info.merged === true
-          ? "MERGED"
-          : info.state === "open" && info.draft === true
-            ? "DRAFT_OPEN_UNMERGED"
-            : info.state === "open" ? "OPEN_UNMERGED" : "UNKNOWN",
+        merge_state: mergeState,
         jira_keys: jiraKeys,
       }] : [],
     };
