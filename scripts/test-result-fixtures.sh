@@ -385,13 +385,18 @@ fx_result_section_boundaries() {
   for non_evidence in '### Placeholder heading' '<!-- instructional comment -->' \
     $'<!--\n- Example successful validation.\n-->' '- <!-- comment in an empty list item -->' \
     '> <!-- comment in an empty quote -->' '> - <!-- comment in a quoted list -->' \
+    '---' '* None' '> None' '[test]: https://example.com' \
+    '[test]:https://example.com' '<div><!-- example only --></div>' \
+    '<div class="example"><!-- example only --></div>' '<pre><code></code></pre>' \
+    '<pre><code class="language-text"></code></pre>'  \
     '<!-- first comment --> <!-- second comment -->' $'```text\n```' '<pre><!-- example only --></pre>'; do
     mutate_result "$src" "$out" "$validation" "$non_evidence"$'\n\n# Appendix\n\n'"$validation"
     expect_invalid "$out" "No-Validation-Evidence-Before-Appendix" "requires at least one entry under Validation Performed"
   done
 
   local evidence
-  for evidence in '> Command output: 15 fixtures passed' $'```text\n<!-- literal command output -->\n```' \
+  for evidence in '> Command output: 15 fixtures passed' '[Tests]: 15 fixtures passed' \
+    $'<div>\nTests passed: 15 fixtures\n</div>' $'```text\n<!-- literal command output -->\n```' \
     '    <!-- literal command output -->' $'<pre>\n15 fixtures passed\n</pre>' \
     '>     <!-- literal command output -->' '-     <!-- literal command output -->' \
     '<!-- metadata note --> Tests passed.' $'<!-- metadata note\n--> Tests passed.'; do
