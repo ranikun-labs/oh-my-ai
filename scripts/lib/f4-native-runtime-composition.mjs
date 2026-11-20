@@ -165,7 +165,7 @@ async function reconcileScopeCheckpoint(checkpointStore, request) {
   if (!projection.ok) return projection;
 
   if (current.value !== null && projection.checkpoint.nextReadyId === null
-    && projection.checkpoint.stopReason !== null) {
+    && (projection.checkpoint.stopReason !== null || projection.checkpoint.goalDoneEligible)) {
     const unchangedRevision = {
       ...projection.checkpoint,
       checkpointRevision: current.value.checkpointRevision,

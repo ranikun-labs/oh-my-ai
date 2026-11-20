@@ -1947,6 +1947,39 @@ await group("F4 scope checkpoint composition", async () => {
     assert.equal(built.calls.some(([name]) => name === "codex.resolveAndResume"), false);
   });
 
+  await test("rechecking a completed objective does not publish another revision", async () => {
+    const built = build({ nativeComposition: true });
+    const completed = await built.composition.reconcileScopeCheckpoint({
+      approvedScope: FIXTURE_SCOPE,
+      expectedCheckpointRevision: 1,
+      refresh: {
+        sourceUri: FIXTURE_SCOPE.requiredSources[0].uri,
+        sourceRevision: "jira-snapshot/completed",
+        expectedPriorRevision: "jira-snapshot/f4-fixture-1",
+        refreshScope: "INCREMENTAL_DELTA",
+        coverage: "COMPLETE",
+        partialReasons: [],
+        observations: FIXTURE_SCOPE.items.map(({ id }) => ({ id, status: "DONE" })),
+      },
+      recentExecution: null,
+      nextReadyId: null,
+      stopReason: null,
+    });
+    assert.equal(completed.ok, true);
+    assert.equal(completed.checkpoint.goalDoneEligible, true);
+    const publications = built.userLocalState.stats.publishes;
+    const repeated = await built.composition.reconcileScopeCheckpoint({
+      approvedScope: FIXTURE_SCOPE,
+      expectedCheckpointRevision: completed.checkpoint.checkpointRevision,
+      refresh: null,
+      recentExecution: null,
+      nextReadyId: null,
+      stopReason: null,
+    });
+    assert.deepEqual(repeated, completed);
+    assert.equal(built.userLocalState.stats.publishes, publications);
+  });
+
   await test("composition requires an Owner-backed workstream resolver", () => {
     const built = build({ nativeComposition: true, omitScopeResolver: true });
     assert.deepEqual(built.built, {
