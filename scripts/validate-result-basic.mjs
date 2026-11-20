@@ -12,7 +12,7 @@
 // well-formed and does not contradict itself.
 
 import fs from "node:fs";
-import { splitSections as splitVisibleSections } from "./f1-report-advisory.mjs";
+import { readMarkdownEvidence, readTopLevelSectionHeadings, splitSections as splitVisibleSections } from "./f1-report-advisory.mjs";
 
 const REQUIRED_HEADINGS = [
   "Contract Metadata",
@@ -52,33 +52,22 @@ const REQUIRED_METADATA_UNFILLED_VALUES = new Map([
 ]);
 
 function splitSections(markdown, errors = []) {
-  // Use the existing scanner to locate visible headings, but slice Result
-  // bodies from the original text: code blocks can contain actual evidence
-  // or deviations and must not disappear before cross-field validation.
   const lines = markdown.split("\n");
-  let marker = "RESULT_SECTION_LINE_";
-  while (markdown.includes(marker)) marker += "_";
-  const marked = lines.map((line, index) => line.replace(
-    /^( {0,3}##[ \t]+)(.*)$/,
-    (_, prefix, heading) => `${prefix}${marker}${index}__${heading}`,
-  )).join("\n");
-  const boundaries = [];
-  for (const heading of splitVisibleSections(marked).sections.keys()) {
-    const match = new RegExp(`^${marker}(\\d+)__(.*)$`).exec(heading);
-    if (match && match[2].trim()) {
-      boundaries.push({ index: Number(match[1]), heading: match[2].trim() });
-    }
-  }
+  const boundaries = readTopLevelSectionHeadings(markdown);
   const sections = Object.create(null);
-  for (const [index, boundary] of boundaries.entries()) {
-    if (Object.hasOwn(sections, boundary.heading)) {
-      if (REQUIRED_HEADINGS.includes(boundary.heading)) {
-        errors.push(`duplicate required heading: ## ${boundary.heading}`);
+  for (const [index, { marker, title, startLine, endLine }] of boundaries.entries()) {
+    // Every H1/H2 ends the previous section. Result fields open only with
+    // named ATX H2s as used in the manual template.
+    if (marker !== "##" || startLine !== endLine || !title) continue;
+    if (Object.hasOwn(sections, title)) {
+      if (REQUIRED_HEADINGS.includes(title)) {
+        errors.push(`duplicate required heading: ## ${title}`);
       }
       continue;
     }
-    const end = boundaries[index + 1]?.index ?? lines.length;
-    sections[boundary.heading] = lines.slice(boundary.index + 1, end).join("\n").trim();
+    // Keep code blocks in the original body as evidence or deviations.
+    const end = boundaries[index + 1]?.startLine ?? lines.length;
+    sections[title] = lines.slice(endLine + 1, end).join("\n").trimEnd();
   }
   return sections;
 }
@@ -150,9 +139,8 @@ function validate(markdown) {
   const blockedReasonsEmpty = isNoneOrTemplatePrompt(sections["Blocked Reasons"], [
     "<reason the work is blocked>",
   ]);
-  const validationPerformedEmpty = isNoneOrTemplatePrompt(sections["Validation Performed"], [
-    "<validation that was actually performed>",
-  ]);
+  const validationPerformed = sections["Validation Performed"];
+  const validationPrompts = ["<validation that was actually performed>"];
   const validationNotPerformedEmpty = isNoneOrTemplatePrompt(sections["Validation Not Performed"], [
     "<validation that was requested or expected but not performed, with reason>",
   ]);
@@ -178,7 +166,8 @@ function validate(markdown) {
   }
 
   if (executionStatus === "complete") {
-    if (validationPerformedEmpty) {
+    const evidence = readMarkdownEvidence(validationPerformed);
+    if (!evidence.hasOpaqueEvidence && isNoneOrTemplatePrompt(evidence.text, validationPrompts)) {
       errors.push("execution_status=complete requires at least one entry under Validation Performed (cannot claim complete with zero validation performed)");
     }
     if (!scopeDeviationsEmpty) {
@@ -224,7 +213,7 @@ function validate(markdown) {
   }
 
   if (executionStatus === "failed") {
-    if (filesChangedEmpty && filesReadEmpty && validationPerformedEmpty) {
+    if (filesChangedEmpty && filesReadEmpty && isNoneOrTemplatePrompt(validationPerformed, validationPrompts)) {
       // Not a hard requirement, but a failed Result with literally nothing
       // attempted/observed is suspicious; flag it as a truthfulness concern.
       errors.push("execution_status=failed but no Files Read, Files Changed, or Validation Performed is recorded; nothing observable was actually attempted");

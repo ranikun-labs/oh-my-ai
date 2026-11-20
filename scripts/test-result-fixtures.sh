@@ -361,6 +361,53 @@ fx_ambiguous_result() {
   echo "passed: FX-RS-ambiguous-result"
 }
 
+fx_result_section_boundaries() {
+  local src="$FIXTURE_ROOT/FX-RS-good-complete-validation-performed.md"
+  local validation='- `bash -n README.md` is not applicable to Markdown; visually diffed the single-line change against the surrounding install steps.'
+  local d out heading
+  sandbox d
+  out="$d/boundaries.md"
+
+  for heading in '# Separate Handoff' $'Separate Handoff\n================' \
+    $'Separate Handoff\n----------------' $'Separate handoff\nwith a multiline title\n----------------------' \
+    '##' '## ###' '## <!-- Anonymous section -->'; do
+    mutate_result "$src" "$out" "$validation" "$heading"$'\n\n'"$validation"
+    expect_invalid "$out" "Validation-After-Section-Boundary" "requires at least one entry under Validation Performed"
+  done
+
+  for heading in '### Command output' $'```text\n# Captured command output\n```' \
+    $'<!--\n# Heading in a comment\n-->'; do
+    mutate_result "$src" "$out" "$validation" "$heading"$'\n\n'"$validation"
+    expect_valid "$out" "Validation-Within-Section"
+  done
+
+  local non_evidence
+  for non_evidence in '### Placeholder heading' '<!-- instructional comment -->' \
+    $'<!--\n- Example successful validation.\n-->' '- <!-- comment in an empty list item -->' \
+    '> <!-- comment in an empty quote -->' '> - <!-- comment in a quoted list -->' \
+    '<!-- first comment --> <!-- second comment -->' $'```text\n```' '<pre><!-- example only --></pre>'; do
+    mutate_result "$src" "$out" "$validation" "$non_evidence"$'\n\n# Appendix\n\n'"$validation"
+    expect_invalid "$out" "No-Validation-Evidence-Before-Appendix" "requires at least one entry under Validation Performed"
+  done
+
+  local evidence
+  for evidence in '> Command output: 15 fixtures passed' $'```text\n<!-- literal command output -->\n```' \
+    '    <!-- literal command output -->' $'<pre>\n15 fixtures passed\n</pre>' \
+    '>     <!-- literal command output -->' '-     <!-- literal command output -->' \
+    '<!-- metadata note --> Tests passed.' $'<!-- metadata note\n--> Tests passed.'; do
+    mutate_result "$src" "$out" "$validation" "$evidence"$'\n\n# Appendix\n\n'"$validation"
+    expect_valid "$out" "Reported-Validation-Evidence-Before-Appendix"
+  done
+
+  mutate_result "$src" "$out" '- `execution_status`: `complete`' \
+    $'# Unrelated metadata\n\n- `execution_status`: `complete`'
+  expect_invalid "$out" "Execution-Status-Outside-Contract-Metadata" "execution_status must be one of"
+
+  mutate_result "$src" "$out" "## Summary" $'Summary\n-------'
+  expect_invalid "$out" "Template-Required-Heading-Remains-ATX" "missing required heading: ## Summary"
+  echo "passed: FX-RS-section-boundaries"
+}
+
 fx_completion_criteria_status() {
   local src="$FIXTURE_ROOT/FX-RS-good-complete-validation-performed.md"
   local d out status
@@ -626,6 +673,7 @@ fx_partial_result
 fx_blocked_result
 fx_status_gate_template_placeholders
 fx_ambiguous_result
+fx_result_section_boundaries
 fx_source_handoff_reference
 fx_required_metadata_unfilled
 fx_completion_criteria_status
