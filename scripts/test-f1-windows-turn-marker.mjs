@@ -22,3 +22,20 @@ try {
   fs.rmSync(rootPath, { recursive: true, force: true });
 }
 console.log("F1 Windows marker lifecycle PASS (fixture ACL)");
+
+if (process.platform === "win32") {
+  const nativeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "f1-native-acl-"));
+  const originalModulePath = process.env.PSModulePath;
+  try {
+    process.env.PSModulePath = path.join(nativeRoot, "missing-modules");
+    const nativeLocation = { ...location, rootPath: nativeRoot };
+    updateWindowsF1TurnMarker(nativeLocation, turn, "submit");
+    assert.equal(updateWindowsF1TurnMarker(nativeLocation, turn, "stop"), true);
+    assert.equal(updateWindowsF1TurnMarker(nativeLocation, turn, "stop"), "consumed");
+    console.log("F1 Windows marker lifecycle PASS (native ACL with missing module path)");
+  } finally {
+    if (originalModulePath === undefined) delete process.env.PSModulePath;
+    else process.env.PSModulePath = originalModulePath;
+    fs.rmSync(nativeRoot, { recursive: true, force: true });
+  }
+}

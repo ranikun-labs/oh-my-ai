@@ -8,11 +8,15 @@ const EXPIRE_MS = 24 * 60 * 60 * 1000;
 // Node's POSIX mode projection on Windows cannot establish NTFS privacy.
 const checkAcl = String.raw`
 $ErrorActionPreference = 'Stop'
-$item = Get-Item -LiteralPath $env:OH_MY_AI_F1_ACL_PATH -Force
-if (!$item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { exit 1 }
+$systemModules = [IO.Path]::Combine($PSHOME, 'Modules')
+$env:PSModulePath = $systemModules
+$securityModule = [IO.Path]::Combine($systemModules, 'Microsoft.PowerShell.Security', 'Microsoft.PowerShell.Security.psd1')
+Import-Module -Name $securityModule -ErrorAction Stop
+$item = [IO.DirectoryInfo]::new($env:OH_MY_AI_F1_ACL_PATH)
+if (!$item.Exists -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { exit 1 }
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 $trusted = @($identity, 'S-1-5-18', 'S-1-5-32-544')
-$acl = Get-Acl -LiteralPath $item.FullName
+$acl = Microsoft.PowerShell.Security\Get-Acl -LiteralPath $item.FullName
 if ($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -ne $identity) { exit 1 }
 $userAllowed = $false
 foreach ($rule in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
