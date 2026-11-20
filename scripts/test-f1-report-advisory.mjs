@@ -1275,6 +1275,17 @@ assert.match(renderedUsage.usage_cell, /latest matched notification only; no ded
 assert.match(renderedUsage.usage_cell, /model\/reasoning\/Fast.*UNKNOWN/);
 assert.doesNotMatch(JSON.stringify(renderedUsage), /phr1.session.fixture.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/);
 
+for (const agentId of ["/root", "/root/review_usage/reader_2"]) {
+  const usage = formatUsageObservationForF1(syntheticUsageEnvelope, { agent_id: agentId, role: "Writer" });
+  assert.equal(usage.agent_id, agentId);
+  assert.match(usage.attribution, /CALLER_ASSERTED/);
+  assert.match(usage.usage_cell, /input=7/);
+}
+for (const agentId of ["/root/../writer", "/root//writer", "/root/", "/other/writer", "/root/writer|row"]) {
+  assert.equal(formatUsageObservationForF1(syntheticUsageEnvelope, { agent_id: agentId, role: "Writer" }).agent_id, "UNKNOWN");
+}
+assert.equal(formatUsageObservationForF1(syntheticUsageEnvelope, { agent_id: "/root", role: "/root/writer" }).role, "UNKNOWN");
+
 const noNotificationEnvelope = structuredClone(syntheticUsageEnvelope);
 noNotificationEnvelope.usage_observation.status = "NO_NOTIFICATION_OBSERVED";
 noNotificationEnvelope.usage_observation.token_usage = null;
@@ -1314,7 +1325,7 @@ try {
   const usageConsumerCli = spawnSync(process.execPath, [
     checkerPath,
     "--usage-observation-json", usageInputPath,
-    "--usage-agent-id", "writer-7",
+    "--usage-agent-id", "/root/review_usage",
     "--usage-role", "Writer",
   ], {
     cwd: os.tmpdir(),
@@ -1329,8 +1340,10 @@ try {
     assert.equal(usageConsumerCli.status, 0, usageConsumerCli.stderr);
     const cliUsage = JSON.parse(usageConsumerCli.stdout);
     assert.equal(cliUsage.mode, "MANUAL_F1_USAGE_CELL; not inserted into a report");
-    assert.equal(cliUsage.agent_id, "writer-7");
+    assert.equal(cliUsage.agent_id, "/root/review_usage");
+    assert.match(cliUsage.attribution, /CALLER_ASSERTED/);
     assert.match(cliUsage.usage_cell, /Agent execution usage UNKNOWN/);
+    assert.match(cliUsage.usage_cell, /input=7/);
     assert.doesNotMatch(usageConsumerCli.stdout, /phr1.session.fixture.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/);
     console.log("f1 usage observation formatter and CLI fixtures passed: 1 CLI + 7 contract cases");
   }
