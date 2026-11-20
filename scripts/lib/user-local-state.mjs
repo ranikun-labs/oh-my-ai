@@ -190,6 +190,28 @@ export function publishUserLocalStateAtomically(location, contents) {
 }
 
 /**
+ * Confirm a visible atomic publication survived the directory durability step.
+ * The caller must hold the same physical lock used by the publisher.
+ */
+export function confirmUserLocalStateDurability(location) {
+  const checked = assertLocation(location);
+  if (!assertExistingStateDirectoryTree(checked)) {
+    throw new UserLocalStateError("state_publish_durability_unknown", "The state directory is missing.");
+  }
+  try {
+    let directory = checked.directoryPath;
+    while (true) {
+      fsyncDirectory(directory);
+      if (directory === checked.rootPath) break;
+      directory = path.dirname(directory);
+    }
+    return true;
+  } catch (error) {
+    throw stateError("state_publish_durability_unknown", error);
+  }
+}
+
+/**
  * Run a synchronous read-modify-publish operation under an exclusive
  * filesystem lock. Recognized async function callbacks are rejected before
  * invocation. Other callbacks must not schedule asynchronous side effects or

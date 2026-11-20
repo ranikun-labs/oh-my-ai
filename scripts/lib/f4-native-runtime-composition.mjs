@@ -1,4 +1,7 @@
 import path from "node:path";
+import { sameF4PhysicalStateBinding } from "./f4-physical-state-binding.mjs";
+import { createF4ManagedWorkerResultHandler } from "./f4-worker-result-store.mjs";
+import { createPendingHandoffManualResumeAttemptOutcomeService } from "./pending-handoff-manual-resume-attempt-outcome.mjs";
 import { isDeepStrictEqual, types as utilTypes } from "node:util";
 import { preflightCapabilityMvp } from "./rpl-118-capability-preflight-mvp.mjs";
 import { createF4ScopePreservingCheckpoint } from "./f4-scope-preservation-checkpoint.mjs";
@@ -27,6 +30,7 @@ const REQUIRED_KEYS = Object.freeze([
 ]);
 const OPTIONAL_KEYS = Object.freeze([
   "manualResumeServiceFactory",
+  "workerResultHost",
   "stateRootOptions",
   "verifyWorktreeStateBinding",
   "verifyScopeCheckpointStateRootBinding",
@@ -75,9 +79,22 @@ export function createPendingHandoffF4NativeRuntimeComposition(options) {
   const baseCapabilityContext = inspectCapabilityContext(input.values.capabilityContext);
   if (baseCapabilityContext === null) return failure("manual_resume_runtime_dependency_invalid");
 
+  let userLocalState = input.values.userLocalState;
+  let resultStatePorts;
+  if (Object.hasOwn(input.values, "workerResultHost")) {
+    const physicalState = inspectExactDataObject(userLocalState, [
+      "resolveUserLocalStateLocation", "readUserLocalState", "publishUserLocalStateAtomically",
+      "withPhysicalStateLock", "confirmUserLocalStateDurability",
+    ]);
+    if (!physicalState.ok) return failure("worker_result_host_unverified");
+    const { confirmUserLocalStateDurability, ...statePorts } = physicalState.values;
+    userLocalState = Object.freeze(statePorts);
+    resultStatePorts = Object.freeze({ ...statePorts, confirmUserLocalStateDurability });
+  }
+
   const providerOptions = {
     cwd: input.values.repositoryCwd,
-    userLocalState: input.values.userLocalState,
+    userLocalState,
   };
   if (Object.hasOwn(input.values, "stateRootOptions")) {
     providerOptions.stateRootOptions = input.values.stateRootOptions;
@@ -98,7 +115,7 @@ export function createPendingHandoffF4NativeRuntimeComposition(options) {
   if (!initialPhysicalBinding.ok) return failure("manual_resume_worktree_binding_unverified");
   const checkpointStore = createF4ScopePreservationCheckpointUserLocalStore({
     cwd: input.values.repositoryCwd,
-    userLocalState: input.values.userLocalState,
+    userLocalState,
     stateRootOptions: recordProvider.stateRootOptions,
     expectedPhysicalStateBinding: initialPhysicalBinding.value,
     verifyStateRootBinding: input.values.verifyScopeCheckpointStateRootBinding
@@ -128,11 +145,43 @@ export function createPendingHandoffF4NativeRuntimeComposition(options) {
   const manualResume = createPendingHandoffManualResumeRuntimeComposition(compositionOptions);
   if (!manualResume.ok) return manualResume;
 
+  const resultFacade = bindWorkerResultHost(input.values, recordProvider, initialPhysicalBinding.value, attemptStoreResult.value, resultStatePorts);
+  if (!resultFacade.ok) return resultFacade;
   return success(Object.freeze({
+    ...resultFacade.value,
     executeManualResume: manualResume.value.executeManualResume,
     readScopeCheckpoint: request => readScopeCheckpoint(checkpointStore.value, request),
     reconcileScopeCheckpoint: request => reconcileScopeCheckpoint(checkpointStore.value, request),
   }));
+}
+
+function bindWorkerResultHost(options, recordProvider, physicalBinding, attemptStore, statePorts) {
+  if (!Object.hasOwn(options, "workerResultHost")) return success({});
+  const host = inspectExactDataObject(options.workerResultHost, [
+    "expectedBinding", "verifyResult", "reconcileInventory",
+  ]);
+  const expected = host.ok && inspectExactDataObject(host.values.expectedBinding, [
+    "contract", "state_root_identity", "repository_instance_id", "physical_worktree_id",
+  ]);
+  if (!expected.ok || !sameF4PhysicalStateBinding(expected.values, physicalBinding)
+    || typeof host.values.verifyResult !== "function" || utilTypes.isProxy(host.values.verifyResult)
+    || typeof statePorts.confirmUserLocalStateDurability !== "function"
+    || typeof host.values.reconcileInventory !== "function" || utilTypes.isProxy(host.values.reconcileInventory)) {
+    return failure("worker_result_host_unverified");
+  }
+  const attempt = createPendingHandoffManualResumeAttemptOutcomeService({ store: attemptStore });
+  if (!attempt.ok) return attempt;
+  return success({
+    receiveWorkerResult: createF4ManagedWorkerResultHandler({
+      cwd: options.repositoryCwd,
+      userLocalState: statePorts,
+      stateRootOptions: recordProvider.stateRootOptions,
+      expectedBinding: physicalBinding,
+      attemptOutcome: attempt.value,
+      verifyResult: host.values.verifyResult,
+      reconcileInventory: host.values.reconcileInventory,
+    }),
+  });
 }
 
 async function readScopeCheckpoint(checkpointStore, request) {
