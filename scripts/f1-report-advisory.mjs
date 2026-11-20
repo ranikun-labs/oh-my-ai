@@ -982,6 +982,20 @@ function hasUsableContent(body) {
   });
 }
 
+function hasHttpUrl(text) {
+  for (const [candidate, authorityAndPath] of text.matchAll(/(?<![\p{L}\p{N}+.\/\\-])https?:\/\/([^\s<>"'\x60]+)/giu)) {
+    // Consume the full token before checking for a missing authority or a repeated scheme.
+    if (/^(?:[/?#\\]|https?:\/\/)/i.test(authorityAndPath)) continue;
+    try {
+      const url = new URL(candidate.replace(/[),.;!*_~]+$/u, ""));
+      if (/[a-z0-9]|^\[/i.test(url.hostname)) return true;
+    } catch {
+      // Continue looking for another reference after a malformed URL.
+    }
+  }
+  return false;
+}
+
 function parseStatusLines(lines) {
   const found = new Map();
   const canonicalLabels = new Map(STATUS_LABELS.map((label) => [label.toLowerCase(), label]));
@@ -1068,13 +1082,13 @@ function validateF1Report(markdown, options = {}) {
     if (label === "Native Test" && status === "PASS" && !/(?:\bnode\b|\bnpm\b|\bmake\b|\bpytest\b|\bgo test\b|\bcargo test\b|\b\d+\/\d+\b)/i.test(detail)) {
       errors.push("Native Test PASS requires a command or a passed/total count");
     }
-    if (label === "CI" && status === "PASS" && !/https?:\/\//i.test(detail)) {
+    if (label === "CI" && status === "PASS" && !hasHttpUrl(detail)) {
       errors.push("CI PASS requires a run URL");
     }
     if (label === "Owner Gate" && status === "APPROVED" && detail.length === 0) {
       errors.push("Owner Gate APPROVED requires an approval evidence reference");
     }
-    if (label === "Owner Gate" && status === "APPROVED" && !/(?:https?:\/\/|\bRPL-\d+\b|comment\s*#\d+)/i.test(detail)) {
+    if (label === "Owner Gate" && status === "APPROVED" && !hasHttpUrl(detail) && !/(?:\bRPL-\d+\b|comment\s*#\d+)/i.test(detail)) {
       errors.push("Owner Gate APPROVED requires a linked issue, comment, or approval URL");
     }
     if (label === "Independent Review" && status === "PASS") {
@@ -1089,14 +1103,14 @@ function validateF1Report(markdown, options = {}) {
       if (!/runtime\s*[:=]\s*\S+/i.test(detail)) {
         errors.push("Runtime E2E PASS requires the runtime name");
       }
-      if (!/(?:https?:\/\/|\b[a-f0-9]{7,40}\b)/i.test(detail)) {
+      if (!hasHttpUrl(detail) && !/\b[a-f0-9]{7,40}\b/i.test(detail)) {
         errors.push("Runtime E2E PASS requires an evidence URL or SHA");
       }
     }
   }
 
   const evidence = sections.get("근거") ?? "";
-  if (hasUsableContent(evidence) && !/(?:https?:\/\/|\b[a-f0-9]{7,40}\b)/i.test(evidence)) {
+  if (hasUsableContent(evidence) && !hasHttpUrl(evidence) && !/\b[a-f0-9]{7,40}\b/i.test(evidence)) {
     errors.push("근거 must include a URL or a source SHA");
   }
 

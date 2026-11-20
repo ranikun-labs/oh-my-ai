@@ -565,6 +565,42 @@ expectInvalid("runtime not run without reason", validReport.replace("Runtime E2E
 expectInvalid("runtime pass without runtime evidence", validReport.replace("Runtime E2E: NOT_RUN — 자동 Skill 호출은 시험하지 않았다.", "Runtime E2E: PASS — 완료"), "Runtime E2E PASS requires the runtime name");
 expectInvalid("owner approval unsupported", validReport.replace("Owner Gate: PENDING — Source Merge 승인은 별도다.", "Owner Gate: PASS — owner said yes"), "unsupported status");
 expectInvalid("approval without reference", validReport.replace("Owner Gate: PENDING — Source Merge 승인은 별도다.", "Owner Gate: APPROVED — owner approved"), "linked issue, comment, or approval URL");
+const urlEvidenceCases = [
+  ["CI PASS", /CI: NOT_RUN[^\n]*/, "CI: PASS — ", "CI PASS requires a run URL"],
+  ["Runtime E2E PASS", /Runtime E2E: NOT_RUN[^\n]*/, "Runtime E2E: PASS — runtime=Codex ", "requires an evidence URL or SHA", ["deadbeef"]],
+  ["Owner Gate APPROVED", /Owner Gate: PENDING[^\n]*/, "Owner Gate: APPROVED — ", "requires a linked issue, comment, or approval URL", ["RPL-119", "comment #42"]],
+  ["source evidence", /Base: [a-f0-9]{40}/, "Base: ", "must include a URL or a source SHA", ["deadbeef"]],
+];
+const malformedUrls = [
+  "https://",
+  "[run](https://)",
+  "http:///run",
+  "https://?run=1",
+  "https://ci.example.invalid:bad/run",
+  "https://https://ci.example.invalid/run",
+  "http:///https://ci.example.invalid/run",
+  "https:/https://runs.example.org",
+  "https:\\https://runs.example.org",
+];
+const validUrls = [
+  "https://ci.example.invalid/run?job=1&attempt=2#result",
+  "[run](http://ci.example.invalid:8080/run)",
+  "<https://[::1]:8080/run>",
+  "https://https://ci.example.invalid/bad https://ci.example.invalid/run",
+];
+let urlEvidenceFixtureCount = 0;
+for (const [label, original, prefix, expectedError, otherReferences = []] of urlEvidenceCases) {
+  for (const url of malformedUrls) {
+    expectInvalid(`${label} rejects malformed URL ${url}`, validReport.replace(original, prefix + url), expectedError);
+    urlEvidenceFixtureCount++;
+  }
+  for (const reference of [...validUrls, ...otherReferences]) {
+    const result = validateF1Report(validReport.replace(original, prefix + reference));
+    assert.equal(result.valid, true, `${label} accepts ${reference}: ${result.errors.join("; ")}`);
+    urlEvidenceFixtureCount++;
+  }
+}
+console.log(`f1 URL evidence fixtures passed: ${urlEvidenceFixtureCount}/${urlEvidenceFixtureCount}`);
 const ownerGateLine = "- Owner Gate: PENDING — Source Merge 승인은 별도다.";
 const visibleConflictingGateLines = [
   "- owner gate: BLOCKED — another decision",
