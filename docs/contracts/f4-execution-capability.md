@@ -1,18 +1,18 @@
 # F4 Execution Capability Candidate
 
-> Candidate contract for RPL-120. This document and its fixtures describe a
-> deterministic evaluator only. They do not probe a host, create a Worker,
-> dispatch a Runner, resume a Task, or prove Runtime E2E.
+> Candidate contract for RPL-120. It covers deterministic capability evaluation,
+> the Manual Resume composition, and its local Attempt store. Production use
+> requires the [Host and Owner ports](f4-native-host-binding-owner-resolver.md)
+> and evidence from an approved Task.
 
-The integration candidate is based on public master
+The initial evaluator candidate was based on public master
 `6d2a93893c0c7a40e1d0b99b691a8f950aa17969`.
 
 ## Boundary
 
 The evaluator consumes task requirements and observations from a trusted
-environment adapter. No such adapter is implemented here. Fixture-provided
-observations and verifier callbacks are synthetic and cannot be promoted to
-environment or Runtime evidence.
+environment adapter provided by its caller. Fixture observations and verifier
+callbacks exercise the evaluator with synthetic inputs.
 
 The existing F4 Skill remains an explicit operational playbook. Reading or
 invoking it does not grant approval or create a dispatcher. The existing
@@ -179,17 +179,15 @@ executor is invoked, a thrown, malformed, or non-accepted result is reported as
 `manual_resume_action_outcome_unknown`, except for the adapter's explicit
 unsupported-runtime response. A persisted active Claim blocks a sequential
 restart from acquiring dispatch authority again, including after lease expiry
-until explicit clearing occurs. The current Claim schema has no durable
-resume-outcome tombstone. Both `recoverClaimLease` and
-`releaseClaimBeforeDelivery` can clear a Claim back to pending without knowing
-whether Manual Resume dispatched or the Runtime accepted the action. A later
-call with the new revision could then acquire fresh dispatch authority for the
-same UNKNOWN outcome. The Manual Resume composition neither exposes nor calls
-these clearing operations, and callers must not clear an UNKNOWN Runtime
-outcome. That caller rule is not enforced by the shared Claim service, so M1
-remains open for explicit Claim clearing followed by redispatch. Safe
-post-clear recovery, authoritative outcome reconciliation, and result/checkpoint
-CAS remain blocked on an owned durable Attempt/Outcome contract.
+until explicit clearing occurs. `recoverClaimLease` and
+`releaseClaimBeforeDelivery` can clear a Claim back to pending independently of
+the Runtime outcome. These operations are outside the Manual Resume
+composition. Callers must preserve the Claim while the Runtime outcome is
+UNKNOWN. The shared Claim service does not enforce this requirement. When the
+Attempt record remains in the same physical store, the Manual Resume composition
+rejects a new Attempt for that Candidate/action even if the Claim is cleared and
+the Candidate revision changes. UNKNOWN stays blocked pending authoritative
+outcome reconciliation and an approved Result/Checkpoint contract.
 
 ## Checkpoint evidence reuse
 
@@ -267,10 +265,11 @@ different repository even when SHA, tree, and test plan match.
 - RPL-116's real-dispatch trust boundary must remain in force for Writer or
   Reviewer creation. Requested and effective model settings remain distinct;
   unknown settings do not become Reviewer PASS.
-- Runtime dispatch, production checkpoint persistence, actual resume,
-  Writer-to-Reviewer E2E, and 30–60 minute unattended execution remain
-  NOT_IMPLEMENTED and NOT_RUN until a supported, controllable Runtime Adapter
-  exists.
+- The public tree includes the Codex Manual Resume adapter and the Native
+  Composition library. The public Native Composition call site is a fixture.
+  Production caller wiring is `UNKNOWN`. Production Task Resume,
+  Writer-to-Reviewer E2E, and 30–60 minute unattended execution are `NOT_RUN`.
+  Runtime Result/Checkpoint persistence requires the Owner decisions below.
 - Owner approval, Jira status changes, PR creation, Source Merge, global
   installation, deployment, and private policy changes are outside this
   candidate.
@@ -317,16 +316,13 @@ atomicRecordProvider = {
 }
 ```
 
-`atomicRecordProvider` is the RPL-120 side of the adapter contract; this does
-not claim that RPL-95 exports this API. A `null` expected revision must mean
-atomic create-if-absent. Numeric revisions must compare and replace one record
-atomically across processes. The provider owns user-local root resolution,
-physical locking, durable publication, and unavailable-root errors. The current
-public Pending Handoff Store only CASes its signed candidate/Claim/Delivery
-record and cannot store arbitrary Attempt records. Jira RPL-95 is still in
-progress; no canonical RPL-95 source branch or provider API is published on
-the verified public base. The fixtures use a test-only generic provider and do
-not stand in for that production integration.
+`atomicRecordProvider` is the RPL-120 side of the adapter contract. A `null`
+expected revision means atomic create-if-absent. Numeric revisions compare and
+replace one record atomically across processes. The RPL-120 user-local provider
+uses RPL-95's `resolveUserLocalStateLocation`, `readUserLocalState`,
+`publishUserLocalStateAtomically`, and `withPhysicalStateLock` exports. The
+Pending Handoff Store handles signed Candidate, Claim, and Delivery records.
+The Native Composition wires the separate Attempt provider to RPL-95.
 
 The domain service writes one active attempt record with an aggregate revision
 and these transitions:
@@ -389,11 +385,13 @@ refuses a second Claim/Runtime call. They do not exercise a Result or
 Checkpoint Port, checkpoint-only retry, or production recovery. The separate
 Attempt service contention fixtures use a test provider. The dedicated
 `test-f4-rpl95-attempt-store-integration.mjs` additionally checks the
-RPL-120-specific provider against the exact RPL-95 PR #92 source and races two
-OS processes after both observed an absent record. It proves that one Attempt
-reaches `dispatch_unknown` and that a later Attempt is blocked after the writer
-process exits. This is cross-process Attempt-store evidence, not a real Host,
-Actor, Runtime dispatch, Result/Checkpoint, or Resume E2E.
+RPL-120-specific provider and races two OS processes after both observed an
+absent record. The Node 22 CI workflow selects the integrated RPL-95 module
+from the tested checkout when present and falls back to the pinned PR #92
+module otherwise. The test proves that one Attempt reaches `dispatch_unknown`
+and that a later Attempt is blocked after the writer process exits. This is
+cross-process Attempt-store evidence, not a real Host, Actor, Runtime dispatch,
+Result/Checkpoint, or Resume E2E.
 
 ### Owner Decision required — Result and Checkpoint contract
 
@@ -417,14 +415,15 @@ durability evidence; a failed or ambiguous write remains blocked.
 `resume_accepted` cannot be promoted into a completed Result or used to infer a
 Checkpoint.
 
-The RPL-95 physical-state source is available on PR #92 and the RPL-120
-Attempt provider consumes its published resolver, atomic publisher, and
-physical lock through an exact-source integration test. PR #92 is still a
-separate Draft and is not part of this branch's base. The RPL-94 Association
-API, RPL-93 M5 Task Context/Fresh Observation/Resume entrypoint, and supported
-Runtime Result provider are not available to this integration. RPL-120 must
-consume those published contracts; it must not write parallel RPL-95 state or
-redefine RPL-94 Association lifecycle.
+The public tree includes the [RPL-95 physical-state source](../../scripts/lib/user-local-state.mjs)
+and the [RPL-120 Native Composition](../../scripts/lib/f4-native-runtime-composition.mjs).
+The composition provides Host-gated Scope Checkpoint read and CAS. Linking an
+Attempt's Runtime Result to that checkpoint still requires the Result/Checkpoint
+contract above. The RPL-94 Association API, RPL-93 M5 Task Context/Fresh
+Observation/Resume entrypoint, and supported Runtime Result provider remain
+unwired in this integration. RPL-120 must consume those published contracts;
+it must not write parallel RPL-95 state or redefine the RPL-94 Association
+lifecycle.
 
 M1's durable Attempt-store slice now has exact-source, cross-process evidence:
 after the two-process CAS race, one Attempt remains `dispatch_unknown` and a
