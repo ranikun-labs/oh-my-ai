@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { buildPortfolioBriefingSnapshot } from "./portfolio-briefing-snapshot.mjs";
+import { sourceTimestampOrNull } from "./source-observation-timestamp.mjs";
 
 const DEFAULT_JIRA_BASE_URL = "https://ranikunlabs.atlassian.net";
 
@@ -12,13 +13,14 @@ const DEFAULT_JIRA_BASE_URL = "https://ranikunlabs.atlassian.net";
  * Never infer scope from a user prompt or synthesize per-row identities.
  * Each result entry must carry checked_at from its connector-call observation;
  * captured_at is never substituted because cached results could look fresh.
+ * A source update used as a revision must precede or coincide with both times.
  */
 export function buildPortfolioBriefingFromMcpResults(input = {}) {
   const capturedAt = input.captured_at;
   const jiraBaseUrl = trimTrailingSlash(nonEmptyString(input.jira_base_url) || DEFAULT_JIRA_BASE_URL);
   const sourceSnapshots = [
-    ...normalizeJiraResults(input.jira_results, jiraBaseUrl),
-    ...normalizeGithubResults(input.github_results),
+    ...normalizeJiraResults(input.jira_results, jiraBaseUrl, capturedAt),
+    ...normalizeGithubResults(input.github_results, capturedAt),
     ...normalizeConfluenceResults(input.confluence_results),
   ];
 
@@ -31,12 +33,13 @@ export function buildPortfolioBriefingFromMcpResults(input = {}) {
   });
 }
 
-function normalizeJiraResults(entries, baseUrl) {
+function normalizeJiraResults(entries, baseUrl, capturedAt) {
   if (!Array.isArray(entries)) return [];
   const snapshots = [];
   for (let index = 0; index < entries.length; index += 1) {
     const entry = entries[index] || {};
     const result = entry.result;
+    const checkedAt = nonEmptyString(entry.checked_at);
     const nodes = result?.structuredContent?.issues?.nodes;
     if (result?.isError || !Array.isArray(nodes) || nodes.length === 0) {
       const requestedKey = validIssueKey(entry.requested_issue_key) || `UNKNOWN-${index + 1}`;
@@ -45,7 +48,7 @@ function normalizeJiraResults(entries, baseUrl) {
         scope: `issue:${requestedKey}`,
         uri: requestedKey.startsWith("UNKNOWN-") ? baseUrl : `${baseUrl}/browse/${requestedKey}`,
         revision: null,
-        checked_at: nonEmptyString(entry.checked_at),
+        checked_at: checkedAt,
         status: "unavailable",
         issues: [],
         pull_requests: [],
@@ -60,14 +63,14 @@ function normalizeJiraResults(entries, baseUrl) {
       // A response key is not proof of which issue the host requested.
       const identityMatches = requestedKey !== null && returnedKey !== null && requestedKey === returnedKey;
       const key = requestedKey;
-      const updated = nonEmptyString(fields.updated);
+      const updated = observedSourceTimestamp(fields.updated, checkedAt, capturedAt);
       const id = nonEmptyString(node?.id);
       snapshots.push({
         name: "jira",
         scope: key ? `issue:${key}` : `query:${index + 1}`,
         uri: key ? `${baseUrl}/browse/${key}` : baseUrl,
         revision: identityMatches && id && updated ? `jira-issue:${id}:updated:${updated}` : null,
-        checked_at: nonEmptyString(entry.checked_at),
+        checked_at: checkedAt,
         status: identityMatches ? "available" : "unavailable",
         // Explicit allowlist: omit assignee, reporter, email, description, and comments.
         issues: identityMatches ? [{
@@ -83,7 +86,7 @@ function normalizeJiraResults(entries, baseUrl) {
   return snapshots;
 }
 
-function normalizeGithubResults(entries) {
+function normalizeGithubResults(entries, capturedAt) {
   if (!Array.isArray(entries)) return [];
   return entries.map((entry, index) => {
     const result = entry?.result;
@@ -112,7 +115,8 @@ function normalizeGithubResults(entries) {
     const titleKeys = [...new Set(extractIssueKeys(nonEmptyString(info.title) || ""))];
     const primaryKey = extractPrimaryJiraKey(nonEmptyString(info.body) || "");
     const jiraKeys = primaryKey ? [primaryKey] : titleKeys.length === 1 ? titleKeys : [];
-    const updatedAt = nonEmptyString(info.updated_at);
+    const checkedAt = nonEmptyString(entry?.checked_at);
+    const updatedAt = observedSourceTimestamp(info.updated_at, checkedAt, capturedAt);
     let mergeState = "UNKNOWN";
     if (info.merged === true) {
       mergeState = "MERGED";
@@ -129,7 +133,7 @@ function normalizeGithubResults(entries) {
         : `pull-request:${index + 1}`,
       uri: url || "UNKNOWN",
       revision: identityAvailable && headSha && updatedAt ? `github-head:${headSha}:updated:${updatedAt}` : null,
-      checked_at: nonEmptyString(entry?.checked_at),
+      checked_at: checkedAt,
       status: identityAvailable ? "available" : "unavailable",
       issues: [],
       pull_requests: identityAvailable ? [{
@@ -146,6 +150,28 @@ function normalizeGithubResults(entries) {
       }] : [],
     };
   });
+}
+
+function observedSourceTimestamp(value, checkedAt, capturedAt) {
+  const updatedAt = sourceTimestampOrNull(nonEmptyString(value));
+  return updatedAt && timestampOnOrBefore(updatedAt, checkedAt) && timestampOnOrBefore(updatedAt, capturedAt)
+    ? updatedAt : null;
+}
+
+function timestampOnOrBefore(timestamp, limit) {
+  // The snapshot accepts Date.parse-compatible host times.
+  const limitMs = typeof limit === "string" ? Date.parse(limit) : NaN;
+  if (!Number.isFinite(limitMs)) return false;
+  const timestampMs = Date.parse(timestamp);
+  // Date.parse truncates ISO clock fractions. Compare any remaining digits
+  // when both times fall within the same millisecond.
+  return timestampMs < limitMs
+    || (timestampMs === limitMs && submillisecondDigits(timestamp) <= submillisecondDigits(limit));
+}
+
+function submillisecondDigits(timestamp) {
+  const isoClock = /^(?:\d{4}|[+-]\d{6})-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}\.\d{3}(\d+)(?:Z|[+-]\d{2}:?\d{2})?$/i;
+  return isoClock.exec(timestamp.trim())?.[1].replace(/0+$/, "") ?? "";
 }
 
 function normalizeConfluenceResults(entries) {

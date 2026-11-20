@@ -142,6 +142,114 @@ test("accepts fetch_pr nested envelope with exact requested identity", () => {
   assert.equal(result.pull_requests[0].review_state, "NOT_OBSERVED");
 });
 
+test("keeps only valid source timestamps in Jira and GitHub revisions", () => {
+  for (const [timestamp, valid] of [
+    ["2024-02-29T10:35:00Z", true],
+    ["2026-10-30T10:35:00.123+0900", true],
+    ["2026-10-30T06:35:00-04:00", true],
+    [undefined, false],
+    [0, false],
+    ["not-a-date", false],
+    ["2026-10-30", false],
+    ["2026-10-30T10:35:00", false],
+    ["2026-02-29T10:35:00Z", false],
+    ["2026-10-30T24:00:00Z", false],
+    ["2026-10-30T10:35:00+24:00", false],
+  ]) {
+    for (const makeGithubResult of [githubResult, wrappedGithubResult]) {
+      const result = buildPortfolioBriefingFromMcpResults({
+        captured_at: capturedAt,
+        jira_results: [jiraResult("RPL-119", "Report", "할 일", timestamp ?? null)],
+        github_results: [makeGithubResult(88, {
+          state: "closed",
+          merged: false,
+          updated_at: timestamp,
+        })],
+        confluence_results: [confluenceResult()],
+      });
+      const jira = result.sources.find(source => source.name === "jira");
+      const github = result.sources.find(source => source.name === "github");
+      assert.equal(jira.revision, valid ? `jira-issue:id-RPL-119:updated:${timestamp}` : "UNKNOWN");
+      assert.equal(github.revision, valid ? `github-head:${headShaFor(88)}:updated:${timestamp}` : "UNKNOWN");
+      for (const source of [jira, github]) {
+        assert.equal(source.quality, valid ? "CURRENT" : "UNKNOWN");
+        assert.deepEqual(source.reasons, valid ? [] : ["revision_unknown"]);
+        assert.equal(source.verification_status, "UNVERIFIED");
+      }
+      assert.equal(result.pull_requests[0].merge_state, "CLOSED_UNMERGED");
+      assert.equal(result.issues[0].jira_status, "할 일");
+      assert.equal(result.issues[0].execution.state, "UNKNOWN");
+    }
+  }
+});
+
+test("binds Jira and GitHub revision times to observation and capture", () => {
+  const checkedAt = "2026-10-30T10:38:00Z";
+  const commentedObservation = "Fri, 30 Oct 2026 10:38:00 GMT (noise :00.0009)";
+  const commentedCapture = "(noise :00.0009) Fri, 30 Oct 2026 10:40:00 GMT";
+  for (const [updated, observed, expected, snapshotTime = capturedAt] of [
+    ["2026-10-30T10:37:59.999Z", checkedAt, "CURRENT"],
+    ["2026-10-30T19:38:00+0900", checkedAt, "CURRENT"],
+    ["2026-10-30T06:38:00-04:00", checkedAt, "CURRENT"],
+    ["2026-10-30T10:38:00Z", "2026-10-30T10:39Z", "CURRENT"],
+    ["2026-10-30T10:38:00Z", "2026-10-30t10:38:00z", "CURRENT", "2026-10-30t10:40:00z"],
+    ["2026-10-30T10:38:00Z", "Fri, 30 Oct 2026 10:38:00 GMT", "CURRENT"],
+    ["2026-10-30T10:38:00Z", commentedObservation, "CURRENT"],
+    ["2026-10-30T10:38:00.0001Z", commentedObservation, "UNKNOWN"],
+    ["2026-10-30T10:40:00.0001Z", "2026-10-30T10:41:00Z", "UNKNOWN", commentedCapture],
+    ["2026-10-30T06:38:00.000100-04:00", "2026-10-30T10:38:00.0001Z", "CURRENT"],
+    ["2026-10-30T06:38:00.000100-04:00", "2026-10-30t19:38:00.0001+09:00", "CURRENT"],
+    ["2026-10-30T10:38:00.0001Z", checkedAt, "UNKNOWN"],
+    ["2026-10-30T19:38:00.001+0900", checkedAt, "UNKNOWN"],
+    ["2026-10-30T10:40:00.001Z", "2026-10-30T10:41:00Z", "UNKNOWN"],
+    ["2026-10-30T10:37:00Z", undefined, "UNKNOWN"],
+    ["2026-10-30T10:37:00Z", "not-a-time", "UNKNOWN"],
+  ]) {
+    for (const makeGithubResult of [githubResult, wrappedGithubResult]) {
+      const github = makeGithubResult(88, { updated_at: updated });
+      const jira = jiraResult("RPL-119", "Report", "할 일", updated);
+      const result = buildPortfolioBriefingFromMcpResults({
+        captured_at: snapshotTime,
+        jira_results: [{ ...jira, checked_at: observed }],
+        github_results: [{ ...github, checked_at: observed }],
+        confluence_results: [confluenceResult()],
+      });
+      for (const source of result.sources.filter(source => source.name !== "confluence")) {
+        assert.equal(source.quality, expected, `${source.name}: ${updated} at ${observed}`);
+        if (expected === "CURRENT") {
+          assert.ok(source.revision.endsWith(`:updated:${updated}`));
+        } else {
+          assert.equal(source.revision, "UNKNOWN");
+        }
+      }
+      assert.equal(result.pull_requests[0].merge_state, "DRAFT_OPEN_UNMERGED");
+      assert.equal(result.issues[0].jira_status, "할 일");
+      assert.equal(result.issues[0].execution.state, "UNKNOWN");
+    }
+  }
+});
+
+test("future revisions cannot create false drift and real revision conflicts still surface", () => {
+  const first = "2026-10-30T10:35:00Z";
+  for (const [second, expected] of [
+    ["2026-10-30T10:41:00Z", ["CURRENT", "UNKNOWN"]],
+    ["2026-10-30T10:36:00Z", ["DRIFT", "DRIFT"]],
+  ]) {
+    const result = buildPortfolioBriefingFromMcpResults({
+      captured_at: capturedAt,
+      jira_results: [first, second].map(updated => jiraResult("RPL-119", "Report", "할 일", updated)),
+      github_results: [
+        githubResult(88, { updated_at: first }),
+        wrappedGithubResult(88, { updated_at: second }),
+      ],
+      confluence_results: [confluenceResult()],
+    });
+    for (const name of ["jira", "github"]) {
+      assert.deepEqual(result.sources.filter(source => source.name === name).map(source => source.quality), expected);
+    }
+  }
+});
+
 for (const [name, change] of [
   ["response number", entry => { entry.result.structuredContent.pull_request.number = 89; }],
   ["URL number", entry => { entry.result.structuredContent.pull_request.url = "https://github.com/ranikun-labs/oh-my-ai/pull/89"; }],
@@ -531,8 +639,8 @@ test("requires the connector observation time instead of treating capture time a
 });
 
 test("propagates an old connector observation time as STALE", () => {
-  const jira = jiraResult("RPL-119", "Report", "할 일");
-  jira.checked_at = "2026-10-30T08:00:00.000Z";
+  const jira = jiraResult("RPL-119", "Report", "할 일", "2026-10-30T07:55:00Z");
+  jira.checked_at = "2026-10-30T08:00:00z";
   const result = buildPortfolioBriefingFromMcpResults({
     captured_at: capturedAt,
     jira_results: [jira],

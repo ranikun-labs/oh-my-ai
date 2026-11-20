@@ -10,6 +10,7 @@ cp "$repo_root/Makefile" "$tmpdir/Makefile"
 cp "$repo_root/scripts/test-portfolio-briefing-mcp-adapter.mjs" "$tmpdir/scripts/"
 cp "$repo_root/scripts/lib/portfolio-briefing-mcp-adapter.mjs" "$tmpdir/scripts/lib/"
 cp "$repo_root/scripts/lib/portfolio-briefing-snapshot.mjs" "$tmpdir/scripts/lib/"
+cp "$repo_root/scripts/lib/source-observation-timestamp.mjs" "$tmpdir/scripts/lib/"
 printf '%s\n' 'same-name file must not suppress the Make recipe' > "$tmpdir/test-portfolio-briefing-mcp-adapter-fixtures"
 
 if ! output="$(make -C "$tmpdir" test-portfolio-briefing-mcp-adapter-fixtures 2>&1)"; then
