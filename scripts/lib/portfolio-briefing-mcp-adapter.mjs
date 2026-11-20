@@ -118,9 +118,10 @@ function normalizeGithubResults(entries, capturedAt) {
     const checkedAt = nonEmptyString(entry?.checked_at);
     const updatedAt = observedSourceTimestamp(info.updated_at, checkedAt, capturedAt);
     let mergeState = "UNKNOWN";
-    if (info.merged === true) {
+    if (info.state === "closed" && info.merged === true && info.draft !== true
+      && mergeTimestampsAreConsistent(info, checkedAt, capturedAt)) {
       mergeState = "MERGED";
-    } else if (info.state === "open") {
+    } else if (info.state === "open" && (info.merged === false || info.merged == null) && info.merged_at == null) {
       mergeState = info.draft === true ? "DRAFT_OPEN_UNMERGED" : "OPEN_UNMERGED";
     } else if (info.state === "closed" && info.merged === false && info.merged_at == null) {
       mergeState = "CLOSED_UNMERGED";
@@ -150,6 +151,19 @@ function normalizeGithubResults(entries, capturedAt) {
       }] : [],
     };
   });
+}
+
+function mergeTimestampsAreConsistent(info, checkedAt, capturedAt) {
+  const mergedAt = observedSourceTimestamp(info.merged_at, checkedAt, capturedAt);
+  // Some connector responses omit merged_at. An explicit null contradicts merged: true.
+  if (info.merged_at !== undefined && !mergedAt) return false;
+
+  const createdAt = sourceTimestampOrNull(nonEmptyString(info.created_at));
+  if (!createdAt) return true;
+  const closedAt = sourceTimestampOrNull(nonEmptyString(info.closed_at));
+  // The snapshot does not identify which close event preceded a reopen.
+  return (!mergedAt || timestampOnOrBefore(createdAt, mergedAt))
+    && (!closedAt || timestampOnOrBefore(createdAt, closedAt));
 }
 
 function observedSourceTimestamp(value, checkedAt, capturedAt) {
