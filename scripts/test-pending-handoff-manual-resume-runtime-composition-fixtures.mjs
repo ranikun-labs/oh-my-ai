@@ -451,7 +451,7 @@ function userLocalStateFixture(records = new Map()) {
   };
 }
 
-function seedDefaultScopeCheckpoint(userLocalState, cwd, stateRootOptions) {
+function seedDefaultScopeCheckpoint(userLocalState, cwd, stateRootOptions, stopReason = null) {
   const projection = createF4ScopePreservingCheckpoint({
     approvedScope: FIXTURE_SCOPE,
     currentCheckpoint: null,
@@ -470,7 +470,7 @@ function seedDefaultScopeCheckpoint(userLocalState, cwd, stateRootOptions) {
     },
     recentExecution: null,
     nextReadyId: "RPL-120",
-    stopReason: null,
+    stopReason,
   });
   assert.equal(projection.ok, true, JSON.stringify(projection));
   const key = createHash("sha256").update(FIXTURE_SCOPE.objectiveId, "utf8").digest("hex");
@@ -586,7 +586,9 @@ function build(options = {}) {
   if (options.nativeComposition === true) {
     userLocalState = options.userLocalState ?? userLocalStateFixture();
     if (options.seedScopeCheckpoint !== false) {
-      seedDefaultScopeCheckpoint(userLocalState, options.repositoryCwd ?? "/repo", options.stateRootOptions);
+      seedDefaultScopeCheckpoint(
+        userLocalState, options.repositoryCwd ?? "/repo", options.stateRootOptions, options.scopeStopReason,
+      );
     }
     built = f4NativeCompositionNamespace.createPendingHandoffF4NativeRuntimeComposition({
       store,
@@ -1544,9 +1546,14 @@ await group("native RPL-95 and RPL-118 composition", async () => {
     const binding = f4PhysicalStateBindingFromLocation(location).value;
     const proof = {};
     let reconciliations = 0;
+    let sourceRevision = "jira-snapshot/f4-fixture-1";
     const built = build({
       nativeComposition: true,
       userLocalState,
+      resolveApprovedWorkstreamForManualResume: () => ({
+        ...fixtureApprovedWorkstream(),
+        inventorySourceRevision: sourceRevision,
+      }),
       workerResultHost: {
         expectedBinding: binding,
         verifyResult: observation => observation === proof ? {
@@ -1591,6 +1598,15 @@ await group("native RPL-95 and RPL-118 composition", async () => {
       ok: true, resultRecorded: true, reconciliation: "already_applied",
     });
     assert.equal(reconciliations, 2);
+    // A fresh inventory observation must still respect the persisted DONE.
+    sourceRevision = "jira-snapshot/canonical-result";
+    const callsBeforeReplay = built.calls.length;
+    assert.deepEqual(await built.composition.executeManualResume(request()), {
+      ok: false, reason: "manual_resume_capability_preflight_blocked",
+    });
+    const replayCalls = built.calls.slice(callsBeforeReplay);
+    assert.equal(replayCalls.some(([name]) => name === "acquireClaim"), false);
+    assert.equal(replayCalls.some(([name]) => name === "codex.resolveAndResume"), false);
     assert.equal(built.calls.filter(([name]) => name === "codex.resolveAndResume").length, 1);
   });
 
@@ -1954,6 +1970,18 @@ await group("Makefile composition wiring", async () => {
 });
 
 await group("F4 scope checkpoint composition", async () => {
+  for (const stopReason of ["OWNER_DECISION_REQUIRED", "REVISION_CONFLICT", "SCOPE_CHANGE_REQUIRES_REVIEW"]) {
+    await test(`an explicit ${stopReason} blocks Resume even when the workstream is READY`, async () => {
+      const built = build({ nativeComposition: true, scopeStopReason: stopReason });
+      const result = await built.composition.executeManualResume(request());
+      assert.deepEqual(result, { ok: false, reason: "manual_resume_capability_preflight_blocked" });
+      assert.equal(built.userLocalState.stats.readPaths.length, 1);
+      assert.match(built.userLocalState.stats.readPaths[0], /^f4\/scope-preservation-checkpoints\//);
+      assert.equal(built.calls.some(([name]) => name === "acquireClaim"), false);
+      assert.equal(built.calls.some(([name]) => name === "codex.resolveAndResume"), false);
+    });
+  }
+
   await test("approved Scope Revision must match the durable checkpoint before Claim", async () => {
     const built = build({
       nativeComposition: true,
