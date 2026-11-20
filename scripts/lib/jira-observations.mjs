@@ -1,22 +1,25 @@
 // Transform caller-supplied Jira observations. This module never fetches or mutates Jira.
-const JIRA_TIMESTAMP = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})$/;
+const JIRA_TIMESTAMP = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d+))?(Z|[+-]\d{2}:?\d{2})$/;
 
 function jiraTimestamp(value) {
   if (typeof value !== 'string' || value.length > 1000) return null;
-  const clock = JIRA_TIMESTAMP.exec(value)?.[1];
-  if (!clock || !Number.isFinite(Date.parse(value))) return null;
+  const match = JIRA_TIMESTAMP.exec(value);
+  if (!match) return null;
+  const [, clock, fraction = '', offset] = match;
+  const wholeSecond = Date.parse(clock + offset);
+  if (!Number.isFinite(wholeSecond)) return null;
 
   // Date.parse normalizes impossible dates. Round-trip the local calendar and clock
   // in UTC, separately from the original offset and fractional seconds.
   const utcClock = new Date(`${clock}Z`);
   return Number.isFinite(utcClock.valueOf()) && utcClock.toISOString().slice(0, 19) === clock
-    ? value : null;
+    ? { value, wholeSecond, fraction: fraction.replace(/0+$/, '') } : null;
 }
 
 export function jiraObservations(issues, observedAt) {
   if (!Array.isArray(issues) || issues.length > 500 || typeof observedAt !== 'string' || !observedAt.trim() || observedAt.length > 1000) throw new Error('invalid observations');
-  const observationTime = jiraTimestamp(observedAt);
-  const observationMillis = Date.parse(observationTime);
+  const observation = jiraTimestamp(observedAt);
+  const observationTime = observation?.value ?? null;
   let futureSourceUpdates = 0;
   const items = []; const relations = []; const keys = new Set(); let omittedRelationObservations = 0; let unsupportedLinkObservations = 0;
   const push = r => { if (relations.length >= 2000) throw new Error('too many relations'); relations.push(r); };
@@ -24,14 +27,17 @@ export function jiraObservations(issues, observedAt) {
     if (!issue || typeof issue.key !== 'string' || issue.key.length > 100 || !/^[A-Z][A-Z0-9_]*-[0-9]+$/.test(issue.key) || keys.has(issue.key)) throw new Error('invalid issue key');
     keys.add(issue.key);
     const updated = jiraTimestamp(issue.fields?.updated);
-    const sourceUpdateAfterObservation = Date.parse(updated) > observationMillis;
+    // Compare seconds in UTC, then compare decimal digits without rounding.
+    const sourceUpdateAfterObservation = updated !== null && observation !== null
+      && (updated.wholeSecond > observation.wholeSecond
+        || (updated.wholeSecond === observation.wholeSecond && updated.fraction > observation.fraction));
     if (sourceUpdateAfterObservation) futureSourceUpdates++;
     items.push({
       key: issue.key,
       title: typeof issue.fields?.summary === 'string' ? issue.fields.summary.slice(0, 500) : 'UNKNOWN',
       status: typeof issue.fields?.status?.name === 'string' ? issue.fields.status.name.slice(0, 500) : 'UNKNOWN',
       source_ref: `jira:${issue.key}`,
-      source_updated_at: sourceUpdateAfterObservation ? null : updated,
+      source_updated_at: sourceUpdateAfterObservation ? null : (updated?.value ?? null),
       observed_at: observationTime,
     });
   }
