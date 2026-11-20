@@ -501,6 +501,53 @@ fx_required_metadata_unfilled() {
   expect_unfilled_metadata "$src" "$out" created_by fixture-worker None "Required-Metadata-created-by-none"
   expect_unfilled_metadata "$src" "$out" review_state not_reviewed None "Required-Metadata-review-state-none"
 
+  local field entry empty_entry
+  for field in schema_version artifact_version result_ref sensitive_data_status created_at created_by review_state; do
+    entry=$(grep -F -- "- \`$field\`:" "$src")
+    empty_entry="- \`$field\`:"
+    mutate_result "$src" "$out" "$entry" ''
+    expect_invalid "$out" "Required-Metadata-$field-missing" "Contract Metadata missing $field"
+    mutate_result "$src" "$out" "$entry" "$empty_entry"
+    expect_invalid "$out" "Required-Metadata-$field-empty" "Contract Metadata has unfilled required field: $field"
+    mutate_result "$src" "$out" "$entry" "$empty_entry"$'\n\nUnrelated paragraph.'
+    expect_invalid "$out" "Required-Metadata-$field-unrelated-paragraph" "Contract Metadata has unfilled required field: $field"
+    mutate_result "$src" "$out" "$entry" "$empty_entry"$'\n  ```text\n  Example.\n  ```\n  Unrelated prose.'
+    expect_invalid "$out" "Required-Metadata-$field-code-block-before-prose" "Contract Metadata has unfilled required field: $field"
+    mutate_result "$src" "$out" "$entry" "$empty_entry"$'\n  '"${entry#*: }"
+    expect_valid "$out" "Required-Metadata-$field-indented-continuation"
+  done
+  local indent
+  for field in result_ref created_by source_handoff_ref execution_status receipt_status; do
+    entry=$(grep -F -- "- \`$field\`:" "$src")
+    for indent in '' ' '; do
+      mutate_result "$src" "$out" "$entry" "- \`$field\`:"$'\n'"$indent${entry#*: }"
+      expect_valid "$out" "Required-Metadata-$field-lazy-code-continuation-${#indent}"
+    done
+  done
+  local block
+  for block in '# Unrelated heading' '---' '***' '___'; do
+    mutate_result "$src" "$out" '- `result_ref`: `result-20260720-090000-fixture`' \
+      $'- `result_ref`:\n  '"$block"
+    expect_invalid "$out" "Required-Metadata-result-ref-nested-block-$block" "Contract Metadata has unfilled required field: result_ref"
+  done
+  for field in contract_validation_status parse_status artifact_write_status; do
+    entry=$(grep -F -- "- \`$field\`:" "$src")
+    mutate_result "$src" "$out" "$entry" ''
+    expect_invalid "$out" "Required-Metadata-$field-missing" "Contract Metadata missing $field"
+  done
+
+  mutate_result "$src" "$out" '- `sensitive_data_status`: `none_detected`' \
+    $'```markdown\n- `sensitive_data_status`: `none_detected`\n```'
+  expect_invalid "$out" "Required-Metadata-sensitive-data-status-fenced-only" "Contract Metadata missing sensitive_data_status"
+
+  mutate_result "$src" "$out" '- `sensitive_data_status`: `none_detected`' \
+    $'- `sensitive_data_status`: `none_detected`\n- `sensitive_data_status`: `contains_sensitive_data`'
+  expect_invalid "$out" "Required-Metadata-sensitive-data-status-conflicting" "duplicate Contract Metadata field: sensitive_data_status"
+
+  mutate_result "$src" "$out" '- `result_ref`: `result-20260720-090000-fixture`' \
+    $'- `result_ref`: `result-20260720-090000-fixture`\n- `result_ref`: `different-result`'
+  expect_invalid "$out" "Required-Metadata-result-ref-conflicting" "duplicate Contract Metadata field: result_ref"
+
   mutate_result "$src" "$out" '- `execution_status`: `complete`' '- `execution_status`: `None`'
   expect_invalid "$out" "Required-Metadata-execution-status-none" "execution_status must be one of complete/partial/failed/blocked"
   mutate_result "$src" "$out" '- `execution_status`: `complete`' '- `execution_status`: `<complete | partial | failed | blocked>`'

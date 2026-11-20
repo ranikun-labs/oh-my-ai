@@ -41,7 +41,7 @@ const REQUIRED_HEADINGS = [
 ];
 
 const EXECUTION_STATUS_VALUES = new Set(["complete", "partial", "failed", "blocked"]);
-const REQUIRED_METADATA_UNFILLED_VALUES = new Map([
+const REQUIRED_METADATA_PLACEHOLDERS = new Map([
   ["schema_version", []],
   ["artifact_version", []],
   ["result_ref", ["<result-YYYYMMDD-HHMMSS-short-slug>"]],
@@ -99,7 +99,16 @@ function field(metadataBody, name) {
 }
 
 function metadataFields(metadataBody, name) {
-  const re = new RegExp(`^-\\s*\`${name}\`:\\s*\`?([^\`\\n]*)\`?\\s*$`, "gm");
+  // Legacy metadata allows the key immediately after a lone list marker.
+  // A wrapped value must follow immediately as indented list-item content
+  // or a standalone code span used as a lazy continuation of the list item.
+  const blockMarker = "(?:[-+*]|\\d+[.)]|#{1,6})(?:[ \\t]|$)|>|(?:(?:-[ \\t]*){3,}|(?:\\*[ \\t]*){3,}|(?:_[ \\t]*){3,})$";
+  const indentedValue = `(?: {2,}|[ \\t]*\\t[ \\t]*)(?=\\S)(?!${blockMarker})`;
+  const lazyCodeValue = " {0,1}(?=\`[^\`\\n]+\`[ \\t]*$)";
+  const re = new RegExp(
+    `^-[ \\t]*(?:\\n[ \\t]*)?\`${name}\`:[ \\t]*(?:\\n(?:${indentedValue}|${lazyCodeValue}))?\`?([^\`\\n]*)\`?[ \\t]*$`,
+    "gm",
+  );
   return [...metadataBody.matchAll(re)];
 }
 
@@ -118,12 +127,16 @@ function validate(markdown) {
   }
   if (errors.length > 0) return errors; // structural failure; stop here
 
-  const meta = splitVisibleSections(
+  const metadataLines = splitVisibleSections(
     `## Contract Metadata\n${sections["Contract Metadata"]}`,
-  ).sections.get("Contract Metadata") ?? "";
-  // These fields drive validation decisions. Never silently choose one of
-  // several reported values, even when the repeated values happen to agree.
-  for (const name of ["execution_status", "receipt_status", "created_by", "source_handoff_ref"]) {
+  ).fieldSections.get("Contract Metadata") ?? [];
+  // Keep gaps where the shared scanner removed a comment or code block.
+  // Their surrounding lines must not become a multiline metadata entry.
+  const visibleMetadata = [];
+  for (const { text, lineIndex } of metadataLines) visibleMetadata[lineIndex] = text;
+  const meta = visibleMetadata.join("\n");
+  // Do not silently choose one of several reported values for a required field.
+  for (const name of ["execution_status", "receipt_status", "source_handoff_ref", ...REQUIRED_METADATA_PLACEHOLDERS.keys()]) {
     if (metadataFields(meta, name).length > 1) {
       errors.push(`duplicate Contract Metadata field: ${name}`);
     }
@@ -227,9 +240,6 @@ function validate(markdown) {
   // caught. For complete/blocked/failed we do not force it non-empty, since
   // a complete run legitimately can have performed every validation it needed.
 
-  const createdBy = field(meta, "created_by");
-  if (!createdBy) errors.push("Contract Metadata missing created_by");
-
   // The existing manual template requires the Handoff reference. A returned
   // Result without that reference cannot identify the task it reports on;
   // this checks presence only, not task correlation or Handoff acceptance.
@@ -248,16 +258,20 @@ function validate(markdown) {
     errors.push(`receipt_status must be 'received' for a Result Basic that was actually returned, got: ${receiptStatus}`);
   }
 
-  // The shipped template marks these metadata fields as required. Reject only
-  // explicit None values and each field's exact unfilled template placeholder;
-  // keep all other values opaque and do not add format or truth checks here.
-  for (const [name, placeholders] of REQUIRED_METADATA_UNFILLED_VALUES) {
+  // The shipped template requires these fields. Keep provided values opaque
+  // after checking for omissions and unfilled template entries.
+  for (const [name, placeholders] of REQUIRED_METADATA_PLACEHOLDERS) {
     const value = field(meta, name);
-    if (value === null) continue; // Missing-field behavior is outside this check.
-    const normalized = value.trim();
-    if (normalized.toLowerCase() === "none" || placeholders.includes(normalized)) {
+    if (value === null) {
+      errors.push(`Contract Metadata missing ${name}`);
+    } else if (value === "" || value.toLowerCase() === "none" || placeholders.includes(value)) {
       errors.push(`Contract Metadata has unfilled required field: ${name}`);
     }
+  }
+
+  // These processing-state fields may explicitly use None in manual Results.
+  for (const name of ["contract_validation_status", "parse_status", "artifact_write_status"]) {
+    if (field(meta, name) === null) errors.push(`Contract Metadata missing ${name}`);
   }
 
   return errors;
