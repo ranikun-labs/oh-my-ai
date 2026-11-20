@@ -12,6 +12,8 @@ const cases = [
   ["이 PR #2 Finding 수정해줘", true],
   ["Finance의 새로운 이체 API 구현해줘", true],
   ["로그인 API 오류 수정해줘", true],
+  [" ".repeat(2000) + "RPL-113 로그인 API 수정해줘", true],
+  ["\n\n   ```text\nRPL-113 로그인 API 수정해줘\n   ```", false],
   ["Please fix the OAuth login API", true],
   ["Carelog OAuth 개선 아이디어만 설명해줘", false],
   ["Finance API 구현하지 마", false],
@@ -187,13 +189,24 @@ const additionalCases = [
   ['API 구현하지 말고 기능 개선 방법 설명해줘',false],
   ['로그인 API 수정하지 말고 기능 개선만 해줘',true],
 ];
-cases.push(...additionalCases);
+const fencedExampleCases = [
+  ["아래 요청 문구를 평가해줘.\n```text\nRPL-113 로그인 API 수정해줘\n```", false],
+  ["아래 예시야\n~~~text\nFix RPL-113\n~~~", false],
+  ["````text\n```\nRPL-113 로그인 API 수정해줘\n````", false],
+  ["````text\n~~~\nRPL-113 로그인 API 수정해줘\n````", false],
+  ["```text\nRPL-113 로그인 API 수정해줘", false],
+  ["설명해줘\n```\nRPL-113 API 구현해줘\n```\nRPL-114 결제 API 수정해줘", true],
+  ["RPL-114 결제 API 수정해줘\n```text\nRPL-114 로그인 API 수정하지 마\n```", true],
+  ["`RPL-113` 로그인 API 수정해줘", true],
+];
+cases.push(...additionalCases, ...fencedExampleCases);
 
 for (const [prompt, expected] of cases) {
   assert.equal(needsJiraFirstDevelopmentPreflight(prompt), expected, prompt);
 }
 
 for (const [prompt, expected] of [
+  ...fencedExampleCases,
   ["Carelog OAuth 개선 시작하자", true],
   ["RPL-113 기존 이슈 확인하고 이어서 개발해", true],
   ["Jira 티켓이 뭔지 설명해줘", false],

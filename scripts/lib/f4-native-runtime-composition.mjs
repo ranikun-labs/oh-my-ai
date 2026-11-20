@@ -1,5 +1,5 @@
 import path from "node:path";
-import { types as utilTypes } from "node:util";
+import { isDeepStrictEqual, types as utilTypes } from "node:util";
 import { preflightCapabilityMvp } from "./rpl-118-capability-preflight-mvp.mjs";
 import { createF4ScopePreservingCheckpoint } from "./f4-scope-preservation-checkpoint.mjs";
 import {
@@ -163,6 +163,21 @@ async function reconcileScopeCheckpoint(checkpointStore, request) {
     currentCheckpoint: current.value,
   });
   if (!projection.ok) return projection;
+
+  if (current.value !== null && projection.checkpoint.nextReadyId === null
+    && projection.checkpoint.stopReason !== null) {
+    const unchangedRevision = {
+      ...projection.checkpoint,
+      checkpointRevision: current.value.checkpointRevision,
+    };
+    // Compare persisted values without the differently hydrated object prototypes.
+    if (isDeepStrictEqual(
+      JSON.parse(JSON.stringify(current.value)),
+      JSON.parse(JSON.stringify(unchangedRevision)),
+    )) {
+      return { ...projection, checkpoint: unchangedRevision };
+    }
+  }
 
   const persisted = await checkpointStore.compareAndSetCheckpoint({
     objectiveId,

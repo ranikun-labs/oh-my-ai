@@ -227,9 +227,34 @@ function normalizeScope(text) {
     : tokens).join(" ");
 }
 
+function omitFencedExamples(text) {
+  const prose = [];
+  let openFence = null;
+  for (const line of text.split(/\r?\n/u)) {
+    const fence = /^ {0,3}(`{3,}|~{3,})(.*)$/u.exec(line);
+    if (openFence) {
+      if (fence && fence[1][0] === openFence[0] && fence[1].length >= openFence.length &&
+          !fence[2].trim()) openFence = null;
+      continue;
+    }
+    if (fence && !(fence[1][0] === "`" && fence[2].includes("`"))) {
+      openFence = fence[1];
+      // Keep clauses on either side independent after removing the example.
+      prose.push(".");
+      continue;
+    }
+    prose.push(line);
+  }
+  return prose.join("\n");
+}
+
 export function needsJiraFirstDevelopmentPreflight(prompt) {
   if (typeof prompt !== "string") return false;
-  let limited = prompt.trim().slice(0, 2000);
+  const content = prompt.trimStart();
+  const leadingWhitespace = prompt.slice(0, prompt.length - content.length);
+  const firstLineIndent = leadingWhitespace.slice(leadingWhitespace.lastIndexOf("\n") + 1);
+  // Preserve fence indentation without charging leading whitespace to the prompt budget.
+  let limited = omitFencedExamples(firstLineIndent + content.slice(0, 2000)).trim();
   if (!limited || !DEVELOPMENT_TARGET.test(limited)) return false;
 
   // Remove only the nearest request explicitly withdrawn by the final correction

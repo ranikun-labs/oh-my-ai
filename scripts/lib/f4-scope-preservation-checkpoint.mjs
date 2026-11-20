@@ -187,6 +187,9 @@ export function createF4ScopePreservingCheckpoint(input) {
         continue;
       }
       const prior = inventoryById.get(observation.id);
+      // A refresh cannot reopen a completed item within the same approved scope.
+      // Keep the evidence that established completion.
+      if (prior.status === "DONE") continue;
       inventoryById.set(observation.id, {
         id: prior.id,
         primaryJira: prior.primaryJira,

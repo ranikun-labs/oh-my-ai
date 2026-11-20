@@ -1920,6 +1920,33 @@ await group("F4 scope checkpoint composition", async () => {
     assert.equal(built.calls.some(([name]) => name === "codex.resolveAndResume"), false);
   });
 
+  await test("a completed workstream makes zero executor calls on a new attempt", async () => {
+    const built = build({ nativeComposition: true });
+    const completed = await built.composition.reconcileScopeCheckpoint({
+      approvedScope: FIXTURE_SCOPE,
+      expectedCheckpointRevision: 1,
+      refresh: {
+        sourceUri: FIXTURE_SCOPE.requiredSources[0].uri,
+        sourceRevision: "jira-snapshot/completed",
+        expectedPriorRevision: "jira-snapshot/f4-fixture-1",
+        refreshScope: "INCREMENTAL_DELTA",
+        coverage: "COMPLETE",
+        partialReasons: [],
+        observations: [{ id: "RPL-120", status: "DONE" }],
+      },
+      recentExecution: null,
+      nextReadyId: null,
+      stopReason: null,
+    });
+    assert.equal(completed.ok, true);
+    assert.equal(completed.checkpoint.statusSummary.DONE, 1);
+    built.calls.length = 0;
+    const result = await built.composition.executeManualResume(request());
+    assert.deepEqual(result, { ok: false, reason: "manual_resume_capability_preflight_blocked" });
+    assert.equal(built.calls.some(([name]) => name === "acquireClaim"), false);
+    assert.equal(built.calls.some(([name]) => name === "codex.resolveAndResume"), false);
+  });
+
   await test("composition requires an Owner-backed workstream resolver", () => {
     const built = build({ nativeComposition: true, omitScopeResolver: true });
     assert.deepEqual(built.built, {
@@ -1996,6 +2023,16 @@ await group("F4 scope checkpoint composition", async () => {
     assert.ok(built.userLocalState.stats.locations.some(relativePath => (
       /^f4\/scope-preservation-checkpoints\/checkpoint-[a-f0-9]{64}\.json$/.test(relativePath)
     )));
+
+    const repeatedBlock = await built.composition.reconcileScopeCheckpoint({
+      approvedScope,
+      expectedCheckpointRevision: 2,
+      refresh: null,
+      recentExecution: null,
+      nextReadyId: null,
+      stopReason: "NO_VERIFIED_READY",
+    });
+    assert.deepEqual(repeatedBlock, blocked);
 
     const staleResume = await built.composition.reconcileScopeCheckpoint({
       approvedScope,

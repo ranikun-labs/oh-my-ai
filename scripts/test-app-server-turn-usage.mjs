@@ -1,0 +1,18 @@
+import assert from 'node:assert/strict';
+import {inspectCompletedTurnUsage as inspect} from './lib/app-server-turn-usage.mjs';
+const ids={threadId:'private-thread',turnId:'private-turn'};
+const n={inputTokens:10,cachedInputTokens:2,outputTokens:4,reasoningOutputTokens:1,totalTokens:14};
+const usage={method:'thread/tokenUsage/updated',params:{...ids,tokenUsage:{last:n,total:n}}};
+const done={method:'turn/completed',params:{threadId:ids.threadId,turn:{id:ids.turnId,status:'completed',items:[]}}};
+const r=inspect([usage,done],ids);
+assert.equal(r.status,'SNAPSHOT_UNVERIFIED_SOURCE');
+assert.equal(r.turn_completion,'CALLER_STREAM_REPORTED');
+assert.doesNotMatch(JSON.stringify(r),/private-thread|private-turn/);
+assert.equal(inspect([usage],ids).status,'TURN_NOT_COMPLETED');
+assert.equal(inspect([usage,done,done],ids).status,'MULTIPLE_COMPLETIONS_UNRESOLVED');
+assert.equal(inspect([usage,{...done,params:{...done.params,turn:{...done.params.turn,status:'failed'}}}],ids).status,'TURN_NOT_SUCCESSFUL');
+assert.equal(inspect([usage,{...done,params:{...done.params,threadId:'other'}}],ids).status,'ID_MISMATCH');
+assert.equal(inspect([done],ids).status,'NO_USAGE');
+assert.equal(inspect([usage,done,null],ids).status,'INVALID_NOTIFICATION');
+assert.equal(inspect(Array(10001).fill({method:'other'}),ids).status,'EVENT_LIMIT_EXCEEDED');
+console.log('PASS: synthetic turn completion and usage boundaries');

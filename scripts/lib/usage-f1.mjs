@@ -21,3 +21,23 @@ export function usageF1Cell(summary, agentId, runId) {
   const values = fields.map((f, i) => `${labels[i]} ${Number.isSafeInteger(u[f]) && u[f] >= 0 ? u[f] : 'UNKNOWN'}`);
   return `${OFFICIAL_UNKNOWN} · ${source} 관측값 ${values.join(' / ')} 토큰 (단일 수신 이벤트, 호출자 지정 범위, 재개 시 이전 턴 누적 가능·이번 턴 사용량 미확인, 0 의미 미확인)`;
 }
+
+// A completed, ID-correlated capture is still caller-supplied evidence.
+export function appServerTurnUsageF1Cell(result) {
+  if (result?.status !== 'SNAPSHOT_UNVERIFIED_SOURCE'
+    || result.turn_completion !== 'CALLER_STREAM_REPORTED') {
+    return `${OBSERVATION_UNKNOWN} (같은 스레드·턴의 완료 및 사용량 확인 불가)`;
+  }
+  const fields = [
+    ['입력', 'inputTokens'],
+    ['캐시 읽기', 'cachedInputTokens'],
+    ['캐시 쓰기', 'cacheWriteInputTokens'],
+    ['출력', 'outputTokens'],
+    ['추론 출력', 'reasoningOutputTokens'],
+  ];
+  const values = fields.map(([label, field]) => {
+    const value = result.last?.[field];
+    return `${label} ${Number.isSafeInteger(value) && value >= 0 ? value : 'UNKNOWN'}`;
+  });
+  return `${OFFICIAL_UNKNOWN} · Codex App Server 동일 스레드·턴 last 관측값 ${values.join(' / ')} 토큰 (호출자 제공 캡처)`;
+}

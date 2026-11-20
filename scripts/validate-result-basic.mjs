@@ -109,6 +109,21 @@ function normalizeInlineCode(value) {
   return (inlineCode ? inlineCode[1] : trimmed).trim();
 }
 
+function validateValidationResultNames(body, errors) {
+  const visible = splitVisibleSections(`## Validation Results\n${body}`)
+    .sections.get("Validation Results") ?? "";
+  const reported = new Set();
+  for (const line of visible.split("\n")) {
+    // Manual Markdown uses the validation name as the key in template rows.
+    // Leave prose and older free-form evidence outside this duplicate check.
+    const entry = /^-\s+`([^`]+)`:\s*`(?:pass|fail|blocked|not_run)`\s+-\s+\S/.exec(line.trim());
+    if (!entry) continue;
+    const name = entry[1].trim();
+    if (reported.has(name)) errors.push(`duplicate Validation Results entry: ${name}`);
+    reported.add(name);
+  }
+}
+
 function validate(markdown) {
   const errors = [];
   const sections = splitSections(markdown, errors);
@@ -140,6 +155,7 @@ function validate(markdown) {
     "<reason the work is blocked>",
   ]);
   const validationPerformed = sections["Validation Performed"];
+  validateValidationResultNames(sections["Validation Results"], errors);
   const validationPrompts = ["<validation that was actually performed>"];
   const validationNotPerformedEmpty = isNoneOrTemplatePrompt(sections["Validation Not Performed"], [
     "<validation that was requested or expected but not performed, with reason>",

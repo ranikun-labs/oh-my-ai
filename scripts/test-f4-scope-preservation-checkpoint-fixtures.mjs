@@ -310,6 +310,23 @@ test("an unapproved source cannot mutate an approved item's status", () => {
   assert.equal(result.checkpoint.sourceCoverage.some(row => row.uri.includes("untrusted.example")), false);
 });
 
+test("a completed item cannot be selected again by a READY refresh", () => {
+  const initial = buildCheckpoint();
+  const completed = item(initial.checkpoint, "F4");
+  assert.equal(completed.status, "DONE");
+  const next = buildCheckpoint({
+    currentCheckpoint: initial.checkpoint,
+    expectedCheckpointRevision: initial.checkpoint.checkpointRevision,
+    sourceRefresh: refresh([{ id: "F4", status: "READY" }], {
+      refreshScope: "INCREMENTAL_DELTA",
+    }),
+    nextReadyId: "F4",
+  });
+  assert.equal(next.ok, true);
+  assert.deepEqual(item(next.checkpoint, "F4"), completed);
+  assert.equal(next.checkpoint.nextReadyId, "CAPABILITY");
+});
+
 test("stale checkpoint revision is rejected without changing the persisted checkpoint", () => {
   const initial = buildCheckpoint();
   const before = clone(initial.checkpoint);
