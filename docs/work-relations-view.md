@@ -11,3 +11,5 @@ printf '%s' '{"items":[{"key":"RPL-1","title":"목표","source_ref":"기록 참�
 입력은 최대 8 MiB이고 이슈 최대 500개·관계 최대 2000개다. 기존 `work-view --stdin-json` 형식은 그대로 제공한다.
 
 `work-view --stdin-json --jira-observations`는 호출자가 미리 조회하고 개인정보·비밀을 제거한 Jira 이슈 배열 `issues`와 관측시각 `observed_at`을 받는다. 명령은 외부 조회를 수행하지 않으며 결과는 항상 부분 관찰이다. 입력에 없는 이슈와 관계는 미조회이며 완료나 관계 부재의 증거가 아니다. Jira 본문의 의도와 링크가 충돌할 수 있으므로 링크 방향을 자동으로 고치지 않는다.
+
+Jira 이슈의 `fields.updated`는 `Source updated_at` 열에, 호출자가 준 `observed_at`은 `확인 시각` 열에 표시한다. 원본 갱신 시각을 확인할 수 없으면 `UNKNOWN`으로 표시한다. `--relations`에서는 이슈의 선택 필드인 `source_updated_at`을 전달해 이 열을 표시할 수 있다.
