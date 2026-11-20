@@ -293,12 +293,88 @@ test("reports closed unmerged PRs only with explicit merge evidence and preserve
   }
 });
 
+test("does not report a closed draft as merged", () => {
+  for (const makeGithubResult of [githubResult, wrappedGithubResult]) {
+    for (const mergedAt of [undefined, "2026-10-30T10:30:00Z"]) {
+      const result = wrappedPortfolio(makeGithubResult(88, {
+        state: "closed",
+        merged: true,
+        draft: true,
+        merged_at: mergedAt,
+      }));
+      assert.equal(result.pull_requests[0].merge_state, "UNKNOWN");
+      assert.equal(result.issues[0].jira_status, "할 일");
+      assert.equal(result.issues[0].execution.state, "UNKNOWN");
+    }
+    for (const draft of [false, undefined, null]) {
+      const result = wrappedPortfolio(makeGithubResult(88, {
+        state: "closed",
+        merged: true,
+        draft,
+        merged_at: "2026-10-30T10:30:00Z",
+      }));
+      assert.equal(result.pull_requests[0].merge_state, "MERGED");
+    }
+  }
+});
+
+test("keeps contradictory or future merge observations UNKNOWN without changing Jira status", () => {
+  const cases = [
+    [{ state: "open", merged: true }, "UNKNOWN"],
+    [{ state: "open", merged: "false" }, "UNKNOWN"],
+    [{ state: "open", merged: false, merged_at: "2026-10-30T10:30:00Z" }, "UNKNOWN"],
+    [{ state: null, merged: true }, "UNKNOWN"],
+    [{ state: "closed", merged: true, merged_at: null }, "UNKNOWN"],
+    [{ state: "closed", merged: true, merged_at: "invalid" }, "UNKNOWN"],
+    [{ state: "closed", merged: true, merged_at: "2026-10-30T10:40:00.0001Z" }, "UNKNOWN"],
+    [{ state: "closed", merged: true, merged_at: "2026-10-30T10:39:00Z" }, "UNKNOWN", "2026-10-30T10:38:00Z"],
+    [{ state: "closed", merged: true, merged_at: "2026-10-30T10:38:00Z" }, "MERGED", "2026-10-30T10:38:00Z"],
+    [{ state: "closed", merged: true }, "MERGED"],
+    [{ state: "open", draft: false, merged: undefined }, "OPEN_UNMERGED"],
+  ];
+  for (const [fields, expected, checkedAt = capturedAt] of cases) {
+    for (const makeGithubResult of [githubResult, wrappedGithubResult]) {
+      const result = wrappedPortfolio({ ...makeGithubResult(88, { draft: false, ...fields }), checked_at: checkedAt });
+      assert.equal(result.pull_requests[0].merge_state, expected, JSON.stringify(fields));
+      assert.equal(result.sources.find(source => source.name === "github").quality, "CURRENT");
+      assert.equal(result.issues[0].jira_status, "할 일");
+      assert.equal(result.issues[0].execution.state, "UNKNOWN");
+    }
+  }
+});
+
+test("does not report merge when a supplied merge or close time predates PR creation", () => {
+  const cases = [
+    [{ created_at: "2026-10-30T10:30:01Z", merged_at: "2026-10-30T10:30:00Z" }, "UNKNOWN"],
+    [{
+      created_at: "2026-10-30T10:30:00Z",
+      merged_at: "2026-10-30T10:31:00Z",
+      closed_at: "2026-10-30T10:29:59Z",
+    }, "UNKNOWN"],
+    [{ created_at: "2026-10-30T10:30:00.0002Z", closed_at: "2026-10-30T10:30:00.0001Z" }, "UNKNOWN"],
+    [{
+      created_at: "2026-10-30T19:30:00.0001+09:00",
+      merged_at: "2026-10-30T10:30:00.0001Z",
+      closed_at: "2026-10-30T10:30:00.0002Z",
+    }, "MERGED"],
+    [{ created_at: null, merged_at: "2026-10-30T10:30:00Z", closed_at: null }, "MERGED"],
+  ];
+  for (const [fields, expected] of cases) {
+    for (const makeGithubResult of [githubResult, wrappedGithubResult]) {
+      const result = wrappedPortfolio(makeGithubResult(88, { state: "closed", merged: true, draft: false, ...fields }));
+      assert.equal(result.pull_requests[0].merge_state, expected, JSON.stringify(fields));
+      assert.equal(result.issues[0].jira_status, "할 일");
+      assert.equal(result.issues[0].execution.state, "UNKNOWN");
+    }
+  }
+});
+
 test("reports drift when two exact PR observations disagree about a closed PR's merge", () => {
   const result = buildPortfolioBriefingFromMcpResults({
     captured_at: capturedAt,
     github_results: [
       githubResult(88, { state: "closed", merged: false }),
-      wrappedGithubResult(88, { state: "closed", merged: true }),
+      wrappedGithubResult(88, { state: "closed", draft: false, merged: true }),
     ],
     required_sources: ["github"],
   });
