@@ -32,6 +32,11 @@ const AI_STATUS_HEADERS = [
   "실제 작업·상태",
   "공식 토큰·비용·구간·출처",
 ];
+const AI_STATUS_SUMMARY_LINES = [
+  /^[-*] 관측 범위:[ \t]*(?:complete|partial|unknown)[ \t]*$/iu,
+  /^[-*] 확인된 참여자 수:[ \t]*\d+[ \t]*$/u,
+  /^[-*] 전체 참여자 수:[ \t]*(?:\d+|UNKNOWN)[ \t]*$/u,
+];
 const OBSERVATION_COVERAGES = new Set(["complete", "partial", "unknown"]);
 const HTML_PRE_OPEN = /^<pre(?=[ \t/>])[^>]*>/iu;
 const HTML_BLOCK_TAG = /^ {0,3}<\/?(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|source|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)(?=[ \t/>]|$)/iu;
@@ -749,9 +754,10 @@ function hasMarkdownTableDelimiter(headers, separators) {
     && separators.every((cell) => /^:?-+:?$/u.test(cell));
 }
 
-function readAiStatusTable(lines, errors) {
+function readAiStatusTable(lines, sourceLines, errors) {
   let table = null;
   for (let index = 0; index < lines.length - 1; index += 1) {
+    const headerLineIndex = lines[index].lineIndex;
     if (lines[index + 1].lineIndex !== lines[index].lineIndex + 1) continue;
     const headers = splitMarkdownTableRow(lines[index].tableText);
     const separators = splitMarkdownTableRow(lines[index + 1].tableText);
@@ -770,6 +776,12 @@ function readAiStatusTable(lines, errors) {
 
     const normalizedHeaders = headers.map(normalizeTableHeader);
     if (!AI_STATUS_HEADERS.every((header) => normalizedHeaders.includes(header))) continue;
+
+    // Without a blank line, the table-shaped text lazily continues the final
+    // bullet of the standard participant summary.
+    const summaryStart = headerLineIndex - AI_STATUS_SUMMARY_LINES.length;
+    if (summaryStart >= 0 && AI_STATUS_SUMMARY_LINES.every((pattern, offset) =>
+      pattern.test(sourceLines[summaryStart + offset]))) continue;
 
     if (table) {
       errors.push("AI status must contain exactly one participant table");
@@ -827,7 +839,7 @@ function validateAiStatus(markdown, options = {}) {
     errors.push(`AI status observation coverage must match the supplied value: ${coverage}`);
   }
 
-  const table = readAiStatusTable(lines, errors);
+  const table = readAiStatusTable(lines, String(markdown).split(/\r?\n/u), errors);
   if (!table) {
     return { valid: false, errors, scope: "AI_STATUS_ONLY" };
   }
