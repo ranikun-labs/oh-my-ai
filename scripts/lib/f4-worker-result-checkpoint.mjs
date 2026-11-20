@@ -10,6 +10,7 @@ export function createF4WorkerResultCheckpointReconciler({
 }) {
   return async function reconcileResultCheckpoint({ record, digest }) {
     const request = { objectiveId: record.objectiveId };
+    let guardOpen = true;
     const project = async observation => {
       const scope = observation?.approvedScope;
       const refresh = observation?.refresh;
@@ -29,7 +30,7 @@ export function createF4WorkerResultCheckpointReconciler({
       if (!approvedSource(refresh.sourceUri)) return "pending";
       if (refresh.observations.filter(item => item.id === record.workstreamId).length !== 1) return "pending";
       const current = await readScopeCheckpoint(request);
-      if (current?.ok !== true || current.value?.scopeRevision !== record.scopeRevision) return "pending";
+      if (!guardOpen || current?.ok !== true || current.value?.scopeRevision !== record.scopeRevision) return "pending";
       const applied = checkpoint => checkpoint?.objectiveId === record.objectiveId
         && checkpoint.scopeRevision === record.scopeRevision
         && checkpoint.sourceCoverage?.some(source => source.uri === refresh.sourceUri
@@ -59,23 +60,33 @@ export function createF4WorkerResultCheckpointReconciler({
         return afterScopeCheck?.ok === true ? "already_applied" : "pending";
       }
       const planned = projectScopeCheckpoint({ ...update, currentCheckpoint: current.value });
-      if (planned?.ok !== true || !applied(planned.checkpoint)) return "pending";
+      if (!guardOpen || planned?.ok !== true || !applied(planned.checkpoint)) return "pending";
       let committed = false;
       try {
-        const updated = await reconcileScopeCheckpoint(update);
+        const updated = await reconcileScopeCheckpoint(update, () => guardOpen);
         committed = updated?.ok === true && applied(updated.checkpoint);
       } catch {
         // Re-read after an ambiguous publication. Never dispatch from this path.
       }
+      if (!guardOpen) return "pending";
       const after = await readScopeCheckpoint(request);
-      if (after?.ok !== true || !applied(after.value)) return "pending";
+      if (!guardOpen || after?.ok !== true || !applied(after.value)) return "pending";
       return committed ? "applied" : "already_applied";
     };
     let projected;
-    const guardedStatus = await withCurrentInventoryResult({ record, digest }, observation => {
-      projected ??= project(observation);
-      return projected;
-    });
-    return projected !== undefined && guardedStatus === await projected ? guardedStatus : "pending";
+    let resultStatus;
+    try {
+      const guardedStatus = await withCurrentInventoryResult({ record, digest }, observation => {
+        if (!guardOpen) return "pending";
+        projected ??= project(observation).catch(() => "pending").then(status => {
+          resultStatus = status;
+          return status;
+        });
+        return projected;
+      });
+      return resultStatus !== undefined && guardedStatus === resultStatus ? guardedStatus : "pending";
+    } finally {
+      guardOpen = false;
+    }
   };
 }

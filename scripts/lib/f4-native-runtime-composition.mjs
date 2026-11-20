@@ -180,7 +180,7 @@ function bindWorkerResultHost(options, recordProvider, physicalBinding, attemptS
     withCurrentInventoryResult,
     projectScopeCheckpoint: createF4ScopePreservingCheckpoint,
     readScopeCheckpoint: request => checkpointStore.readCheckpoint(request, true),
-    reconcileScopeCheckpoint: request => reconcileScopeCheckpoint(checkpointStore, request),
+    reconcileScopeCheckpoint: (request, canPublish) => reconcileScopeCheckpoint(checkpointStore, request, canPublish),
   });
   const attempt = createPendingHandoffManualResumeAttemptOutcomeService({ store: attemptStore });
   if (!attempt.ok) return attempt;
@@ -211,7 +211,7 @@ async function readScopeCheckpoint(checkpointStore, request) {
   return checkpointStore.readCheckpoint({ objectiveId: input.values.objectiveId });
 }
 
-async function reconcileScopeCheckpoint(checkpointStore, request) {
+async function reconcileScopeCheckpoint(checkpointStore, request, canPublish) {
   const input = inspectExactDataObject(request, [
     "approvedScope",
     "expectedCheckpointRevision",
@@ -251,7 +251,7 @@ async function reconcileScopeCheckpoint(checkpointStore, request) {
     objectiveId,
     expectedRevision: current.value?.checkpointRevision ?? null,
     checkpoint: projection.checkpoint,
-  });
+  }, canPublish);
   if (!persisted.ok) {
     return {
       ok: false,

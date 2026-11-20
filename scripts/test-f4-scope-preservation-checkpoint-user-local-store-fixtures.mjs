@@ -188,6 +188,31 @@ const nextProjection = createF4ScopePreservingCheckpoint({
   stopReason: null,
 });
 assert.equal(nextProjection.ok, true, JSON.stringify(nextProjection));
+let releaseHostBinding;
+let bindingStarted;
+const bindingPaused = new Promise(resolve => { bindingStarted = resolve; });
+const guardedStore = createF4ScopePreservationCheckpointUserLocalStore({
+  cwd: "/repo/worktree",
+  userLocalState,
+  expectedPhysicalStateBinding: trustedBinding,
+  verifyStateRootBinding: request => new Promise(resolve => {
+    releaseHostBinding = () => resolve(verifyTrustedCheckpointBinding(request));
+    bindingStarted();
+  }),
+});
+const writesBeforeGuardCloses = stats.publishes;
+let hostAuthorityOpen = true;
+const pendingGuardedWrite = guardedStore.value.compareAndSetCheckpoint({
+  objectiveId: "RPL-112",
+  expectedRevision: 1,
+  checkpoint: nextProjection.checkpoint,
+}, () => hostAuthorityOpen);
+await bindingPaused;
+hostAuthorityOpen = false;
+releaseHostBinding();
+assert.deepEqual(await pendingGuardedWrite, { ok: false, reason: "scope_checkpoint_publication_guard_closed" });
+assert.equal(stats.publishes, writesBeforeGuardCloses);
+
 publishDurabilityUnknown = true;
 const uncertainPublication = await store.compareAndSetCheckpoint({
   objectiveId: "RPL-112",
