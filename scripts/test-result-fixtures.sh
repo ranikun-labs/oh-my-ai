@@ -201,6 +201,65 @@ fx_partial_result() {
     "- Confirm rate-limit response code with the endpoint owner before merge." \
     "- \`None\`"
   expect_invalid "$out" "Partial-Result-negative" "requires evidence of incompleteness"
+
+  # The partial patch is usable, but adding the required rate-limit behavior
+  # awaits an external decision. The completed syntax check still stands.
+  mutate_result "$out" "$out" \
+    '- Added a bounded retry loop; integration test was not run due to missing test credentials.' \
+    '- Added a bounded retry loop. Rate-limit backoff is pending an endpoint owner decision.'
+  mutate_result "$out" "$out" \
+    '- `Integration test passing`: `unmet` - not run, see Validation Not Performed' \
+    '- `Honor the endpoint reset header`: `blocked` - waiting for the endpoint owner to confirm timestamp units'
+  mutate_result "$out" "$out" \
+    '- Obtain test credentials and run the integration test before merging.' \
+    '- Ask the endpoint owner for the reset-header format, then implement rate-limit backoff.'
+  mutate_result "$out" "$out" $'## Blocked Reasons\n\n- `None`' \
+    $'## Blocked Reasons\n\n- The endpoint owner must confirm whether X-RateLimit-Reset uses seconds or milliseconds before backoff can be added.'
+  expect_valid "$out" "Partial-Result-with-blocked-follow-up"
+
+  local example reasons
+  example="$d/example.md"
+  for reasons in \
+    $'> - Example blocker from the template.\nThis line continues its quoted example.' \
+    $'- > An example provided by another worker.' \
+    $'> An example provided by another worker.\n\n- `<reason the work is blocked>`' \
+    $'* None\n+ `None`\n1. `None`' \
+    '- ``<reason the work is blocked>``' \
+    $'- `<reason the work\n  is blocked>`' \
+    $'***\n\n[example]: https://example.com/' \
+    '- <span></span>' \
+    '- <!-- note --> <span></span>'; do
+    mutate_result "$out" "$example" \
+      '- The endpoint owner must confirm whether X-RateLimit-Reset uses seconds or milliseconds before backoff can be added.' \
+      "$reasons"
+    expect_invalid "$example" "Partial-Result-with-only-an-example-or-placeholder" "requires evidence of incompleteness"
+  done
+
+  mutate_result "$out" "$example" \
+    '- The endpoint owner must confirm whether X-RateLimit-Reset uses seconds or milliseconds before backoff can be added.' \
+    $'> An example provided by another worker.\n\n- The endpoint owner must confirm `X-RateLimit-Reset`\n  units before backoff can be added.'
+  expect_valid "$example" "Partial-Result-with-reason-after-quoted-example"
+
+  for reasons in \
+    $'> <!-- example -->\nThe endpoint owner must confirm units.' \
+    $'> Example\n<!-- End of quoted example -->\nThe endpoint owner must confirm units.' \
+    '- <!-- note --> The endpoint owner must confirm units.' \
+    $'> <div>\n> Example only.\n> </div>\nThe endpoint owner must confirm units.'; do
+    mutate_result "$out" "$example" \
+      '- The endpoint owner must confirm whether X-RateLimit-Reset uses seconds or milliseconds before backoff can be added.' \
+      "$reasons"
+    expect_valid "$example" "Partial-Result-with-reason-after-comment-or-quoted-block"
+  done
+
+  mutate_result "$out" "$out" \
+    '- The endpoint owner must confirm whether X-RateLimit-Reset uses seconds or milliseconds before backoff can be added.' \
+    $'<!-- A comment describing how to record a blocker. -->\n```markdown\n- An example blocker.\n```\n- `<reason the work is blocked>`'
+  expect_invalid "$out" "Partial-Result-without-visible-blocker" "requires evidence of incompleteness"
+
+  mutate_result "$FIXTURE_ROOT/FX-RS-good-complete-validation-performed.md" "$out" \
+    $'## Blocked Reasons\n\n- `None`' \
+    $'## Blocked Reasons\n\n- The requested reviewer decision is still pending.'
+  expect_invalid "$out" "Complete-Result-with-blocker" "execution_status=complete but Blocked Reasons is non-empty"
   echo "passed: FX-RS-partial-result"
 }
 
