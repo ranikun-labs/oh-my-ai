@@ -59,6 +59,7 @@ const mainOnlyAiStatus = `## AI 실행 현황
 - 관측 범위: complete
 - 확인된 참여자 수: 1
 - 전체 참여자 수: 1
+
 | Agent ID | 실제 역할 | 실제 참여 | spawn events | resume events | continue events | 요청 Model/Reasoning/Fast·출처 | 운영 선호·출처 | 실효 Model/Reasoning/Fast·출처 | 실제 작업·상태 | 공식 토큰·비용·구간·출처 |
 |---|---|---|---:|---:|---:|---|---|---|---|---|
 | Main | Main | YES | 0 | 0 | 1 | UNKNOWN — 이번 경로에서 생성 요청 없음 | Terra High — 운영 요청, 대화 근거 | UNKNOWN — Runtime 설정 근거 없음 | 요청 분석과 결과 취합을 수행 | UNKNOWN — 완료 후 공식 수치 없음 |
@@ -68,6 +69,7 @@ const multiAgentAiStatus = `## AI 실행 현황
 - 관측 범위: partial
 - 확인된 참여자 수: 4
 - 전체 참여자 수: UNKNOWN
+
 | Agent ID | 실제 역할 | 실제 참여 | spawn events | resume events | continue events | 요청 Model/Reasoning/Fast·출처 | 운영 선호·출처 | 실효 Model/Reasoning/Fast·출처 | 실제 작업·상태 | 공식 토큰·비용·구간·출처 |
 |---|---|---|---:|---:|---:|---|---|---|---|---|
 | Main | Main | YES | 0 | 0 | 1 | UNKNOWN — 현재 턴에서 생성 요청 없음 | Terra High — 운영 요청 | UNKNOWN — 실효 설정 근거 없음 | Objective와 결과 취합 | UNKNOWN — 공식 계측 미제공 |
@@ -322,6 +324,14 @@ const rawParticipantExample = `<report-example>\n${conflictingParticipantTable}\
 const preformattedParticipantExample = `<pre>\n\n${mainParticipantTable}\n\n</pre>`;
 const collapsedParticipantTable = `<details>\n<summary>참여 기록</summary>\n\n${mainParticipantTable}\n\n</details>`;
 const aiStatusOptions = { observedParticipants: ["Main"], observationCoverage: "complete" };
+for (const summary of [participantSummary, participantSummary.replace(/^- /gmu, "* ")]) {
+  const withBlank = mainOnlyAiStatus.replace(participantSummary, summary);
+  const noBlank = withBlank.replace(`\n\n${participantHeader}`, `\n${participantHeader}`);
+  const result = validateAiStatus(noBlank, aiStatusOptions);
+  assert.equal(result.valid, false, "the summary must be separated from the participant table");
+  assert.ok(result.errors.includes("AI status must contain the required participant table"));
+  assert.equal(validateAiStatus(withBlank, aiStatusOptions).valid, true);
+}
 const duplicateTableError = "AI status must contain exactly one participant table";
 const aiStatusWithConflictingTable = `${mainOnlyAiStatus}\n${conflictingParticipantTable}\n`;
 const duplicateTableCases = [
@@ -347,6 +357,7 @@ for (const [description, report] of duplicateTableCases) {
 }
 
 const singleTableCases = [
+  ["table after a nested quote list and an unindented custom tag", mainOnlyAiStatus.replace(mainParticipantTable, `> - > intro\n> > <x-tag>\n${mainParticipantTable}`)],
   ["unrelated table before the participant table", mainOnlyAiStatus.replace(mainParticipantTable, `| 메모 |\n|---|\n| 실행 환경 참고 |\n\n${mainParticipantTable}`)],
   ["fenced table example", `${mainOnlyAiStatus}\n\`\`\`markdown\n${conflictingParticipantTable}\n\`\`\`\n`],
   ["single collapsed participant table", mainOnlyAiStatus.replace(mainParticipantTable, collapsedParticipantTable)],
@@ -389,7 +400,7 @@ const fullReportWithDuplicateTableResult = validateF1Report(fullReportWithConfli
 });
 assert.equal(fullReportWithDuplicateTableResult.valid, false);
 assert.ok(fullReportWithDuplicateTableResult.errors.includes(duplicateTableError));
-console.log(`f1 participant table fixtures passed: ${duplicateTableCases.length + singleTableCases.length + 2}`);
+console.log(`f1 participant table fixtures passed: ${duplicateTableCases.length + singleTableCases.length + 6}`);
 
 const unknownCoverage = validateAiStatus(
   mainOnlyAiStatus.replace("관측 범위: complete", "관측 범위: unknown").replace("전체 참여자 수: 1", "전체 참여자 수: UNKNOWN"),
