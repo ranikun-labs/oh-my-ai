@@ -76,7 +76,12 @@ export async function handoffF4Writer({
     }
   } catch {
     fenceOpen = false;
-    if (preparation) await preparation.catch(() => {});
+    if (preparation) {
+      const prepared = await preparation.catch(() => null);
+      if (prepared?.ok === false && prepared.reason !== recovery.reason) {
+        failure = { ...recovery, preparationFailure: prepared.reason };
+      }
+    }
   }
   if (assignment) return { ...recovery, associationRevision: assignment.revision };
   if (workspace) {

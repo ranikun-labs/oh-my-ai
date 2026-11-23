@@ -47,3 +47,15 @@ assert.deepEqual(await handoffF4Writer({
   },
   discardWorkspace: async () => { throw new Error("cleanup failed"); },
 }), { ok: false, reason: "recovery_required", workspaceCleanup: "failed", workspace: undefined });
+assert.deepEqual(await handoffF4Writer({
+  ...guarded,
+  withFrozenSource: async (_request, prepare) => {
+    await prepare();
+    throw new Error("source fence failed");
+  },
+  acceptHandoff: () => ({ ...scope, worktreeId: "other-worktree" }),
+  discardWorkspace: () => { throw new Error("cleanup failed"); },
+}), {
+  ok: false, reason: "recovery_required", preparationFailure: "handoff_scope_not_supported",
+  workspaceCleanup: "failed", workspace: undefined,
+});

@@ -457,6 +457,9 @@ report_ponytail_status() {
   else
     status=missing
   fi
+  if [ "$status" != ready ]; then
+    DOCTOR_FAIL_COUNT=$((DOCTOR_FAIL_COUNT + 1))
+  fi
   say "$label Ponytail: $status ($target)"
 }
 
