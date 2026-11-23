@@ -175,7 +175,7 @@ function resolveTaskWriterHost(options) {
   const host = inspectExactDataObject(options.taskWriterHost, ["scope", "associationStore"]);
   if (!host.ok) return failure("task_writer_host_invalid");
   const scope = inspectExactDataObject(host.values.scope, ["taskRef", "repositoryId", "worktreeId"]);
-  const store = inspectExactDataObject(host.values.associationStore, ["read"], ["link", "setStatus"]);
+  const store = inspectExactDataObject(host.values.associationStore, ["read"], ["link", "setStatus", "replaceWriter"]);
   if (!scope.ok || !store.ok || typeof store.values.read !== "function"
     || utilTypes.isProxy(store.values.read)
     || !Array.isArray(options.runtimeEntries) || utilTypes.isProxy(options.runtimeEntries)
@@ -242,6 +242,7 @@ function bindWorkerResultHost(options, recordProvider, physicalBinding, attemptS
   const verifiers = host.ok ? ["verifyResult", "resolveTrustedTurn", "resolveTrustedClaudeResult"]
     .filter(key => Object.hasOwn(host.values, key)) : [];
   if (!expected.ok || !sameF4PhysicalStateBinding(expected.values, physicalBinding)
+    || (!verifiers.includes("verifyResult") && !Object.hasOwn(options, "taskWriterHost"))
     || verifiers.length === 0 || (verifiers.includes("verifyResult") && verifiers.length !== 1)
     || verifiers.some(key => typeof host.values[key] !== "function" || utilTypes.isProxy(host.values[key]))
     || typeof statePorts.confirmUserLocalStateDurability !== "function"
@@ -253,8 +254,26 @@ function bindWorkerResultHost(options, recordProvider, physicalBinding, attemptS
     && (typeof withCurrentInventoryResult !== "function" || utilTypes.isProxy(withCurrentInventoryResult))) {
     return failure("worker_result_host_unverified");
   }
+  function isCurrentWriter(record) {
+    if (host.values.verifyResult !== undefined) return true;
+    try {
+      const { scope, associationStore } = options.taskWriterHost;
+      if (record.workstreamId !== scope.taskRef || record.repositoryId !== scope.repositoryId
+        || record.worktreeId !== scope.worktreeId) return false;
+      const snapshot = associationStore.read(scope);
+      const writers = snapshot.associations.filter(row => row.role === "writer" && row.status === "active");
+      return Number.isSafeInteger(record.associationRevision) && snapshot.revision === record.associationRevision
+        && writers.length === 1 && writers[0].runtimeId === record.runtimeId
+        && writers[0].sessionId === record.writerSessionId;
+    } catch {
+      return false;
+    }
+  }
+
   const projectResult = withCurrentInventoryResult === undefined ? null : createF4WorkerResultCheckpointReconciler({
-    withCurrentInventoryResult,
+    withCurrentInventoryResult: (request, project) =>
+      withCurrentInventoryResult(request, observation =>
+        isCurrentWriter(request.record) ? project(observation, () => isCurrentWriter(request.record)) : "pending"),
     projectScopeCheckpoint: createF4ScopePreservingCheckpoint,
     readScopeCheckpoint: request => checkpointStore.readCheckpoint(request, true),
     reconcileScopeCheckpoint: (request, canPublish) => reconcileScopeCheckpoint(checkpointStore, request, canPublish),
@@ -269,6 +288,7 @@ function bindWorkerResultHost(options, recordProvider, physicalBinding, attemptS
     attemptOutcome: attempt.value,
     verifyResult,
     reconcileInventory: async request => {
+      if (!isCurrentWriter(request.record)) return "pending";
       const inventoryStatus = await reconcileInventory(request);
       if (projectResult && ["applied", "already_applied"].includes(inventoryStatus)) {
         return projectResult(request);
@@ -276,8 +296,12 @@ function bindWorkerResultHost(options, recordProvider, physicalBinding, attemptS
       return inventoryStatus;
     },
   });
-  const receiveCodexResult = host.values.resolveTrustedTurn === undefined ? null
-    : createReceiver(createF4CodexTurnResultVerifier({ resolveTrustedTurn: host.values.resolveTrustedTurn }));
+  const cleanCodexReceipts = new WeakSet();
+  const usedCodexObservers = new WeakSet();
+  const verifyCodex = host.values.resolveTrustedTurn === undefined ? null
+    : createF4CodexTurnResultVerifier({ resolveTrustedTurn: host.values.resolveTrustedTurn });
+  const receiveCodexResult = verifyCodex === null ? null
+    : createReceiver(receipt => cleanCodexReceipts.has(receipt) ? verifyCodex(receipt) : null);
   const receiveClaudeResult = host.values.resolveTrustedClaudeResult === undefined ? null
     : createReceiver(createF4ClaudeSessionResultVerifier({
       resolveTrustedClaudeResult: host.values.resolveTrustedClaudeResult,
@@ -287,8 +311,18 @@ function bindWorkerResultHost(options, recordProvider, physicalBinding, attemptS
       ? receiveCodexResult ?? receiveClaudeResult : createReceiver(host.values.verifyResult),
     ...(receiveClaudeResult === null ? {} : { receiveClaudeResult }),
     ...(receiveCodexResult === null ? {} : {
-      forwardCodexProcessResult: ({ child, observer, timeoutMs }) =>
-        forwardF4CodexProcessResult({ child, observer, timeoutMs, receiveWorkerResult: receiveCodexResult }),
+      async forwardCodexProcessResult({ child, observer, timeoutMs }) {
+        if (!observer || typeof observer !== "object" || usedCodexObservers.has(observer)
+          || observer.getReceipt() !== null) return failure("codex_result_unavailable");
+        usedCodexObservers.add(observer);
+        return forwardF4CodexProcessResult({
+          child, observer, timeoutMs,
+          receiveWorkerResult(receipt) {
+            cleanCodexReceipts.add(receipt);
+            return receiveCodexResult(receipt);
+          },
+        });
+      },
     }),
   });
 }

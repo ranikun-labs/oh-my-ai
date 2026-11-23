@@ -38,6 +38,10 @@ canonical = null;
 assert.equal(await reconcile(result), "pending");
 assert.equal(writes, 0);
 canonical = observation;
+for (const outcome of ["failed", "cancelled"]) {
+  assert.equal(await reconcile({ ...result, record: { ...result.record, outcome } }), "pending");
+}
+assert.equal(writes, 0);
 assert.equal(await reconcile(result), "already_applied");
 assert.equal(await reconcile(result), "already_applied");
 assert.equal(writes, 1);

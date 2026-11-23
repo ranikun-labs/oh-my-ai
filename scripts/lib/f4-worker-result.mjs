@@ -21,6 +21,11 @@ export function isWorkerResultCandidateId(value) {
 export function normalizeVerifiedResult(result) {
   if (result === null || typeof result !== "object") return null;
   const fields = [...BINDING_FIELDS, ...RESULT_FIELDS];
+  if (Object.hasOwn(result, "writerSessionId") || Object.hasOwn(result, "associationRevision")) {
+    if (typeof result.writerSessionId !== "string" || !/^phr1\.session\.[A-Za-z0-9_-]{1,64}\.[A-Za-z0-9_-]{43}$/.test(result.writerSessionId)
+      || !Number.isSafeInteger(result.associationRevision) || result.associationRevision < 1) return null;
+    fields.push("writerSessionId", "associationRevision");
+  }
   const record = Object.fromEntries(fields.map(field => [field, result[field]]));
   const valid = BINDING_FIELDS.every(field => REVISION_FIELDS.has(field)
     ? Number.isSafeInteger(record[field]) && record[field] >= 0

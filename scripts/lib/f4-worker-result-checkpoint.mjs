@@ -11,10 +11,11 @@ export function createF4WorkerResultCheckpointReconciler({
   return async function reconcileResultCheckpoint({ record, digest }) {
     const request = { objectiveId: record.objectiveId };
     let guardOpen = true;
-    const project = async observation => {
+    const project = async (observation, isCurrentWriter = () => true) => {
       const scope = observation?.approvedScope;
       const refresh = observation?.refresh;
-      if (observation?.resultDigest !== digest
+      if ((observation?.status === "DONE" && record.outcome !== "passed")
+        || observation?.resultDigest !== digest
         || observation.workstreamId !== record.workstreamId
         || scope?.objectiveId !== record.objectiveId
         || scope.scopeRevision !== record.scopeRevision
@@ -63,7 +64,7 @@ export function createF4WorkerResultCheckpointReconciler({
       if (!guardOpen || planned?.ok !== true || !applied(planned.checkpoint)) return "pending";
       let committed = false;
       try {
-        const updated = await reconcileScopeCheckpoint(update, () => guardOpen);
+        const updated = await reconcileScopeCheckpoint(update, () => guardOpen && isCurrentWriter());
         committed = updated?.ok === true && applied(updated.checkpoint);
       } catch {
         // Re-read after an ambiguous publication. Never dispatch from this path.
@@ -76,9 +77,9 @@ export function createF4WorkerResultCheckpointReconciler({
     let projected;
     let resultStatus;
     try {
-      const guardedStatus = await withCurrentInventoryResult({ record, digest }, observation => {
+      const guardedStatus = await withCurrentInventoryResult({ record, digest }, (observation, isCurrentWriter) => {
         if (!guardOpen) return "pending";
-        projected ??= project(observation).catch(() => "pending").then(status => {
+        projected ??= project(observation, isCurrentWriter).catch(() => "pending").then(status => {
           resultStatus = status;
           return status;
         });

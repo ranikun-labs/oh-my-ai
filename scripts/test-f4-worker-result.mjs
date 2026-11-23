@@ -65,7 +65,7 @@ assert.equal(await collectF4CodexTurnReceipt([
   Buffer.from(JSON.stringify({ ...JSON.parse(itemFrame), id: 1 }) + "\n" + terminalFrame + "\n"),
 ], streamObserver()), null);
 
-const processFixture = (exitCode, timeoutMs = 5000) => {
+const processFixture = (exitCode, timeoutMs = 5000, afterForward = () => ({ ok: true })) => {
   const observer = streamObserver();
   const child = new EventEmitter();
   child.stdout = Readable.from([stdout]);
@@ -78,7 +78,7 @@ const processFixture = (exitCode, timeoutMs = 5000) => {
     receiveWorkerResult: receipt => {
       assert.ok(observer.resolveTrustedTurn(receipt));
       forwarded += 1;
-      return { ok: true };
+      return afterForward();
     },
   }).then(result => ({ result, killed, forwarded }));
 };
@@ -87,6 +87,11 @@ assert.equal((await processFixture(1)).forwarded, 0);
 const timedOut = await processFixture(null, 10);
 assert.equal(timedOut.forwarded, 0);
 assert.equal(timedOut.killed, true);
+assert.deepEqual(await processFixture(0, 20, () => new Promise(() => {})), {
+  result: { ok: false, reason: "codex_result_reconciliation_unknown" },
+  killed: false,
+  forwarded: 1,
+});
 
 const failedChild = new EventEmitter();
 failedChild.stdout = new Readable({ read() {} });

@@ -61,6 +61,19 @@ try {
   const pending = resolution.resolveTargetSession(request);
   store.setStatus(scope, { ...second, status: "paused", expectedRevision: 4 });
   assert.deepEqual(await pending, { ok: false, reason: "session_resolution_stale" });
+  const abandoned = { ...scope, taskRef: "TASK-3" };
+  store.link(abandoned, { ...first, expectedRevision: 0 });
+  assert.throws(() => store.replaceWriter(abandoned, {
+    previous: first, successor: second, expectedRevision: 0,
+  }), /association_revision_conflict/);
+  const handoff = store.replaceWriter(abandoned, {
+    previous: first, successor: second, expectedRevision: 1,
+  });
+  assert.equal(handoff.revision, 2);
+  assert.deepEqual(open().read(abandoned).associations, [
+    { ...first, status: "detached" }, { ...second, status: "active" },
+  ]);
+  assert.equal(open().read(scope).associations[0].status, "completed");
   console.log("Task-session association and fresh Writer resolution PASS");
 } finally {
   rmSync(directory, { recursive: true, force: true });

@@ -80,6 +80,23 @@ export function createTaskSessionAssociationStore({ cwd, stateRootOptions }) {
   }
 
   return Object.freeze({
+    replaceWriter(scope, { previous, successor, expectedRevision }) {
+      const next = requireAssociation({
+        runtimeId: successor.runtimeId, sessionId: successor.sessionId, role: "writer", status: "active",
+      });
+      return access(scope, (current, publish) => {
+        if (current.revision !== expectedRevision) throw new Error("association_revision_conflict");
+        const writers = current.associations.filter(record => record.role === "writer" && record.status === "active");
+        const old = writers[0];
+        if (writers.length !== 1 || old.runtimeId !== previous.runtimeId || old.sessionId !== previous.sessionId
+          || current.associations.some(record => record.role === "writer"
+            && record.runtimeId === next.runtimeId && record.sessionId === next.sessionId)) {
+          throw new Error("association_transition_invalid");
+        }
+        return publish([...current.associations.map(record =>
+          record === old ? { ...old, status: "detached" } : record), next]);
+      });
+    },
     read: scope => access(scope, current => current),
     link: (scope, input) => update(scope, input, "active", true),
     setStatus: (scope, input) => update(scope, input, input.status, false),

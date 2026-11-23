@@ -33,7 +33,16 @@ export async function forwardF4CodexProcessResult({ child, observer, receiveWork
     ]);
     if (receipt === null) return unavailable();
     clearTimeout(timer);
-    return await receiveWorkerResult(receipt);
+    // A timeout here is ambiguous: the Result may already be durable.
+    // Retry reconciliation for this receipt, not the Worker dispatch.
+    return await Promise.race([
+      receiveWorkerResult(receipt),
+      new Promise(resolve => {
+        timer = setTimeout(() => resolve({
+          ok: false, reason: "codex_result_reconciliation_unknown",
+        }), timeoutMs);
+      }),
+    ]);
   } catch {
     return unavailable();
   } finally {

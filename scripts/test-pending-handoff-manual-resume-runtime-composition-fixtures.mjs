@@ -1588,7 +1588,7 @@ await group("native RPL-95 and RPL-118 composition", async () => {
     const userLocalState = userLocalStateFixture();
     const location = userLocalState.api.resolveUserLocalStateLocation("/repo", "test.json");
     const binding = f4PhysicalStateBindingFromLocation(location).value;
-    const observer = createF4CodexTurnObservation({
+    const createObserver = () => createF4CodexTurnObservation({
       threadId: "test-thread", turnId: "test-turn", testItemId: "test-item",
       evidenceRef: "evidence/1",
       binding: {
@@ -1596,6 +1596,7 @@ await group("native RPL-95 and RPL-118 composition", async () => {
         scopeRevision: FIXTURE_SCOPE.scopeRevision, candidateId: request().candidate_id,
         actionKind: "manual_resume", attemptId: ATTEMPT, candidateRevision: 1,
         claimRevision: 2, associationId: "association", actorId: SESSION_OWNER,
+        writerSessionId: SESSION_SOURCE, associationRevision: 1,
         runtimeId: "codex", executionId: "provider-execution", repositoryId: REPOSITORY,
         worktreeId: WORKTREE, stateRootId: binding.state_root_identity,
         repositoryInstanceId: binding.repository_instance_id, physicalWorktreeId: binding.physical_worktree_id,
@@ -1603,6 +1604,9 @@ await group("native RPL-95 and RPL-118 composition", async () => {
         testPlanId: "targeted", testPlanDigest: "c".repeat(64),
       },
     });
+    const observer = createObserver();
+    const failedObserver = createObserver();
+    const lateObserver = createObserver();
     const testEvent = threadId => ({ method: "item/completed", params: {
       threadId, turnId: "test-turn",
       item: { id: "test-item", type: "commandExecution", status: "completed", exitCode: 0 },
@@ -1612,18 +1616,24 @@ await group("native RPL-95 and RPL-118 composition", async () => {
       params: { threadId: "test-thread", turn: { id: "test-turn", status: "completed" } },
     };
     let reconciliations = 0;
+    let writerReplaced = false;
     let sourceRevision = "jira-snapshot/f4-fixture-1";
     const built = build({
       nativeComposition: true,
       userLocalState,
-      taskWriterHost: { scope: writerScope, associationStore: activeWriterStore },
+      taskWriterHost: { scope: writerScope, associationStore: {
+        read: () => writerReplaced ? { revision: 2, associations: [{
+          role: "writer", status: "active", runtimeId: "codex", sessionId: SESSION_OWNER,
+        }] } : activeWriterStore.read(),
+      } },
       resolveApprovedWorkstreamForManualResume: () => ({
         ...fixtureApprovedWorkstream(),
         inventorySourceRevision: sourceRevision,
       }),
       workerResultHost: {
         expectedBinding: binding,
-        resolveTrustedTurn: observer.resolveTrustedTurn,
+        resolveTrustedTurn: receipt => observer.resolveTrustedTurn(receipt) ?? failedObserver.resolveTrustedTurn(receipt)
+          ?? lateObserver.resolveTrustedTurn(receipt),
         reconcileInventory: () => { reconciliations++; return "applied"; },
         withCurrentInventoryResult: ({ digest }, project) => project({
           approvedScope: FIXTURE_SCOPE,
@@ -1645,12 +1655,31 @@ await group("native RPL-95 and RPL-118 composition", async () => {
     assert.equal(observer.getReceipt(), null);
     assert.equal((await built.composition.executeManualResume(request())).value.outcome, "resume_accepted");
     assert.deepEqual(await built.composition.receiveWorkerResult({}), { ok: false, reason: "worker_result_unverified" });
-    const child = new EventEmitter();
-    child.stdout = Readable.from([Buffer.from(
-      [testEvent("other-thread"), testEvent("test-thread"), terminalEvent].map(event => JSON.stringify(event)).join("\n") + "\n",
-    )]);
-    child.kill = () => assert.fail("clean App Server shutdown must not be killed");
-    queueMicrotask(() => child.emit("close", 0, null));
+    const processFixture = exitCode => {
+      const child = new EventEmitter();
+      child.stdout = Readable.from([Buffer.from(
+        [testEvent("other-thread"), testEvent("test-thread"), terminalEvent].map(event => JSON.stringify(event)).join("\n") + "\n",
+      )]);
+      child.kill = () => assert.fail("a closed App Server must not be killed");
+      queueMicrotask(() => child.emit("close", exitCode, null));
+      return child;
+    };
+    assert.deepEqual(await built.composition.forwardCodexProcessResult({
+      child: processFixture(1), observer: failedObserver, timeoutMs: 5000,
+    }), { ok: false, reason: "codex_result_unavailable" });
+    const failedReceipt = failedObserver.getReceipt();
+    assert.ok(failedReceipt);
+    assert.deepEqual(await built.composition.receiveWorkerResult(failedReceipt), {
+      ok: false, reason: "worker_result_unverified",
+    });
+    assert.equal(reconciliations, 0);
+    writerReplaced = true;
+    assert.deepEqual(await built.composition.forwardCodexProcessResult({
+      child: processFixture(0), observer: lateObserver, timeoutMs: 5000,
+    }), { ok: false, reason: "worker_result_reconciliation_pending", resultRecorded: true });
+    assert.equal(reconciliations, 0);
+    writerReplaced = false;
+    const child = processFixture(0);
     assert.deepEqual(await built.composition.forwardCodexProcessResult({ child, observer, timeoutMs: 5000 }), {
       ok: true, resultRecorded: true, reconciliation: "applied",
     });
