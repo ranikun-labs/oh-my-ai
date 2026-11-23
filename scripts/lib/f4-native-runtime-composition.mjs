@@ -1,4 +1,8 @@
 import path from "node:path";
+import { createF4ClaudeSessionResultVerifier } from "./f4-claude-session-result.mjs";
+import { forwardF4CodexProcessResult } from "./f4-codex-result-handoff.mjs";
+import { createF4CodexTurnResultVerifier } from "./f4-codex-turn-result.mjs";
+import { bindTaskWriterRuntime } from "./task-session-resume-resolution.mjs";
 import { sameF4PhysicalStateBinding } from "./f4-physical-state-binding.mjs";
 import { createF4WorkerResultCheckpointReconciler } from "./f4-worker-result-checkpoint.mjs";
 import { createF4ManagedWorkerResultHandler } from "./f4-worker-result-store.mjs";
@@ -32,6 +36,7 @@ const REQUIRED_KEYS = Object.freeze([
 const OPTIONAL_KEYS = Object.freeze([
   "manualResumeServiceFactory",
   "workerResultHost",
+  "taskWriterHost",
   "stateRootOptions",
   "verifyWorktreeStateBinding",
   "verifyScopeCheckpointStateRootBinding",
@@ -125,6 +130,8 @@ export function createPendingHandoffF4NativeRuntimeComposition(options) {
   });
   if (!checkpointStore.ok) return failure("scope_checkpoint_store_unavailable");
 
+  const writer = resolveTaskWriterHost(input.values);
+  if (!writer.ok) return writer;
   const capabilityContext = createCapabilityContextBridge(
     baseCapabilityContext,
     input.values.resolveCapabilityMvpContext,
@@ -133,12 +140,13 @@ export function createPendingHandoffF4NativeRuntimeComposition(options) {
     input.values.repositoryCwd,
     recordProvider.readPhysicalStateBinding,
     checkpointStore.value,
+    writer.value.scope,
   );
   const compositionOptions = {
     store: input.values.store,
     claimLease: input.values.claimLease,
     attemptOutcomeStore: attemptStoreResult.value,
-    runtimeEntries: input.values.runtimeEntries,
+    runtimeEntries: writer.value.runtimeEntries,
     capabilityContext,
   };
   if (Object.hasOwn(input.values, "manualResumeServiceFactory")) {
@@ -157,21 +165,90 @@ export function createPendingHandoffF4NativeRuntimeComposition(options) {
   }));
 }
 
+// The Host selects the task; the existing approval and checkpoint checks
+// independently verify that this candidate belongs to that workstream.
+function resolveTaskWriterHost(options) {
+  if (!Object.hasOwn(options, "taskWriterHost")) {
+    return success({ scope: null, runtimeEntries: options.runtimeEntries });
+  }
+  if (Object.hasOwn(options, "manualResumeServiceFactory")) return failure("task_writer_host_invalid");
+  const host = inspectExactDataObject(options.taskWriterHost, ["scope", "associationStore"]);
+  if (!host.ok) return failure("task_writer_host_invalid");
+  const scope = inspectExactDataObject(host.values.scope, ["taskRef", "repositoryId", "worktreeId"]);
+  const store = inspectExactDataObject(host.values.associationStore, ["read"], ["link", "setStatus"]);
+  if (!scope.ok || !store.ok || typeof store.values.read !== "function"
+    || utilTypes.isProxy(store.values.read)
+    || !Array.isArray(options.runtimeEntries) || utilTypes.isProxy(options.runtimeEntries)
+    || Object.getPrototypeOf(options.runtimeEntries) !== Array.prototype
+    || Reflect.ownKeys(options.runtimeEntries).length !== options.runtimeEntries.length + 1) {
+    return failure("task_writer_host_invalid");
+  }
+  const runtimeEntries = [];
+  for (let index = 0; index < options.runtimeEntries.length; index += 1) {
+    const entry = inspectExactDataObject(
+      ownDataArrayEntry(options.runtimeEntries, index),
+      ["runtime_id", "sessionResolution", "manualResumeAction"],
+    );
+    if (!entry.ok) return failure("task_writer_host_invalid");
+    const resolution = inspectExactDataObject(entry.values.sessionResolution, [
+      "resolveCurrentSession", "resolveTargetSession",
+    ]);
+    if (!resolution.ok || typeof resolution.values.resolveCurrentSession !== "function"
+      || typeof resolution.values.resolveTargetSession !== "function"
+      || utilTypes.isProxy(resolution.values.resolveCurrentSession)
+      || utilTypes.isProxy(resolution.values.resolveTargetSession)) {
+      return failure("task_writer_host_invalid");
+    }
+    const action = inspectExactDataObject(entry.values.manualResumeAction, ["supported"], ["executor"]);
+    if (!action.ok || typeof action.values.supported !== "boolean") return failure("task_writer_host_invalid");
+    const executor = action.values.supported
+      ? inspectExactDataObject(action.values.executor, ["resolveAndResume"])
+      : null;
+    if ((executor && (!executor.ok || typeof executor.values.resolveAndResume !== "function"
+      || utilTypes.isProxy(executor.values.resolveAndResume)))
+      || (!action.values.supported && Object.hasOwn(action.values, "executor"))) {
+      return failure("task_writer_host_invalid");
+    }
+    const bound = bindTaskWriterRuntime({
+      associationStore: store.values,
+      scope: scope.values,
+      sessionResolution: resolution.values,
+      executor: executor?.values,
+    });
+    runtimeEntries.push({
+      ...entry.values,
+      sessionResolution: bound.sessionResolution,
+      manualResumeAction: bound.executor
+        ? { supported: true, executor: bound.executor }
+        : action.values,
+    });
+  }
+  return success({ scope: scope.values, runtimeEntries });
+}
+
+function ownDataArrayEntry(array, index) {
+  const descriptor = Object.getOwnPropertyDescriptor(array, String(index));
+  return isEnumerableDataDescriptor(descriptor) ? descriptor.value : undefined;
+}
+
 function bindWorkerResultHost(options, recordProvider, physicalBinding, attemptStore, statePorts, checkpointStore) {
   if (!Object.hasOwn(options, "workerResultHost")) return success({});
   const host = inspectExactDataObject(options.workerResultHost, [
-    "expectedBinding", "verifyResult", "reconcileInventory",
-  ], ["withCurrentInventoryResult"]);
+    "expectedBinding", "reconcileInventory",
+  ], ["verifyResult", "resolveTrustedTurn", "resolveTrustedClaudeResult", "withCurrentInventoryResult"]);
   const expected = host.ok && inspectExactDataObject(host.values.expectedBinding, [
     "contract", "state_root_identity", "repository_instance_id", "physical_worktree_id",
   ]);
+  const verifiers = host.ok ? ["verifyResult", "resolveTrustedTurn", "resolveTrustedClaudeResult"]
+    .filter(key => Object.hasOwn(host.values, key)) : [];
   if (!expected.ok || !sameF4PhysicalStateBinding(expected.values, physicalBinding)
-    || typeof host.values.verifyResult !== "function" || utilTypes.isProxy(host.values.verifyResult)
+    || verifiers.length === 0 || (verifiers.includes("verifyResult") && verifiers.length !== 1)
+    || verifiers.some(key => typeof host.values[key] !== "function" || utilTypes.isProxy(host.values[key]))
     || typeof statePorts.confirmUserLocalStateDurability !== "function"
     || typeof host.values.reconcileInventory !== "function" || utilTypes.isProxy(host.values.reconcileInventory)) {
     return failure("worker_result_host_unverified");
   }
-  const { verifyResult, reconcileInventory, withCurrentInventoryResult } = host.values;
+  const { reconcileInventory, withCurrentInventoryResult } = host.values;
   if (Object.hasOwn(host.values, "withCurrentInventoryResult")
     && (typeof withCurrentInventoryResult !== "function" || utilTypes.isProxy(withCurrentInventoryResult))) {
     return failure("worker_result_host_unverified");
@@ -184,21 +261,34 @@ function bindWorkerResultHost(options, recordProvider, physicalBinding, attemptS
   });
   const attempt = createPendingHandoffManualResumeAttemptOutcomeService({ store: attemptStore });
   if (!attempt.ok) return attempt;
+  const createReceiver = verifyResult => createF4ManagedWorkerResultHandler({
+    cwd: options.repositoryCwd,
+    userLocalState: statePorts,
+    stateRootOptions: recordProvider.stateRootOptions,
+    expectedBinding: physicalBinding,
+    attemptOutcome: attempt.value,
+    verifyResult,
+    reconcileInventory: async request => {
+      const inventoryStatus = await reconcileInventory(request);
+      if (projectResult && ["applied", "already_applied"].includes(inventoryStatus)) {
+        return projectResult(request);
+      }
+      return inventoryStatus;
+    },
+  });
+  const receiveCodexResult = host.values.resolveTrustedTurn === undefined ? null
+    : createReceiver(createF4CodexTurnResultVerifier({ resolveTrustedTurn: host.values.resolveTrustedTurn }));
+  const receiveClaudeResult = host.values.resolveTrustedClaudeResult === undefined ? null
+    : createReceiver(createF4ClaudeSessionResultVerifier({
+      resolveTrustedClaudeResult: host.values.resolveTrustedClaudeResult,
+    }));
   return success({
-    receiveWorkerResult: createF4ManagedWorkerResultHandler({
-      cwd: options.repositoryCwd,
-      userLocalState: statePorts,
-      stateRootOptions: recordProvider.stateRootOptions,
-      expectedBinding: physicalBinding,
-      attemptOutcome: attempt.value,
-      verifyResult,
-      reconcileInventory: async request => {
-        const inventoryStatus = await reconcileInventory(request);
-        if (projectResult && ["applied", "already_applied"].includes(inventoryStatus)) {
-          return projectResult(request);
-        }
-        return inventoryStatus;
-      },
+    receiveWorkerResult: host.values.verifyResult === undefined
+      ? receiveCodexResult ?? receiveClaudeResult : createReceiver(host.values.verifyResult),
+    ...(receiveClaudeResult === null ? {} : { receiveClaudeResult }),
+    ...(receiveCodexResult === null ? {} : {
+      forwardCodexProcessResult: ({ child, observer, timeoutMs }) =>
+        forwardF4CodexProcessResult({ child, observer, timeoutMs, receiveWorkerResult: receiveCodexResult }),
     }),
   });
 }
@@ -274,6 +364,7 @@ function createCapabilityContextBridge(
   repositoryCwd,
   readPhysicalStateBinding,
   checkpointStore,
+  taskWriterScope,
 ) {
   return Object.freeze({
     resolveManualResumeContext: async request => {
@@ -346,6 +437,7 @@ function createCapabilityContextBridge(
         baseContext,
         context.values,
         decision,
+        taskWriterScope,
       );
       if (!scopeVerified) return failure("manual_resume_scope_coverage_unverified");
 
@@ -364,6 +456,7 @@ async function verifyApprovedReadyWorkstream(
   baseContext,
   capabilityContext,
   decision,
+  taskWriterScope,
 ) {
   let resolved;
   try {
@@ -393,6 +486,13 @@ async function verifyApprovedReadyWorkstream(
     || ownData(resolved, "inventoryCoverage") !== "COMPLETE"
     || !isNonEmptyString(ownData(resolved, "inventorySourceUri"))
     || !isNonEmptyString(ownData(resolved, "inventorySourceRevision"))) return false;
+
+  if (taskWriterScope !== null) {
+    const candidate = ownData(request, "persisted_candidate");
+    if (approved.values.workstreamId !== taskWriterScope.taskRef
+      || ownData(candidate, "repository_identity") !== taskWriterScope.repositoryId
+      || ownData(candidate, "worktree_identity") !== taskWriterScope.worktreeId) return false;
+  }
 
   let stored;
   try {

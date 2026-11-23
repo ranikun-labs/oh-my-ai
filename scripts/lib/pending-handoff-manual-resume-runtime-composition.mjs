@@ -194,6 +194,13 @@ async function executeReservedManualResume(dependencies, input) {
     return failure("manual_resume_claim_outcome_unknown");
   }
 
+  try {
+    if (entry.executor.canDispatch && entry.executor.canDispatch(actionRequest.value) !== true) {
+      return failure("manual_resume_pre_dispatch_blocked");
+    }
+  } catch {
+    return failure("manual_resume_pre_dispatch_blocked");
+  }
   const dispatchStarted = await dependencies.attemptOutcome.markDispatchStarted({
     identity: attemptBoundary.attemptIdentity,
     expected_attempt_revision: attemptBoundary.attemptRevision,
@@ -394,7 +401,7 @@ function inspectAction(value) {
   if (ownKeys.length !== ACTION_KEYS.length || ownKeys.some(key => !ACTION_KEYS.includes(key))) {
     return failure("invalid");
   }
-  const executor = snapshotFacade(value.executor, EXECUTOR_KEYS);
+  const executor = snapshotFacade(value.executor, EXECUTOR_KEYS, ["canDispatch"]);
   if (executor === null) return failure("invalid");
   return success({ supported: true, executor });
 }
@@ -1028,7 +1035,7 @@ function inspectExactDataObject(value, expectedKeys, options = {}) {
   }
 }
 
-function snapshotFacade(value, requiredKeys) {
+function snapshotFacade(value, requiredKeys, optionalKeys = []) {
   try {
     if (utilTypes.isProxy(value) || !isPlainObject(value)) return null;
     const ownKeys = Reflect.ownKeys(value);
@@ -1040,7 +1047,8 @@ function snapshotFacade(value, requiredKeys) {
       values[key] = descriptor.value;
     }
     for (const key of requiredKeys) if (!Object.hasOwn(values, key)) return null;
-    return Object.freeze(Object.fromEntries(requiredKeys.map(key => [key, values[key]])));
+    return Object.freeze(Object.fromEntries([...requiredKeys, ...optionalKeys.filter(key => Object.hasOwn(values, key))]
+      .map(key => [key, values[key]])));
   } catch {
     return null;
   }

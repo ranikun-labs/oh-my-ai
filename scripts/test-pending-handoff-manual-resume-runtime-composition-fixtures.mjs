@@ -1,3 +1,6 @@
+import { createF4CodexTurnObservation } from "./lib/f4-codex-turn-observation.mjs";
+import { EventEmitter } from "node:events";
+import { Readable } from "node:stream";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
@@ -616,6 +619,7 @@ function build(options = {}) {
       }),
       ...(options.stateRootOptions === undefined ? {} : { stateRootOptions: options.stateRootOptions }),
       ...(options.workerResultHost === undefined ? {} : { workerResultHost: options.workerResultHost }),
+      ...(options.taskWriterHost === undefined ? {} : { taskWriterHost: options.taskWriterHost }),
     });
   } else {
     built = moduleNamespace.createPendingHandoffManualResumeRuntimeComposition(dependencies);
@@ -1540,33 +1544,86 @@ await group("native RPL-95 and RPL-118 composition", async () => {
     assert.ok(persisted.some(record => record.checkpoint?.scopeRevision === FIXTURE_SCOPE.scopeRevision));
   });
 
+  const writerScope = { taskRef: "RPL-120", repositoryId: REPOSITORY, worktreeId: WORKTREE };
+  const activeWriterStore = { read: () => ({ revision: 1, associations: [
+    { role: "writer", status: "active", runtimeId: "codex", sessionId: SESSION_SOURCE },
+  ] }) };
+
+  await test("a different Host task or missing Writer cannot acquire a Claim", async () => {
+    for (const taskWriterHost of [
+      { scope: { ...writerScope, taskRef: "OTHER" }, associationStore: activeWriterStore },
+      { scope: writerScope, associationStore: { read: () => ({ revision: 0, associations: [] }) } },
+    ]) {
+      const built = build({ nativeComposition: true, taskWriterHost });
+      assert.equal((await built.composition.executeManualResume(request())).ok, false);
+      assert.equal(built.calls.some(([name]) => name === "acquireClaim"), false);
+      assert.equal(built.calls.some(([name]) => name === "codex.resolveAndResume"), false);
+    }
+  });
+
+  await test("a Writer removed while acquiring Claim is not sent to the runtime", async () => {
+    let removed = false;
+    let dispatches = 0;
+    const built = build({
+      nativeComposition: true,
+      taskWriterHost: { scope: writerScope, associationStore: {
+        read: () => removed ? { revision: 2, associations: [] } : activeWriterStore.read(),
+      } },
+      claimLease: { acquireClaimForDispatch: async input => {
+        removed = true;
+        return success({ state_revision: 2, claim_attempt_id: input.claim_attempt_id,
+          claim_lease_expires_at: "2026-08-01T01:00:00.000Z" });
+      } },
+      executor: { resolveAndResume: () => { dispatches += 1; return success(receipt()); } },
+    });
+    assert.equal((await built.composition.executeManualResume(request())).ok, false);
+    assert.equal(removed, true);
+    assert.equal(dispatches, 0);
+    const records = [...built.userLocalState.records.values()].map(contents => JSON.parse(contents));
+    assert.ok(records.some(record => record.value?.status === "claim_bound"));
+    assert.ok(records.every(record => record.value?.status !== "dispatch_unknown"));
+  });
+
   await test("only a bound Result Host can record an authenticated dispatch result", async () => {
     const userLocalState = userLocalStateFixture();
     const location = userLocalState.api.resolveUserLocalStateLocation("/repo", "test.json");
     const binding = f4PhysicalStateBindingFromLocation(location).value;
-    const proof = {};
+    const observer = createF4CodexTurnObservation({
+      threadId: "test-thread", turnId: "test-turn", testItemId: "test-item",
+      evidenceRef: "evidence/1",
+      binding: {
+        objectiveId: FIXTURE_SCOPE.objectiveId, workstreamId: "RPL-120",
+        scopeRevision: FIXTURE_SCOPE.scopeRevision, candidateId: request().candidate_id,
+        actionKind: "manual_resume", attemptId: ATTEMPT, candidateRevision: 1,
+        claimRevision: 2, associationId: "association", actorId: SESSION_OWNER,
+        runtimeId: "codex", executionId: "provider-execution", repositoryId: REPOSITORY,
+        worktreeId: WORKTREE, stateRootId: binding.state_root_identity,
+        repositoryInstanceId: binding.repository_instance_id, physicalWorktreeId: binding.physical_worktree_id,
+        commit: "a".repeat(40), tree: "b".repeat(40), environmentId: "env",
+        testPlanId: "targeted", testPlanDigest: "c".repeat(64),
+      },
+    });
+    const testEvent = threadId => ({ method: "item/completed", params: {
+      threadId, turnId: "test-turn",
+      item: { id: "test-item", type: "commandExecution", status: "completed", exitCode: 0 },
+    } });
+    const terminalEvent = {
+      method: "turn/completed",
+      params: { threadId: "test-thread", turn: { id: "test-turn", status: "completed" } },
+    };
     let reconciliations = 0;
     let sourceRevision = "jira-snapshot/f4-fixture-1";
     const built = build({
       nativeComposition: true,
       userLocalState,
+      taskWriterHost: { scope: writerScope, associationStore: activeWriterStore },
       resolveApprovedWorkstreamForManualResume: () => ({
         ...fixtureApprovedWorkstream(),
         inventorySourceRevision: sourceRevision,
       }),
       workerResultHost: {
         expectedBinding: binding,
-        verifyResult: observation => observation === proof ? {
-          objectiveId: FIXTURE_SCOPE.objectiveId, workstreamId: "RPL-120",
-          scopeRevision: FIXTURE_SCOPE.scopeRevision, candidateId: request().candidate_id,
-          actionKind: "manual_resume", attemptId: ATTEMPT, candidateRevision: 1,
-          claimRevision: 2, associationId: "association", actorId: SESSION_OWNER,
-          runtimeId: "codex", executionId: "provider-execution", repositoryId: REPOSITORY,
-          worktreeId: WORKTREE, stateRootId: binding.state_root_identity,
-          repositoryInstanceId: binding.repository_instance_id, physicalWorktreeId: binding.physical_worktree_id,
-          commit: "a".repeat(40), tree: "b".repeat(40), environmentId: "env",
-          testPlanId: "targeted", testPlanDigest: "c".repeat(64), outcome: "passed", evidenceRef: "evidence/1",
-        } : null,
+        resolveTrustedTurn: observer.resolveTrustedTurn,
         reconcileInventory: () => { reconciliations++; return "applied"; },
         withCurrentInventoryResult: ({ digest }, project) => project({
           approvedScope: FIXTURE_SCOPE,
@@ -1585,12 +1642,19 @@ await group("native RPL-95 and RPL-118 composition", async () => {
         }),
       },
     });
-    assert.deepEqual(await built.composition.receiveWorkerResult(proof), { ok: false, reason: "worker_result_unverified" });
+    assert.equal(observer.getReceipt(), null);
     assert.equal((await built.composition.executeManualResume(request())).value.outcome, "resume_accepted");
     assert.deepEqual(await built.composition.receiveWorkerResult({}), { ok: false, reason: "worker_result_unverified" });
-    assert.deepEqual(await built.composition.receiveWorkerResult(proof), {
+    const child = new EventEmitter();
+    child.stdout = Readable.from([Buffer.from(
+      [testEvent("other-thread"), testEvent("test-thread"), terminalEvent].map(event => JSON.stringify(event)).join("\n") + "\n",
+    )]);
+    child.kill = () => assert.fail("clean App Server shutdown must not be killed");
+    queueMicrotask(() => child.emit("close", 0, null));
+    assert.deepEqual(await built.composition.forwardCodexProcessResult({ child, observer, timeoutMs: 5000 }), {
       ok: true, resultRecorded: true, reconciliation: "applied",
     });
+    const proof = observer.getReceipt();
     const checkpoint = await built.composition.readScopeCheckpoint({ objectiveId: FIXTURE_SCOPE.objectiveId });
     assert.equal(checkpoint.value.statusSummary.DONE, 1);
     assert.equal(checkpoint.value.checkpointRevision, 2);
