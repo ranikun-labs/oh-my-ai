@@ -1,0 +1,18 @@
+#!/bin/sh
+set -eu
+
+if [ "$#" -ne 1 ] || [ "$1" != update ]; then
+  printf '%s\n' 'usage: ohmai update' >&2
+  exit 2
+fi
+
+script="$0"
+if [ -L "$script" ]; then
+  target="$(readlink "$script")"
+  case "$target" in
+    /*) script="$target" ;;
+    *) script="$(dirname "$script")/$target" ;;
+  esac
+fi
+repo="$(CDPATH= cd -- "$(dirname "$script")/.." && pwd -P)"
+exec make -C "$repo" update
