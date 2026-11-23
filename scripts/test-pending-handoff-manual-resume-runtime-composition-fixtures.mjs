@@ -1617,11 +1617,14 @@ await group("native RPL-95 and RPL-118 composition", async () => {
     };
     let reconciliations = 0;
     let writerReplaced = false;
+    let replaceBeforePublication = false;
     let sourceRevision = "jira-snapshot/f4-fixture-1";
     const built = build({
       nativeComposition: true,
       userLocalState,
       taskWriterHost: { scope: writerScope, associationStore: {
+        withCurrentWriter: (_scope, identity, publish) =>
+          !writerReplaced && identity.revision === 1 && identity.sessionId === SESSION_SOURCE ? publish() : "pending",
         read: () => writerReplaced ? { revision: 2, associations: [{
           role: "writer", status: "active", runtimeId: "codex", sessionId: SESSION_OWNER,
         }] } : activeWriterStore.read(),
@@ -1634,7 +1637,11 @@ await group("native RPL-95 and RPL-118 composition", async () => {
         expectedBinding: binding,
         resolveTrustedTurn: receipt => observer.resolveTrustedTurn(receipt) ?? failedObserver.resolveTrustedTurn(receipt)
           ?? lateObserver.resolveTrustedTurn(receipt),
-        reconcileInventory: () => { reconciliations++; return "applied"; },
+        reconcileInventory: async (_request, publish) => {
+          await Promise.resolve();
+          if (replaceBeforePublication) writerReplaced = true;
+          return publish(() => { reconciliations++; return "applied"; });
+        },
         withCurrentInventoryResult: ({ digest }, project) => project({
           approvedScope: FIXTURE_SCOPE,
           resultDigest: digest,
@@ -1679,6 +1686,13 @@ await group("native RPL-95 and RPL-118 composition", async () => {
     }), { ok: false, reason: "worker_result_reconciliation_pending", resultRecorded: true });
     assert.equal(reconciliations, 0);
     writerReplaced = false;
+    replaceBeforePublication = true;
+    assert.deepEqual(await built.composition.receiveWorkerResult(lateObserver.getReceipt()), {
+      ok: false, reason: "worker_result_reconciliation_pending", resultRecorded: true,
+    });
+    assert.equal(reconciliations, 0);
+    writerReplaced = false;
+    replaceBeforePublication = false;
     const child = processFixture(0);
     assert.deepEqual(await built.composition.forwardCodexProcessResult({ child, observer, timeoutMs: 5000 }), {
       ok: true, resultRecorded: true, reconciliation: "applied",

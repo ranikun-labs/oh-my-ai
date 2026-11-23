@@ -175,7 +175,7 @@ function resolveTaskWriterHost(options) {
   const host = inspectExactDataObject(options.taskWriterHost, ["scope", "associationStore"]);
   if (!host.ok) return failure("task_writer_host_invalid");
   const scope = inspectExactDataObject(host.values.scope, ["taskRef", "repositoryId", "worktreeId"]);
-  const store = inspectExactDataObject(host.values.associationStore, ["read"], ["link", "setStatus", "replaceWriter"]);
+  const store = inspectExactDataObject(host.values.associationStore, ["read"], ["link", "setStatus", "replaceWriter", "withCurrentWriter"]);
   if (!scope.ok || !store.ok || typeof store.values.read !== "function"
     || utilTypes.isProxy(store.values.read)
     || !Array.isArray(options.runtimeEntries) || utilTypes.isProxy(options.runtimeEntries)
@@ -254,8 +254,15 @@ function bindWorkerResultHost(options, recordProvider, physicalBinding, attemptS
     && (typeof withCurrentInventoryResult !== "function" || utilTypes.isProxy(withCurrentInventoryResult))) {
     return failure("worker_result_host_unverified");
   }
+  const writerBound = Object.hasOwn(options, "taskWriterHost");
+  const writerLock = writerBound
+    ? ownData(ownData(options.taskWriterHost, "associationStore"), "withCurrentWriter") : null;
+  if (writerBound && (typeof writerLock !== "function" || utilTypes.isProxy(writerLock))) {
+    return failure("worker_result_host_unverified");
+  }
+
   function isCurrentWriter(record) {
-    if (host.values.verifyResult !== undefined) return true;
+    if (!writerBound) return true;
     try {
       const { scope, associationStore } = options.taskWriterHost;
       if (record.workstreamId !== scope.taskRef || record.repositoryId !== scope.repositoryId
@@ -289,7 +296,24 @@ function bindWorkerResultHost(options, recordProvider, physicalBinding, attemptS
     verifyResult,
     reconcileInventory: async request => {
       if (!isCurrentWriter(request.record)) return "pending";
-      const inventoryStatus = await reconcileInventory(request);
+      if (writerBound && request.record.outcome !== "passed") return "pending";
+      let publicationStatus;
+      let publicationOpen = true;
+      let inventoryStatus;
+      try {
+        inventoryStatus = await reconcileInventory(request, writerBound ? publish => {
+          if (!publicationOpen || publicationStatus !== undefined || typeof publish !== "function") return "pending";
+          const { record } = request;
+          publicationStatus = writerLock(options.taskWriterHost.scope, {
+            runtimeId: record.runtimeId, sessionId: record.writerSessionId, revision: record.associationRevision,
+          }, publish);
+          return publicationStatus;
+        } : undefined);
+      } finally {
+        publicationOpen = false;
+      }
+      if (writerBound && (inventoryStatus !== publicationStatus
+        || !["applied", "already_applied"].includes(publicationStatus))) return "pending";
       if (projectResult && ["applied", "already_applied"].includes(inventoryStatus)) {
         return projectResult(request);
       }

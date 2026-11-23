@@ -80,6 +80,15 @@ export function createTaskSessionAssociationStore({ cwd, stateRootOptions }) {
   }
 
   return Object.freeze({
+    withCurrentWriter(scope, { runtimeId, sessionId, revision }, publish) {
+      return access(scope, current => {
+        const writers = current.associations.filter(record => record.role === "writer" && record.status === "active");
+        if (current.revision !== revision || writers.length !== 1
+          || writers[0].runtimeId !== runtimeId || writers[0].sessionId !== sessionId) return "pending";
+        // The trusted publisher must finish its Inventory CAS synchronously under this lock.
+        return publish();
+      });
+    },
     replaceWriter(scope, { previous, successor, expectedRevision }) {
       const next = requireAssociation({
         runtimeId: successor.runtimeId, sessionId: successor.sessionId, role: "writer", status: "active",

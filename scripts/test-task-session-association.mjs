@@ -70,6 +70,10 @@ try {
     previous: first, successor: second, expectedRevision: 1,
   });
   assert.equal(handoff.revision, 2);
+  assert.equal(store.withCurrentWriter(abandoned, { ...first, revision: 1 },
+    () => assert.fail("detached Writer must not publish")), "pending");
+  assert.equal(store.withCurrentWriter(abandoned, { ...second, revision: 2 },
+    () => "applied"), "applied");
   assert.deepEqual(open().read(abandoned).associations, [
     { ...first, status: "detached" }, { ...second, status: "active" },
   ]);
