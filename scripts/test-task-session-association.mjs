@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createTaskSessionAssociationStore } from "./lib/task-session-association.mjs";
@@ -78,6 +78,29 @@ try {
     { ...first, status: "detached" }, { ...second, status: "active" },
   ]);
   assert.equal(open().read(scope).associations[0].status, "completed");
+  // Exercise the real Association lock and a synchronous filesystem CAS
+  // using independent store handles. The file is isolated test data.
+  const inventoryPath = path.join(directory, "test-inventory.json");
+  writeFileSync(inventoryPath, JSON.stringify({ revision: 1, status: "READY" }));
+  const readInventory = () => JSON.parse(readFileSync(inventoryPath, "utf8"));
+  const publishInventory = () => {
+    if (readInventory().revision !== 1) return "pending";
+    writeFileSync(inventoryPath, JSON.stringify({ revision: 2, status: "DONE" }));
+    return "applied";
+  };
+  const inFlight = { ...scope, taskRef: "TASK-4" };
+  store.link(inFlight, { ...first, expectedRevision: 0 });
+  assert.equal(store.withCurrentWriter(inFlight, { ...first, revision: 1 },
+    async () => publishInventory()), "pending");
+  assert.equal(readInventory().status, "READY");
+
+  const delayedPublication = Promise.resolve().then(() =>
+    store.withCurrentWriter(inFlight, { ...first, revision: 1 }, publishInventory));
+  open().replaceWriter(inFlight, { previous: first, successor: second, expectedRevision: 1 });
+  assert.equal(await delayedPublication, "pending");
+  assert.deepEqual(readInventory(), { revision: 1, status: "READY" });
+  assert.equal(store.withCurrentWriter(inFlight, { ...second, revision: 2 }, publishInventory), "applied");
+  assert.deepEqual(readInventory(), { revision: 2, status: "DONE" });
   console.log("Task-session association and fresh Writer resolution PASS");
 } finally {
   rmSync(directory, { recursive: true, force: true });

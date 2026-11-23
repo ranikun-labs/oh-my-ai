@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { types as utilTypes } from "node:util";
 import { validateOpaqueIdentity } from "./pending-handoff-identity.mjs";
 import {
   publishUserLocalStateAtomically,
@@ -81,6 +82,9 @@ export function createTaskSessionAssociationStore({ cwd, stateRootOptions }) {
 
   return Object.freeze({
     withCurrentWriter(scope, { runtimeId, sessionId, revision }, publish) {
+      if (typeof publish !== "function" || utilTypes.isProxy(publish) || utilTypes.isAsyncFunction(publish)) {
+        return "pending";
+      }
       return access(scope, current => {
         const writers = current.associations.filter(record => record.role === "writer" && record.status === "active");
         if (current.revision !== revision || writers.length !== 1
