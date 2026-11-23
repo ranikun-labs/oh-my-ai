@@ -202,6 +202,16 @@ make doctor-strict
 
 ### Branch-tracking 설치
 
+공유 설치를 한 번 갱신하면 `ohmyai`가 설치됩니다. `~/.local/bin`이
+`PATH`에 있으면 어느 폴더에서든 아래 명령을 실행할 수 있습니다.
+
+```bash
+ohmyai update
+```
+
+`ohmyai`는 설치 링크가 가리키는 oh-my-ai 저장소에서 `make update`를 실행합니다.
+
+
 `make update`는 `master` 같은 Git Branch를 추적하는 개발·검증용 Clone에서만 사용할 수 있습니다. Stable Tag 설치본에서는 사용하지 않습니다.
 
 ```bash
@@ -209,7 +219,7 @@ make update
 make doctor-strict
 ```
 
-Branch-tracking 설치는 최신 branch 변경을 추적하는 개발용 방식이며, Public Stable Release에 고정된 기본 설치가 아닙니다.
+`make update`는 현재 브랜치가 추적하는 원격 브랜치로 빠른 병합(fast-forward)한 뒤, 공유 지침과 스킬 설치를 갱신합니다. 커밋되지 않은 추적 파일 변경이 있거나 두 브랜치 이력이 갈라져 있으면 멈춥니다.
 
 ## 첫 실행
 

@@ -106,11 +106,14 @@ try {
   store.link(retryScope, { ...first, expectedRevision: 0 });
   const task = { id: retryScope.taskRef, commit: "pinned", checkpoint: "checkpoint" };
   let launches = 0;
+  let discarded = 0;
   const attempt = () => handoffF4Writer({
     scope: retryScope, task, previous: first, successor: second, expectedRevision: 1,
     associationStore: open(),
     restoreWorkspace: async () => ({ taskId: task.id, commit: task.commit, checkpoint: task.checkpoint }),
-    acceptHandoff: async () => true,
+    withFrozenSource: async (_input, run) => run(),
+    acceptHandoff: async () => retryScope,
+    discardWorkspace: async () => { discarded += 1; },
     launchWriter: async () => {
       assert.equal(store.withCurrentWriter(retryScope, { ...first, revision: 1 },
         () => assert.fail("old Writer result published")), "pending");
@@ -120,6 +123,7 @@ try {
   });
   const outcomes = await Promise.all([attempt(), attempt()]);
   assert.equal(launches, 1);
+  assert.equal(discarded, 1);
   assert.ok(outcomes.some(result => result.reason === "handoff_already_changed"));
   console.log("Task-session association and fresh Writer resolution PASS");
 } finally {

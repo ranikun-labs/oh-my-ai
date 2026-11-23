@@ -1,0 +1,20 @@
+#!/bin/sh
+set -eu
+
+if [ "$#" -ne 1 ] || [ "$1" != update ]; then
+  printf '%s\n' 'usage: ohmyai update' >&2
+  exit 2
+fi
+
+script="$0"
+if [ -L "$script" ]; then
+  target="$(readlink "$script")"
+  case "$target" in
+    /*) script="$target" ;;
+    *) script="$(dirname "$script")/$target" ;;
+  esac
+fi
+repo="$(CDPATH= cd -- "$(dirname "$script")/.." && pwd -P)"
+upstream="$(git -C "$repo" rev-parse --abbrev-ref '@{upstream}' 2>/dev/null || true)"
+printf 'ohmyai update: %s (%s)\n' "$repo" "${upstream:-no upstream}"
+exec make -C "$repo" update
