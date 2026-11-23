@@ -21,3 +21,32 @@ export async function continueF4Writer({ task, observeWriter, resumeWriter, hand
   // the restored source and checkpoint, then launch the accepted successor.
   return handoffWriter({ task, previousSession: observed.session ?? null });
 }
+
+// The Host proves the old session is stopped and provides a reserved successor
+// identity. Reserving an identity must not start execution.
+export async function handoffF4Writer({
+  scope, task, previous, successor, expectedRevision, associationStore,
+  restoreWorkspace, acceptHandoff, launchWriter,
+}) {
+  if (scope.taskRef !== task.id) return { ok: false, reason: "handoff_scope_mismatch" };
+  const workspace = await restoreWorkspace(task);
+  if (workspace.taskId !== task.id || workspace.commit !== task.commit
+    || workspace.checkpoint !== task.checkpoint
+    || await acceptHandoff({ scope, task, previous, successor, workspace }) !== true) {
+    return { ok: false, reason: "handoff_not_accepted" };
+  }
+
+  let assignment;
+  try {
+    assignment = associationStore.replaceWriter(scope, { previous, successor, expectedRevision });
+  } catch (error) {
+    if (error.message === "association_revision_conflict") return { ok: false, reason: "handoff_already_changed" };
+    throw error;
+  }
+  try {
+    return await launchWriter({ task, workspace, successor, associationRevision: assignment.revision });
+  } catch {
+    // The launch may have succeeded. Reconcile the assigned session before retry.
+    return { ok: false, reason: "recovery_required", associationRevision: assignment.revision };
+  }
+}

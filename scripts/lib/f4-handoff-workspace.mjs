@@ -10,19 +10,35 @@ function git(cwd, args, options = {}) {
 // refused because git diff cannot prove that they have been preserved.
 export function prepareF4HandoffWorkspace({ source, parentDirectory, task }) {
   const root = git(source, ["rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim();
-  const head = git(root, ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+  const snapshot = cwd => {
+    const read = args => git(cwd, args);
+    if (read(["ls-files", "--others", "--exclude-standard", "-z"]).length) {
+      throw new Error("handoff_untracked_requires_preservation");
+    }
+    if (read(["ls-files", "--others", "--ignored", "--exclude-standard", "-z"]).length) {
+      throw new Error("handoff_ignored_requires_preservation");
+    }
+    return {
+      head: read(["rev-parse", "HEAD"]).toString().trim(),
+      ref: read(["rev-parse", "--symbolic-full-name", "HEAD"]).toString().trim(),
+      index: read(["diff", "--cached", "--binary", "--no-ext-diff", "--no-textconv", "HEAD", "--"]),
+      worktree: read(["diff", "--binary", "--no-ext-diff", "--no-textconv", "--"]),
+    };
+  };
+  const before = snapshot(root);
+  const { head } = before;
   if (!task?.id || !task.checkpoint || task.commit !== head) throw new Error("handoff_context_mismatch");
-  if (git(root, ["ls-files", "--others", "--exclude-standard", "-z"]).length) {
-    throw new Error("handoff_untracked_requires_preservation");
-  }
-  const patch = git(root, ["diff", "--binary", "HEAD", "--"]);
   const destination = mkdtempSync(path.join(parentDirectory, "f4-handoff-"));
   try {
     git(parentDirectory, ["clone", "--quiet", "--no-hardlinks", "--no-local", "--no-checkout", root, destination]);
     git(destination, ["checkout", "--quiet", "--detach", head]);
-    if (patch.length) git(destination, ["apply", "--binary", "-"], { input: patch });
-    const restored = git(destination, ["diff", "--binary", "HEAD", "--"]);
-    if (!patch.equals(restored) || !patch.equals(git(root, ["diff", "--binary", "HEAD", "--"]))) {
+    if (before.index.length) git(destination, ["apply", "--index", "-"], { input: before.index });
+    if (before.worktree.length) git(destination, ["apply", "-"], { input: before.worktree });
+    const restored = snapshot(destination);
+    const after = snapshot(root);
+    const sameContent = state => state.head === head
+      && state.index.equals(before.index) && state.worktree.equals(before.worktree);
+    if (!sameContent(restored) || !sameContent(after) || after.ref !== before.ref) {
       throw new Error("handoff_source_changed");
     }
     return {

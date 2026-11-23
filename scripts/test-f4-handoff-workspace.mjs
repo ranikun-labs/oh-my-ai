@@ -13,12 +13,17 @@ try {
   git(dir, "add", "work.txt");
   git(dir, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "baseline");
   const commit = git(dir, "rev-parse", "HEAD");
+  writeFileSync(path.join(dir, "work.txt"), "staged\n");
+  writeFileSync(path.join(dir, "new.txt"), "new\n");
+  git(dir, "add", "work.txt", "new.txt");
   writeFileSync(path.join(dir, "work.txt"), "unfinished\n");
   const task = { id: "T-1", commit, checkpoint: "checkpoint", next: "test", testEvidence: "previous" };
   const result = prepareF4HandoffWorkspace({ source: dir, parentDirectory: os.tmpdir(), task });
   try {
     assert.equal(readFileSync(path.join(result.workspace, "work.txt"), "utf8"), "unfinished\n");
     assert.equal(readFileSync(path.join(dir, "work.txt"), "utf8"), "unfinished\n");
+    assert.equal(git(result.workspace, "show", ":work.txt"), "staged");
+    assert.equal(git(result.workspace, "show", ":new.txt"), "new");
     assert.equal(result.testEvidenceStatus, "REVALIDATION_REQUIRED");
   } finally {
     rmSync(result.workspace, { recursive: true, force: true });
@@ -27,6 +32,12 @@ try {
   assert.throws(() => prepareF4HandoffWorkspace({ source: dir, parentDirectory: os.tmpdir(), task }),
     /handoff_untracked_requires_preservation/);
   assert.equal(readFileSync(path.join(dir, "untracked"), "utf8"), "important\n");
+  rmSync(path.join(dir, "untracked"));
+  writeFileSync(path.join(dir, ".git", "info", "exclude"), "local.env\n");
+  writeFileSync(path.join(dir, "local.env"), "local input\n");
+  assert.throws(() => prepareF4HandoffWorkspace({ source: dir, parentDirectory: os.tmpdir(), task }),
+    /handoff_ignored_requires_preservation/);
+  assert.equal(readFileSync(path.join(dir, "local.env"), "utf8"), "local input\n");
 } finally {
   rmSync(dir, { recursive: true, force: true });
 }

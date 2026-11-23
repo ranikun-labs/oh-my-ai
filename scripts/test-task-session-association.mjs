@@ -1,3 +1,4 @@
+import { handoffF4Writer } from "./lib/f4-writer-continuation.mjs";
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -101,6 +102,25 @@ try {
   assert.deepEqual(readInventory(), { revision: 1, status: "READY" });
   assert.equal(store.withCurrentWriter(inFlight, { ...second, revision: 2 }, publishInventory), "applied");
   assert.deepEqual(readInventory(), { revision: 2, status: "DONE" });
+  const retryScope = { ...scope, taskRef: "TASK-5" };
+  store.link(retryScope, { ...first, expectedRevision: 0 });
+  const task = { id: retryScope.taskRef, commit: "pinned", checkpoint: "checkpoint" };
+  let launches = 0;
+  const attempt = () => handoffF4Writer({
+    scope: retryScope, task, previous: first, successor: second, expectedRevision: 1,
+    associationStore: open(),
+    restoreWorkspace: async () => ({ taskId: task.id, commit: task.commit, checkpoint: task.checkpoint }),
+    acceptHandoff: async () => true,
+    launchWriter: async () => {
+      assert.equal(store.withCurrentWriter(retryScope, { ...first, revision: 1 },
+        () => assert.fail("old Writer result published")), "pending");
+      launches += 1;
+      return { ok: true };
+    },
+  });
+  const outcomes = await Promise.all([attempt(), attempt()]);
+  assert.equal(launches, 1);
+  assert.ok(outcomes.some(result => result.reason === "handoff_already_changed"));
   console.log("Task-session association and fresh Writer resolution PASS");
 } finally {
   rmSync(directory, { recursive: true, force: true });
