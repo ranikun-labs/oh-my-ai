@@ -209,7 +209,7 @@ make update
 make doctor-strict
 ```
 
-Branch-tracking 설치는 최신 branch 변경을 추적하는 개발용 방식이며, Public Stable Release에 고정된 기본 설치가 아닙니다.
+`make update`는 현재 브랜치가 추적하는 원격 브랜치로 빠른 병합(fast-forward)한 뒤, 공유 지침과 스킬 설치를 갱신합니다. 커밋되지 않은 추적 파일 변경이 있거나 두 브랜치 이력이 갈라져 있으면 멈춥니다.
 
 ## 첫 실행
 

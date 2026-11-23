@@ -189,5 +189,11 @@ install-profile:
 	./setup.sh --install-profile --profile "$(PROFILE)"
 
 update:
-	git pull
+	@if ! git symbolic-ref --quiet HEAD >/dev/null || ! git rev-parse --verify --quiet '@{upstream}' >/dev/null; then \
+		echo 'make update requires a branch with an upstream. For a release tag, use the README release update steps.' >&2; exit 1; \
+	fi
+	@if [ -n "$$(git status --porcelain --untracked-files=no)" ]; then \
+		echo 'Commit or set aside tracked changes before running make update.' >&2; exit 1; \
+	fi
+	git pull --ff-only --no-rebase --no-autostash
 	$(MAKE) install-shared
