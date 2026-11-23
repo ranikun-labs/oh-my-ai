@@ -29,36 +29,62 @@ export async function handoffF4Writer({
   withFrozenSource, restoreWorkspace, acceptHandoff, discardWorkspace, launchWriter,
 }) {
   if (scope.taskRef !== task.id) return { ok: false, reason: "handoff_scope_mismatch" };
+  const recovery = { ok: false, reason: "recovery_required" };
   let workspace;
   let assignment;
+  let preparation;
+  let fenceOpen = true;
+  let failure = recovery;
+
+  async function prepare() {
+    workspace = await restoreWorkspace(task);
+    if (!fenceOpen) return recovery;
+    if (workspace.taskId !== task.id || workspace.commit !== task.commit
+      || workspace.checkpoint !== task.checkpoint) return { ok: false, reason: "handoff_not_accepted" };
+    const acceptedScope = await acceptHandoff({ scope, task, previous, successor, workspace });
+    if (!fenceOpen) return recovery;
+    if (acceptedScope?.taskRef !== scope.taskRef || acceptedScope.repositoryId !== scope.repositoryId
+      || acceptedScope.worktreeId !== scope.worktreeId) {
+      return { ok: false, reason: "handoff_scope_not_supported" };
+    }
+    try {
+      assignment = associationStore.replaceWriter(scope, { previous, successor, expectedRevision });
+      return { ok: true };
+    } catch (error) {
+      if (error.message === "association_revision_conflict") return { ok: false, reason: "handoff_already_changed" };
+      throw error;
+    }
+  }
+
   try {
-    const result = await withFrozenSource({ scope, task, previous }, async () => {
-      workspace = await restoreWorkspace(task);
-      if (workspace.taskId !== task.id || workspace.commit !== task.commit
-        || workspace.checkpoint !== task.checkpoint) return { ok: false, reason: "handoff_not_accepted" };
-      const acceptedScope = await acceptHandoff({ scope, task, previous, successor, workspace });
-      if (acceptedScope?.taskRef !== scope.taskRef || acceptedScope.repositoryId !== scope.repositoryId
-        || acceptedScope.worktreeId !== scope.worktreeId) {
-        return { ok: false, reason: "handoff_scope_not_supported" };
-      }
-      try {
-        assignment = associationStore.replaceWriter(scope, { previous, successor, expectedRevision });
-        return { ok: true };
-      } catch (error) {
-        if (error.message === "association_revision_conflict") return { ok: false, reason: "handoff_already_changed" };
-        throw error;
-      }
+    // The Host must hold the write fence until the callback settles.
+    const result = await withFrozenSource({ scope, task, previous }, () => {
+      if (!fenceOpen) return recovery;
+      preparation ??= prepare();
+      // Observe rejection even if the Host fails to await this callback.
+      preparation.catch(() => {});
+      return preparation;
     });
-    if (!assignment) return result ?? { ok: false, reason: "recovery_required" };
-    if (result?.ok === true) {
+    fenceOpen = false;
+    if (preparation) {
+      const prepared = await preparation;
+      if (prepared.ok !== true) failure = prepared;
+    }
+    if (assignment && result?.ok === true) {
       const launched = await launchWriter({ task, workspace, successor, associationRevision: assignment.revision });
       if (launched?.ok === true) return launched;
     }
-  } catch (error) {
-    if (!assignment) throw error;
-  } finally {
-    if (workspace && !assignment) await discardWorkspace(workspace);
+  } catch {
+    fenceOpen = false;
+    if (preparation) await preparation.catch(() => {});
   }
-  // Reconcile the assigned session before retrying any uncertain launch.
-  return { ok: false, reason: "recovery_required", associationRevision: assignment.revision };
+  if (assignment) return { ...recovery, associationRevision: assignment.revision };
+  if (workspace) {
+    try {
+      await discardWorkspace(workspace);
+    } catch {
+      return { ...failure, workspaceCleanup: "failed", workspace: workspace.workspace };
+    }
+  }
+  return failure;
 }

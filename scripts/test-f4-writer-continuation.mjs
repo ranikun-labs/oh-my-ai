@@ -24,3 +24,26 @@ assert.deepEqual(await continueF4Writer({
   resumeWriter: () => assert.fail(), handoffWriter: () => assert.fail(),
 }), { ok: false, reason: "recovery_required" });
 console.log("F4 writer continuation decisions PASS");
+
+const { handoffF4Writer } = await import("./lib/f4-writer-continuation.mjs");
+const scope = { taskRef: task.id, repositoryId: "repo", worktreeId: "worktree" };
+const guarded = {
+  scope, task,
+  associationStore: { replaceWriter: () => assert.fail("assignment must not change") },
+  restoreWorkspace: async () => ({ taskId: task.id, commit: task.commit, checkpoint: task.checkpoint }),
+  acceptHandoff: () => assert.fail("an expired fence must not reach acceptance"),
+  launchWriter: () => assert.fail("launch must not run"),
+};
+assert.deepEqual(await handoffF4Writer({
+  ...guarded, withFrozenSource: async () => ({ ok: true }),
+}), { ok: false, reason: "recovery_required" });
+
+assert.deepEqual(await handoffF4Writer({
+  ...guarded,
+  withFrozenSource: async (_request, prepare) => { prepare(); return { ok: true }; },
+  restoreWorkspace: async () => {
+    await new Promise(resolve => setImmediate(resolve));
+    return { taskId: task.id, commit: task.commit, checkpoint: task.checkpoint };
+  },
+  discardWorkspace: async () => { throw new Error("cleanup failed"); },
+}), { ok: false, reason: "recovery_required", workspaceCleanup: "failed", workspace: undefined });

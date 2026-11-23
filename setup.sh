@@ -448,6 +448,18 @@ install_git_hook() {
   safe_link "$hook_target" "$hook_path" "git pre-commit hook"
 }
 
+report_ponytail_status() {
+  local label="$1" target="$2" status
+  if same_link "$target" "$REPO/skills/ponytail" && [ -f "$target/SKILL.md" ]; then
+    status=ready
+  elif [ -e "$target" ] || [ -L "$target" ]; then
+    status=conflict
+  else
+    status=missing
+  fi
+  say "$label Ponytail: $status ($target)"
+}
+
 doctor() {
   say "=== oh-my-ai doctor (read-only) ==="
   path_state "$CLAUDE_DIR/CLAUDE.md" "$REPO/claude/CLAUDE.md"
@@ -466,6 +478,8 @@ doctor() {
   say "=== Runtime readiness ==="
   report_runtime_readiness claude
   report_runtime_readiness codex
+  report_ponytail_status Claude "$CLAUDE_DIR/skills/ponytail"
+  report_ponytail_status Codex "$AGENT_DIR/skills/ponytail"
   hook_path="$(git_hook_path 2>/dev/null || true)"
   if [ -n "$hook_path" ]; then
     hook_dir="$(dirname "$hook_path")"
