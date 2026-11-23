@@ -1,20 +1,23 @@
-// The host supplies fresh session observations, isolated workspaces, and the
-// existing checkpoint. This module does not treat session lookup as approval.
-export async function continueF4Writer({ task, observeWriter, resumeWriter, startWriter }) {
-  const observed = await observeWriter(task);
-  if (observed.status === "available") {
+// The Host owns durable Claim/recovery and checks the actual workspace and
+// restored checkpoint. No local flag can prove another Writer has stopped.
+export async function continueF4Writer({ task, observeWriter, resumeWriter, handoffWriter }) {
+  let observed;
+  try {
+    observed = await observeWriter(task);
+  } catch {
+    return { ok: false, reason: "recovery_required" };
+  }
+  if (observed?.status === "available" && observed.session) {
     return resumeWriter({ task, session: observed.session });
   }
-  if (!["unavailable", "unknown"].includes(observed.status)) {
+  if (observed?.status === "unknown") {
+    return { ok: false, reason: "recovery_required" };
+  }
+  if (observed?.status !== "unavailable") {
     throw new Error("writer_observation_invalid");
   }
 
-  // An indeterminate old session may still write. The host must give the
-  // successor an isolated workspace before it can start.
-  return startWriter({
-    task,
-    previousSession: observed.session ?? null,
-    requireIsolatedWorkspace: true,
-    previousStatus: observed.status,
-  });
+  // The Host must atomically reserve the handoff, fence the old result, verify
+  // the restored source and checkpoint, then launch the accepted successor.
+  return handoffWriter({ task, previousSession: observed.session ?? null });
 }

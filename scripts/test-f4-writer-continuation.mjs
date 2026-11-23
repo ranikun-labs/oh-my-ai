@@ -10,16 +10,17 @@ const run = status => continueF4Writer({
   task,
   observeWriter: async () => ({ status, session: "A" }),
   resumeWriter: async input => { calls.push(["resume", input]); return "resumed"; },
-  startWriter: async input => { calls.push(["start", input]); return "started"; },
+  handoffWriter: async input => { calls.push(["handoff", input]); return "handoff_pending"; },
 });
 assert.equal(await run("available"), "resumed");
 assert.equal(calls[0][1].task, task);
-for (const status of ["unavailable", "unknown"]) {
-  assert.equal(await run(status), "started");
-  const [, input] = calls.at(-1);
-  assert.equal(input.task, task);
-  assert.equal(input.requireIsolatedWorkspace, true);
-  assert.equal(input.previousStatus, status);
-}
+assert.deepEqual(await run("unknown"), { ok: false, reason: "recovery_required" });
+assert.equal(calls.length, 1);
+assert.equal(await run("unavailable"), "handoff_pending");
+assert.equal(calls.at(-1)[1].task, task);
 await assert.rejects(run("unsupported-result"), /writer_observation_invalid/);
+assert.deepEqual(await continueF4Writer({
+  task, observeWriter: () => { throw new Error("offline"); },
+  resumeWriter: () => assert.fail(), handoffWriter: () => assert.fail(),
+}), { ok: false, reason: "recovery_required" });
 console.log("F4 writer continuation decisions PASS");
