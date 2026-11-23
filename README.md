@@ -202,14 +202,14 @@ make doctor-strict
 
 ### Branch-tracking 설치
 
-공유 설치를 한 번 갱신하면 `ohmai`가 설치됩니다. `~/.local/bin`이
+공유 설치를 한 번 갱신하면 `ohmyai`가 설치됩니다. `~/.local/bin`이
 `PATH`에 있으면 어느 폴더에서든 아래 명령을 실행할 수 있습니다.
 
 ```bash
-ohmai update
+ohmyai update
 ```
 
-`ohmai`는 설치 링크가 가리키는 oh-my-ai 저장소에서 `make update`를 실행합니다.
+`ohmyai`는 설치 링크가 가리키는 oh-my-ai 저장소에서 `make update`를 실행합니다.
 
 
 `make update`는 `master` 같은 Git Branch를 추적하는 개발·검증용 Clone에서만 사용할 수 있습니다. Stable Tag 설치본에서는 사용하지 않습니다.

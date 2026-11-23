@@ -2,7 +2,7 @@
 set -eu
 
 if [ "$#" -ne 1 ] || [ "$1" != update ]; then
-  printf '%s\n' 'usage: ohmai update' >&2
+  printf '%s\n' 'usage: ohmyai update' >&2
   exit 2
 fi
 
