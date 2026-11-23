@@ -103,18 +103,32 @@ try {
   assert.equal(store.withCurrentWriter(inFlight, { ...second, revision: 2 }, publishInventory), "applied");
   assert.deepEqual(readInventory(), { revision: 2, status: "DONE" });
   const retryScope = { ...scope, taskRef: "TASK-5" };
+  const destinationScope = { ...retryScope, repositoryId: identity("repository", "s"), worktreeId: identity("worktree", "x") };
   store.link(retryScope, { ...first, expectedRevision: 0 });
   const task = { id: retryScope.taskRef, commit: "pinned", checkpoint: "checkpoint" };
-  let launches = 0;
-  let discarded = 0;
-  const attempt = () => handoffF4Writer({
-    scope: retryScope, task, previous: first, successor: second, expectedRevision: 1,
+  const rejected = await handoffF4Writer({
+    scope: retryScope, destinationScope, task, previous: first, successor: second, expectedRevision: 1,
     associationStore: open(),
     restoreWorkspace: async () => ({ taskId: task.id, commit: task.commit, checkpoint: task.checkpoint }),
     withFrozenSource: async (_input, run) => run(),
     acceptHandoff: async () => retryScope,
+    discardWorkspace: async () => {},
+    launchWriter: () => assert.fail("unaccepted destination must not launch"),
+  });
+  assert.equal(rejected.reason, "handoff_scope_not_supported");
+  assert.equal(store.read(retryScope).revision, 1);
+  let launches = 0;
+  let discarded = 0;
+  const attempt = () => handoffF4Writer({
+    scope: retryScope, destinationScope, task, previous: first, successor: second, expectedRevision: 1,
+    associationStore: open(),
+    restoreWorkspace: async () => ({ taskId: task.id, commit: task.commit, checkpoint: task.checkpoint }),
+    withFrozenSource: async (_input, run) => run(),
+    acceptHandoff: async () => destinationScope,
     discardWorkspace: async () => { discarded += 1; },
-    launchWriter: async () => {
+    launchWriter: async input => {
+      assert.deepEqual(input.associationScope, retryScope);
+      assert.deepEqual(input.destinationScope, destinationScope);
       assert.equal(store.withCurrentWriter(retryScope, { ...first, revision: 1 },
         () => assert.fail("old Writer result published")), "pending");
       launches += 1;
@@ -125,6 +139,16 @@ try {
   assert.equal(launches, 1);
   assert.equal(discarded, 1);
   assert.ok(outcomes.some(result => result.reason === "handoff_already_changed"));
+  assert.deepEqual(open().read(retryScope).associations[1], {
+    ...second, status: "active", repositoryId: destinationScope.repositoryId, worktreeId: destinationScope.worktreeId,
+  });
+  assert.deepEqual(open().read(destinationScope).associations, []);
+  store.setStatus(retryScope, { ...second, status: "paused", expectedRevision: 2 });
+  assert.equal(open().read(retryScope).associations[1].worktreeId, destinationScope.worktreeId);
+  assert.throws(() => store.replaceWriter(retryScope, {
+    previous: first, successor: second, expectedRevision: 3,
+    destinationScope: { ...destinationScope, taskRef: "OTHER" },
+  }), /association_scope_invalid/);
   console.log("Task-session association and fresh Writer resolution PASS");
 } finally {
   rmSync(directory, { recursive: true, force: true });

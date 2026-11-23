@@ -2,7 +2,7 @@ import path from "node:path";
 import { createF4ClaudeSessionResultVerifier } from "./f4-claude-session-result.mjs";
 import { forwardF4CodexProcessResult } from "./f4-codex-result-handoff.mjs";
 import { createF4CodexTurnResultVerifier } from "./f4-codex-turn-result.mjs";
-import { bindTaskWriterRuntime } from "./task-session-resume-resolution.mjs";
+import { bindTaskWriterRuntime, matchesTaskWriterScope } from "./task-session-resume-resolution.mjs";
 import { sameF4PhysicalStateBinding } from "./f4-physical-state-binding.mjs";
 import { createF4WorkerResultCheckpointReconciler } from "./f4-worker-result-checkpoint.mjs";
 import { createF4ManagedWorkerResultHandler } from "./f4-worker-result-store.mjs";
@@ -172,11 +172,12 @@ function resolveTaskWriterHost(options) {
     return success({ scope: null, runtimeEntries: options.runtimeEntries });
   }
   if (Object.hasOwn(options, "manualResumeServiceFactory")) return failure("task_writer_host_invalid");
-  const host = inspectExactDataObject(options.taskWriterHost, ["scope", "associationStore"]);
+  const host = inspectExactDataObject(options.taskWriterHost, ["scope", "associationStore"], ["associationScope"]);
   if (!host.ok) return failure("task_writer_host_invalid");
   const scope = inspectExactDataObject(host.values.scope, ["taskRef", "repositoryId", "worktreeId"]);
+  const associationScope = inspectExactDataObject(host.values.associationScope ?? host.values.scope, ["taskRef", "repositoryId", "worktreeId"]);
   const store = inspectExactDataObject(host.values.associationStore, ["read"], ["link", "setStatus", "replaceWriter", "withCurrentWriter"]);
-  if (!scope.ok || !store.ok || typeof store.values.read !== "function"
+  if (!scope.ok || !associationScope.ok || scope.values.taskRef !== associationScope.values.taskRef || !store.ok || typeof store.values.read !== "function"
     || utilTypes.isProxy(store.values.read)
     || !Array.isArray(options.runtimeEntries) || utilTypes.isProxy(options.runtimeEntries)
     || Object.getPrototypeOf(options.runtimeEntries) !== Array.prototype
@@ -212,6 +213,7 @@ function resolveTaskWriterHost(options) {
     const bound = bindTaskWriterRuntime({
       associationStore: store.values,
       scope: scope.values,
+      associationScope: associationScope.values,
       sessionResolution: resolution.values,
       executor: executor?.values,
     });
@@ -264,13 +266,14 @@ function bindWorkerResultHost(options, recordProvider, physicalBinding, attemptS
   function isCurrentWriter(record) {
     if (!writerBound) return true;
     try {
-      const { scope, associationStore } = options.taskWriterHost;
+      const { scope, associationScope = scope, associationStore } = options.taskWriterHost;
       if (record.workstreamId !== scope.taskRef || record.repositoryId !== scope.repositoryId
         || record.worktreeId !== scope.worktreeId) return false;
-      const snapshot = associationStore.read(scope);
+      const snapshot = associationStore.read(associationScope);
       const writers = snapshot.associations.filter(row => row.role === "writer" && row.status === "active");
       return Number.isSafeInteger(record.associationRevision) && snapshot.revision === record.associationRevision
-        && writers.length === 1 && writers[0].runtimeId === record.runtimeId
+        && writers.length === 1 && matchesTaskWriterScope(writers[0], scope, associationScope)
+        && writers[0].runtimeId === record.runtimeId
         && writers[0].sessionId === record.writerSessionId;
     } catch {
       return false;
@@ -304,7 +307,7 @@ function bindWorkerResultHost(options, recordProvider, physicalBinding, attemptS
         inventoryStatus = await reconcileInventory(request, writerBound ? publish => {
           if (!publicationOpen || publicationStatus !== undefined || typeof publish !== "function") return "pending";
           const { record } = request;
-          publicationStatus = writerLock(options.taskWriterHost.scope, {
+          publicationStatus = writerLock(options.taskWriterHost.associationScope ?? options.taskWriterHost.scope, {
             runtimeId: record.runtimeId, sessionId: record.writerSessionId, revision: record.associationRevision,
           }, publish);
           return publicationStatus;

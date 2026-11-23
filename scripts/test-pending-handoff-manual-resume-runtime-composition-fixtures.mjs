@@ -1588,6 +1588,7 @@ await group("native RPL-95 and RPL-118 composition", async () => {
     const userLocalState = userLocalStateFixture();
     const location = userLocalState.api.resolveUserLocalStateLocation("/repo", "test.json");
     const binding = f4PhysicalStateBindingFromLocation(location).value;
+    const associationScope = { ...writerScope, worktreeId: "original-worktree" };
     const createObserver = () => createF4CodexTurnObservation({
       threadId: "test-thread", turnId: "test-turn", testItemId: "test-item",
       evidenceRef: "evidence/1",
@@ -1622,12 +1623,20 @@ await group("native RPL-95 and RPL-118 composition", async () => {
     const built = build({
       nativeComposition: true,
       userLocalState,
-      taskWriterHost: { scope: writerScope, associationStore: {
-        withCurrentWriter: (_scope, identity, publish) =>
-          !writerReplaced && identity.revision === 1 && identity.sessionId === SESSION_SOURCE ? publish() : "pending",
-        read: () => writerReplaced ? { revision: 2, associations: [{
-          role: "writer", status: "active", runtimeId: "codex", sessionId: SESSION_OWNER,
-        }] } : activeWriterStore.read(),
+      taskWriterHost: { scope: writerScope, associationScope, associationStore: {
+        withCurrentWriter: (observedScope, identity, publish) => {
+          assert.deepEqual(observedScope, associationScope);
+          return !writerReplaced && identity.revision === 1 && identity.sessionId === SESSION_SOURCE
+            ? publish() : "pending";
+        },
+        read: observedScope => {
+          assert.deepEqual(observedScope, associationScope);
+          return { revision: writerReplaced ? 2 : 1, associations: [{
+            role: "writer", status: "active", runtimeId: "codex",
+            sessionId: writerReplaced ? SESSION_OWNER : SESSION_SOURCE,
+            repositoryId: writerScope.repositoryId, worktreeId: writerScope.worktreeId,
+          }] };
+        },
       } },
       resolveApprovedWorkstreamForManualResume: () => ({
         ...fixtureApprovedWorkstream(),

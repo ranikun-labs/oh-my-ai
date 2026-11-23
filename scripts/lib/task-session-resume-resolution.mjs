@@ -5,11 +5,19 @@ export function bindTaskWriterSessionResolution({ associationStore, scope, sessi
   return bindTaskWriterRuntime({ associationStore, scope, sessionResolution }).sessionResolution;
 }
 
-export function bindTaskWriterRuntime({ associationStore, scope, sessionResolution, executor }) {
+export function matchesTaskWriterScope(writer, scope, associationScope) {
+  return writer != null
+    && (writer.repositoryId ?? associationScope.repositoryId) === scope.repositoryId
+    && (writer.worktreeId ?? associationScope.worktreeId) === scope.worktreeId;
+}
+
+export function bindTaskWriterRuntime({
+  associationStore, scope, associationScope = scope, sessionResolution, executor,
+}) {
   const taskScope = Object.freeze({
-    taskRef: scope.taskRef,
-    repositoryId: scope.repositoryId,
-    worktreeId: scope.worktreeId,
+    taskRef: associationScope.taskRef,
+    repositoryId: associationScope.repositoryId,
+    worktreeId: associationScope.worktreeId,
   });
 
   function readWriter() {
@@ -22,7 +30,8 @@ export function bindTaskWriterRuntime({ associationStore, scope, sessionResoluti
     const writers = snapshot.associations.filter(
       record => record.role === "writer" && record.status === "active",
     );
-    return { revision: snapshot.revision, writer: writers.length === 1 ? writers[0] : null };
+    return { revision: snapshot.revision, writer: writers.length === 1 && matchesTaskWriterScope(writers[0], scope, taskScope)
+      ? writers[0] : null };
   }
 
   const resolution = Object.freeze({
