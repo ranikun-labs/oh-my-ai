@@ -1,0 +1,6 @@
+interface:
+  display_name: Research
+  short_description: Investigate, compare, refine and recommend with evidence
+  default_prompt: Use $research to investigate primary sources, compare alternatives, critically refine the proposal and recommend a concrete next step. Stay read-only.
+policy:
+  allow_implicit_invocation: true
