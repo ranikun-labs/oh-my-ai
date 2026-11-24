@@ -175,9 +175,10 @@ try {
     task: { ...task, id: recoveryScope.taskRef }, associationStore: open(),
     observeWriter: request => { recoveryObservations += 1; assert.equal(request.successor.sessionId, second.sessionId);
       return { status: "available", session: "running", sessionIdentity: second.sessionId }; },
-    resumeWriter: ({ session }) => ({ ok: true, session }),
   });
-  assert.deepEqual(recoveredLostLaunch, { ok: true, session: "running" });
+  assert.equal(recoveredLostLaunch.ok, true);
+  assert.equal(recoveredLostLaunch.session, "running");
+  assert.equal(recoveredLostLaunch.associationRevision, 2);
   assert.equal(recoveryObservations, 1);
   // A successful durable save can throw before the caller receives its result.
   const ambiguousScope = { ...scope, taskRef: "TASK-7" };
@@ -207,7 +208,6 @@ try {
   let observedRequest;
   const recover = observeWriter => recoverF4Writer({ scope: ambiguousScope, task: ambiguousTask,
     associationStore: open(), observeWriter,
-    resumeWriter: request => ({ ok: true, session: request.session }),
   });
   assert.deepEqual(await recover(request => { observedRequest = request; return { status: "unknown" }; }),
     { ok: false, reason: "recovery_required" });
@@ -216,9 +216,32 @@ try {
   assert.deepEqual(observedRequest.destinationScope, ambiguousDestination);
   assert.deepEqual(await recover(() => ({ status: "available", session: "wrong", sessionIdentity: first.sessionId })),
     { ok: false, reason: "recovery_required" });
-  assert.deepEqual(await recover(() => ({ status: "available", session: "found", sessionIdentity: second.sessionId })),
-    { ok: true, session: "found" });
+  assert.deepEqual(await recover(() => { throw new Error("lookup response lost"); }),
+    { ok: false, reason: "recovery_required" });
+  const found = await recover(() => ({ status: "available", session: "found", sessionIdentity: second.sessionId }));
+  assert.equal(found.ok, true);
+  assert.equal(found.session, "found");
+  // Both calls can look up the same persisted owner concurrently; neither
+  // executes a launch or resume operation.
+  let releaseLookups;
+  const lookupBarrier = new Promise(resolve => { releaseLookups = resolve; });
+  let lookupsStarted = 0;
+  const simultaneous = () => recover(async () => {
+    lookupsStarted += 1;
+    if (lookupsStarted === 2) releaseLookups();
+    await lookupBarrier;
+    return { status: "available", session: "found", sessionIdentity: second.sessionId };
+  });
+  const simultaneousResults = await Promise.all([simultaneous(), simultaneous()]);
+  assert.equal(lookupsStarted, 2);
+  assert.ok(simultaneousResults.every(result => result.ok && result.session === "found"));
   assert.equal(repeatLaunches, 0);
+  // An owner revision changed during lookup invalidates the observed session.
+  const drift = await recover(() => {
+    store.setStatus(ambiguousScope, { ...second, status: "paused", expectedRevision: 2 });
+    return { status: "available", session: "found", sessionIdentity: second.sessionId };
+  });
+  assert.deepEqual(drift, { ok: false, reason: "recovery_required" });
   const invalidDestination = await handoffF4Writer({
     scope: { ...scope, taskRef: "TASK-8" }, destinationScope: { ...destinationScope, taskRef: "TASK-8" },
     task: { ...task, id: "TASK-8" }, previous: first, successor: second, expectedRevision: 0,

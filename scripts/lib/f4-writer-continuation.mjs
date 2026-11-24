@@ -163,9 +163,9 @@ function sameScope(left, right) {
     && left?.worktreeId === right?.worktreeId;
 }
 
-// Recovery only observes the persisted owner. An unknown or unavailable Host
-// response never authorizes another launch.
-export async function recoverF4Writer({ scope, task, associationStore, observeWriter, resumeWriter }) {
+// Recovery is a read-only lookup of the persisted owner. An unknown or
+// unavailable Host response never authorizes another launch or resume.
+export async function recoverF4Writer({ scope, task, associationStore, observeWriter }) {
   const recovery = { ok: false, reason: "recovery_required" };
   try {
     if (scope?.taskRef !== task?.id) return recovery;
@@ -188,7 +188,7 @@ export async function recoverF4Writer({ scope, task, associationStore, observeWr
       || active[0].runtimeId !== writer.runtimeId || active[0].sessionId !== writer.sessionId
       || active[0].workspaceRef !== writer.workspaceRef || active[0].repositoryId !== writer.repositoryId
       || active[0].worktreeId !== writer.worktreeId) return recovery;
-    return await resumeWriter({ ...request, session: observed.session });
+    return { ok: true, ...request, session: observed.session };
   } catch {
     return recovery;
   }
