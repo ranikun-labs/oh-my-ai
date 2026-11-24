@@ -170,6 +170,15 @@ try {
   assert.equal(lost.reason, "recovery_required");
   assert.equal(lost.associationRevision, 2);
   assert.equal(open().read(recoveryScope).associations.find(record => record.status === "active").workspaceRef, directory);
+  let recoveryObservations = 0;
+  const recoveredLostLaunch = await recoverF4Writer({ scope: recoveryScope,
+    task: { ...task, id: recoveryScope.taskRef }, associationStore: open(),
+    observeWriter: request => { recoveryObservations += 1; assert.equal(request.successor.sessionId, second.sessionId);
+      return { status: "available", session: "running", sessionIdentity: second.sessionId }; },
+    resumeWriter: ({ session }) => ({ ok: true, session }),
+  });
+  assert.deepEqual(recoveredLostLaunch, { ok: true, session: "running" });
+  assert.equal(recoveryObservations, 1);
   // A successful durable save can throw before the caller receives its result.
   const ambiguousScope = { ...scope, taskRef: "TASK-7" };
   const ambiguousDestination = { ...destinationScope, taskRef: ambiguousScope.taskRef };
