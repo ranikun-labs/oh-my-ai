@@ -27,6 +27,7 @@
 - `skills/research/` — 공식 근거 기반 기술 조사·비교·검토·보완·추천
 - `skills/senior/` — 시니어 수준 설계·계약·위험을 Preflight·독립 Review·Delta Closure 3모드로 검토
 - `skills/spec-to-implementation/` — 큰 변경을 승인 가능한 명세부터 독립 검수와 PR Gate까지 이끄는 구현 절차
+- `skills/tech-hive/` — 초기 심층 기술 조사·요청 기반 적용 검토·지식 등록
 - `skills/work-record-sync/` — 기존 Jira·Confluence 기록을 승인·동시성 확인·범위 읽기 후 제한적으로 갱신
 - `skills/work-start/` — 작업 시작 시 외부 맥락 회수 → repo 컨텍스트 수집 → 중간 점검 → 컨펌의 conversation-native 플레이북
 - `skills/worklog-note/` — Optional Notion 업무일지 정리 workflow

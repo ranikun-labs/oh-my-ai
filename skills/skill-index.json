@@ -602,6 +602,52 @@
       }
     },
     {
+      "name": "tech-hive",
+      "path": "skills/tech-hive/SKILL.md",
+      "description": "Deep technical research for a Tech Hive knowledge workflow, with follow-up adoption advice and explicit authorized knowledge publication. Use for /tech-hive, $tech-hive, TechHive 기준 F1 핵심정리, 테크하이브 스킬 사용, or a request to research, refine, retrieve or register technology in Tech Hive. Do not use for generic F1 questions, quoted commands or prohibited actions. Initial research is deep and read-only.",
+      "summary": "초기 심층 기술 조사·요청 기반 적용 검토·지식 등록",
+      "routing": {
+        "visibility": "optional",
+        "risk_level": "medium",
+        "task_types": [
+          "technical_knowledge_research",
+          "technical_knowledge_publish"
+        ],
+        "triggers": [
+          {
+            "kind": "keyword",
+            "values": [
+              "/tech-hive",
+              "$tech-hive",
+              "techhive 기준",
+              "테크하이브 기준",
+              "테크 하이브 기준",
+              "테크하이브 스킬 사용",
+              "techhive에 등록",
+              "techhive에 정리",
+              "테크하이브에 등록",
+              "테크 하이브에 등록",
+              "테크하이브에 정리",
+              "테크 하이브에 정리"
+            ]
+          },
+          {
+            "kind": "intent",
+            "values": [
+              "research_technology_for_knowledge_hub",
+              "publish_approved_technology_knowledge"
+            ]
+          }
+        ],
+        "use_when": [
+          "Tech Hive 기술 조사 또는 이미 시작한 연구의 후속 적용 검토·등록 요청"
+        ],
+        "do_not_use_when": [
+          "일반 F1 요청·인용·금지된 조사 또는 게시"
+        ]
+      }
+    },
+    {
       "name": "work-record-sync",
       "path": "skills/work-record-sync/SKILL.md",
       "description": "Prepare and, only within existing approved scope, apply a minimal update to an existing Jira issue or Confluence page with current-record checks and scoped readback. Never creates records or writes by default.",
