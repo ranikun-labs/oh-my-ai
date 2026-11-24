@@ -311,7 +311,8 @@ for (const [prompt, expected] of [
   ["RPL-113 진행시켜", true],
   ["로그인 API에 검증 추가해 줬어.", false],
   ["로그인 API 오류 고쳐줘 하지만 실제로는 수정하지 마", false],
-, ...newTrackableWorkCases]) {
+  ...newTrackableWorkCases,
+]) {
   const result = spawnSync(process.execPath, ["scripts/prompt-routing-hook.mjs", "--format=text"], {
     cwd: root,
     input: JSON.stringify({ prompt }),
