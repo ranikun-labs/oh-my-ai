@@ -47,11 +47,18 @@ for (const skill of ['research','tech-hive']) {
   const frontmatter = source.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
   assert.ok(frontmatter, skill);
   assert.ok(!/^(?:model|effort|context|agent):/m.test(frontmatter[1]), skill + ': Claude-specific shared frontmatter');
-  assert.ok(source.includes('## Delegation (optional, runtime-dependent)'), skill);
+  assert.ok(source.includes('## Delegation (purpose-based default, runtime-dependent)'), skill);
+  assert.ok(source.includes('even without an explicit delegation request'), skill + ': default delegation contract missing');
   const link = skill === 'research' ? 'references/delegation.md' : '../research/references/delegation.md';
   assert.ok(source.includes('](' + link + ')'), skill);
   assert.ok(fs.existsSync(path.resolve(root, 'skills', skill, link)), skill + ': missing shared procedure');
 }
-assert.ok(read('skills/research/references/delegation.md').includes('Never bypass a blocked formal dispatch or Reviewer gate.'));
+const delegation = read('skills/research/references/delegation.md');
+assert.ok(delegation.includes('Never bypass a blocked formal dispatch or Reviewer gate.'));
+assert.ok(delegation.includes('## Default action (before substantive work)'));
+assert.ok(delegation.includes('without requiring the user to name the worker'));
+assert.ok(delegation.includes('An explicit no-delegation request takes precedence.'));
+assert.ok(delegation.includes('Do not silently substitute a weaker worker'));
+assert.ok(read('docs/examples/research-worker-delegation.md').includes('explicit delegation only as a separate positive control'));
 assert.ok(read('docs/examples/research-worker-delegation.md').includes('Acceptance probes'));
-console.log('Research delegation: 3 agent definitions, 9 negative mutations, 2 shared skill contracts PASS (static only); Native execution, effective settings and permission enforcement NOT_RUN.');
+console.log('Research delegation: 3 agent definitions, 9 negative mutations, 2 shared skill contracts and default-action text PASS (static only); Native execution, effective settings and permission enforcement NOT_RUN.');
