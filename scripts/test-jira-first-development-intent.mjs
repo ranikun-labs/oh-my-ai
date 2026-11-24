@@ -299,6 +299,32 @@ const resumeIntentCases = [
 ];
 cases.push(...resumeIntentCases);
 
+// Independent delta review: explicit continuation, global cancellation, past status.
+const resumeClosureCases = [
+  ["RPL-113 계속 진행해줘",true],
+  ["RPL-113 이어서 진행하자",true],
+  ["RPL-113 작업 재개해줘",true],
+  ["PR #208 계속 진행하자",true],
+  ["RPL-113 재개하자",true],
+  ["RPL-113 이어서 진행해줘. 아니 전부 취소",false],
+  ["로그인 API 수정해줘. RPL-113 계속 진행해줘. 아니 전부 취소",false],
+  ["로그인 API 수정해줘. RPL-113 계속 진행해줘. 모두 취소할게",false],
+  ["로그인 API 수정해줘. RPL-113 계속 진행해줘. 취소할게",true],
+  ["RPL-113 이어서 진행해 놓은 상태야",false],
+  ["RPL-113 계속 진행해 둔 상태야",false],
+  ["RPL-113 작업 재개하지 마",false],
+  ["RPL-113 작업 재개해주지 마",false],
+  ["RPL-113 작업 재개해 줬어",false],
+  ["RPL-113 계속 진행해?",false],
+  ["“RPL-113 계속 진행해줘”라는 문장을 분석해줘",false],
+  ["계속 진행해줘",false],
+  ["작업 재개해줘",false],
+  ["RPL-113 작업 재개해줘. 아니 RPL-113 재개하지 마",false],
+  ["로그인 API 수정해줘. RPL-113 작업 재개해줘. 아니 RPL-113 재개하지 마",true],
+  ["RPL-113 이어서 진행해줘. 아니 전부 보류",false],
+];
+cases.push(...resumeClosureCases);
+
 for (const [prompt, expected] of cases) {
   assert.equal(needsJiraFirstDevelopmentPreflight(prompt), expected, prompt);
 }
@@ -373,6 +399,7 @@ for (const [prompt, expected] of [
   ...newTrackableWorkCases,
   ...reviewerDeltaCases,
   ...resumeIntentCases,
+  ...resumeClosureCases,
 ]) {
   const result = spawnSync(process.execPath, ["scripts/prompt-routing-hook.mjs", "--format=text"], {
     cwd: root,
