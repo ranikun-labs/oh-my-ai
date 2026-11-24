@@ -1,8 +1,8 @@
 // Advisory-only Jira-first detection; never authorizes a Skill or remote mutation.
 // Do not treat a completed past action such as "추가해 줬어" as a request.
-const DEVELOPMENT_ACTION = /(?:시작하자|시작해|개발하자|구현하자|설계하자|만들자|개발해|구현해|설계해|생성해|생성하자|(?:개발|구현|설계|생성)\s*(?:좀\s*)?부탁(?:해|드려|합니다)|설계부터\s*진행해|(?:SKILL\s+md\s*)작성해|수정해|별도\s*(?:Jira\s*)?(?:티켓|이슈)(?:으로|로)\s*(?:개발|구현|작업)(?=\s*(?:[.!?。;]|$))|고쳐\s*(?:줘|주세요|주십시오|줄래|주실래요|주실\s*수\s*(?:있나요|있을까요))|개선해|변경해|처리해|추가해|만들어\s*(?:줘|주세요|주십시오|주실래요|주실\s*수\s*(?:있나요|있을까요))|진행시켜|고쳐줄래|개선만\s*해줘|수정\s*좀\s*부탁해|리팩터링해|리팩토링해|작업해|이어(?:서)?\s*(?:개발|구현|수정|작업|처리|진행)해|^\s*(?:please\s+|(?:can|could|would)\s+you\s+)?(?:fix|implement|refactor|build|develop|design|create)\b)(?!\s*(?:줬|주었|했|봤|보았)(?:어|어요|습니다|다|음|죠))/i;
+const DEVELOPMENT_ACTION = /(?:시작하자|시작해|개발하자|구현하자|설계하자|만들자|개발해|구현해|설계해|생성해|생성하자|(?:개발|구현|설계|생성)\s*(?:좀\s*)?부탁(?:해|드려|합니다)|설계부터\s*진행해|(?:SKILL\s+md\s*)작성해|수정해|별도\s*(?:Jira\s*)?(?:티켓|이슈)(?:으로|로)\s*(?:개발|구현|작업)(?=\s*(?:[.!?。;]|$))|고쳐\s*(?:줘|주세요|주십시오|줄래|주실래요|주실\s*수\s*(?:있나요|있을까요))|개선해|변경해|처리해|추가해|만들어\s*(?:줘|주세요|주십시오|주실래요|주실\s*수\s*(?:있나요|있을까요))|진행시켜|고쳐줄래|개선만\s*해줘|수정\s*좀\s*부탁해|리팩터링해|리팩토링해|작업해|이어(?:서)?\s*(?:(?:개발|구현|수정|작업|처리)해|진행(?:해|하자))|계속\s*진행(?:해|하자)|재개(?:해|하자)|^\s*(?:please\s+|(?:can|could|would)\s+you\s+)?(?:fix|implement|refactor|build|develop|design|create)\b)(?!\s*(?:(?:줬|주었|했|봤|보았)(?:어|어요|습니다|다|음|죠)|(?:놓은|둔)\s*상태))/i;
 const DEVELOPMENT_TARGET = /(?:\b(?:RPL-\d+|PR\s*#?\d+|carelog|finance|oauth|api|backend|frontend|skills?|hooks?|adapters?|harness|infrastructure)\b|로그인|결제|이체|서비스|기능|버그|오류|장애|인증|백엔드|프론트엔드|엔드포인트|이슈|토큰|검증|테스트|문서|설정|스킬|훅|하네스|어댑터|인프라|(?:리서치|연구|research)\s*(?:시스템|파이프라인|워크플로|system|pipeline|workflow)|별도\s*(?:Jira\s*)?(?:티켓|이슈)(?:으로|로)\s*(?:개발|구현|작업))/i;
-const NO_IMPLEMENTATION = /(?:추가해\s*주지\s*(?:마|말|않)|만들(?:어\s*주)?지\s*(?:마|말|않)|진행(?:시키|시켜\s*주|해\s*주|하)지\s*(?:마|말|않)|(?:개발|구현|설계|생성|작성|수정|개선|작업|변경|처리|추가|리팩터링|리팩토링)(?:하|해\s*주)?지\s*(?:마|말|않)|고치(?:지\s*(?:마|말|않)|어\s*주지\s*(?:마|말|않))|고쳐\s*주지\s*(?:마|말|않)|\b(?:do\s+not|don't|never)\s+(?:fix|implement|refactor|build|develop|design|create)\b)/i;
+const NO_IMPLEMENTATION = /(?:추가해\s*주지\s*(?:마|말|않)|만들(?:어\s*주)?지\s*(?:마|말|않)|진행(?:시키|시켜\s*주|해\s*주|하)지\s*(?:마|말|않)|(?:개발|구현|설계|생성|작성|수정|개선|작업|변경|처리|추가|리팩터링|리팩토링|재개)(?:하|해\s*주)?지\s*(?:마|말|않)|고치(?:지\s*(?:마|말|않)|어\s*주지\s*(?:마|말|않))|고쳐\s*주지\s*(?:마|말|않)|\b(?:do\s+not|don't|never)\s+(?:fix|implement|refactor|build|develop|design|create)\b)/i;
 const EXPLANATION_ONLY = /(?:설명만|개념만|예시만|뭐야|뭔지|무엇인지|알려줘|\b(?:what\s+is|explain|concept\s+of)\b)/i;
 
 const QUESTION = /\?\s*$/;
@@ -251,6 +251,8 @@ export function needsJiraFirstDevelopmentPreflight(prompt) {
 
   // Remove only the nearest request explicitly withdrawn by the final correction
   // or marked as example-only. Independent earlier actions remain eligible.
+  // An explicit final withdrawal of ALL requests cancels every prior scope.
+  if (/[,.!?。;]\s*(?:아니[,]?\s*)?(?:전부|모두)\s*(?:취소|보류)(?:할게|해줘)?[.!?。;]?\s*$/u.test(limited)) return false;
   limited = removeFinalExampleOnlyRequest(limited);
   limited = removeFinalWithdrawnRequest(limited);
 
