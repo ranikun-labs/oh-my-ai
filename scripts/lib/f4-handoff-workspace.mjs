@@ -1,9 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 function git(cwd, args, options = {}) {
-  return execFileSync("git", args, { cwd, maxBuffer: 16 * 1024 * 1024, ...options });
+  return execFileSync("git", args, { cwd, maxBuffer: 16 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"], ...options });
 }
 
 // The caller supplies a trusted task and checkpoint. Untracked files are
@@ -32,8 +32,13 @@ export function prepareF4HandoffWorkspace({ source, parentDirectory, task }) {
   try {
     git(parentDirectory, ["clone", "--quiet", "--no-hardlinks", "--no-local", "--no-checkout", root, destination]);
     git(destination, ["checkout", "--quiet", "--detach", head]);
-    if (before.index.length) git(destination, ["apply", "--index", "-"], { input: before.index });
-    if (before.worktree.length) git(destination, ["apply", "-"], { input: before.worktree });
+    const patchFile = path.join(destination, ".git", "f4-handoff.patch");
+    for (const [patch, args] of [[before.index, ["--index"]], [before.worktree, []]]) {
+      if (!patch.length) continue;
+      writeFileSync(patchFile, patch, { mode: 0o600 });
+      git(destination, ["apply", ...args, patchFile]);
+    }
+    rmSync(patchFile, { force: true });
     const restored = snapshot(destination);
     const after = snapshot(root);
     const sameContent = state => state.head === head

@@ -26,7 +26,7 @@ export async function continueF4Writer({ task, observeWriter, resumeWriter, hand
 // assignment. The reserved successor identity must not start execution.
 export async function handoffF4Writer({
   scope, destinationScope = scope, task, previous, successor, expectedRevision, associationStore,
-  withFrozenSource, restoreWorkspace, acceptHandoff, discardWorkspace, launchWriter,
+  withFrozenSource, restoreWorkspace, deriveDestinationScope, acceptHandoff, discardWorkspace, launchWriter,
 }) {
   if (scope?.taskRef !== task.id || destinationScope?.taskRef !== task.id) {
     return { ok: false, reason: "handoff_scope_mismatch" };
@@ -43,6 +43,13 @@ export async function handoffF4Writer({
     if (!fenceOpen) return recovery;
     if (workspace.taskId !== task.id || workspace.commit !== task.commit
       || workspace.checkpoint !== task.checkpoint) return { ok: false, reason: "handoff_not_accepted" };
+    // A fresh clone's path is only known after restoration. Let the Host derive
+    // its scope from that actual workspace while the source remains fenced.
+    if (deriveDestinationScope) {
+      destinationScope = await deriveDestinationScope({ scope, task, workspace });
+      if (!fenceOpen) return recovery;
+      if (destinationScope?.taskRef !== task.id) return { ok: false, reason: "handoff_scope_mismatch" };
+    }
     const acceptedScope = await acceptHandoff({ scope, destinationScope, task, previous, successor, workspace });
     if (!fenceOpen) return recovery;
     if (acceptedScope?.taskRef !== destinationScope.taskRef || acceptedScope.repositoryId !== destinationScope.repositoryId
@@ -50,7 +57,9 @@ export async function handoffF4Writer({
       return { ok: false, reason: "handoff_scope_not_supported" };
     }
     try {
-      assignment = associationStore.replaceWriter(scope, { previous, successor, expectedRevision, destinationScope });
+      assignment = associationStore.replaceWriter(scope, {
+        previous, successor, expectedRevision, destinationScope, workspaceRef: workspace.workspace,
+      });
       return { ok: true };
     } catch (error) {
       if (error.message === "association_revision_conflict") return { ok: false, reason: "handoff_already_changed" };
@@ -86,7 +95,10 @@ export async function handoffF4Writer({
       }
     }
   }
-  if (assignment) return { ...recovery, associationRevision: assignment.revision };
+  if (assignment) return {
+    ...recovery, associationRevision: assignment.revision, associationScope: scope,
+    destinationScope, successor, workspaceRef: workspace.workspace,
+  };
   if (workspace) {
     try {
       await discardWorkspace(workspace);

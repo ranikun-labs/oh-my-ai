@@ -1,3 +1,4 @@
+import path from "node:path";
 import { createHash } from "node:crypto";
 import { types as utilTypes } from "node:util";
 import { validateOpaqueIdentity } from "./pending-handoff-identity.mjs";
@@ -20,10 +21,13 @@ function isIdentity(value, kind) {
 }
 
 function requireAssociation(record) {
-  if (!record || ![4, 6].includes(Object.keys(record).length)
-    || Object.keys(record).some(key => !["runtimeId", "sessionId", "role", "status", "repositoryId", "worktreeId"].includes(key))
-    || (Object.keys(record).length === 6 && (!isIdentity(record.repositoryId, "repository")
+  if (!record || ![4, 6, 7].includes(Object.keys(record).length)
+    || Object.keys(record).some(key => !["runtimeId", "sessionId", "role", "status", "repositoryId", "worktreeId", "workspaceRef"].includes(key))
+    || (Object.keys(record).length >= 6 && (!isIdentity(record.repositoryId, "repository")
       || !isIdentity(record.worktreeId, "worktree")))
+    || (Object.hasOwn(record, "workspaceRef") && (Object.keys(record).length !== 7
+      || typeof record.workspaceRef !== "string" || !path.isAbsolute(record.workspaceRef)
+      || record.workspaceRef.includes("\0")))
     || !/^[a-z][a-z0-9-]{0,31}$/.test(record.runtimeId ?? "")
     || typeof record.runtimeId !== "string"
     || !isIdentity(record.sessionId, "session")
@@ -96,11 +100,12 @@ export function createTaskSessionAssociationStore({ cwd, stateRootOptions }) {
         return publish();
       });
     },
-    replaceWriter(scope, { previous, successor, expectedRevision, destinationScope }) {
+    replaceWriter(scope, { previous, successor, expectedRevision, destinationScope, workspaceRef }) {
       if (destinationScope && destinationScope.taskRef !== scope.taskRef) throw new Error("association_scope_invalid");
       const next = requireAssociation({
         runtimeId: successor.runtimeId, sessionId: successor.sessionId, role: "writer", status: "active",
         ...(destinationScope ? { repositoryId: destinationScope.repositoryId, worktreeId: destinationScope.worktreeId } : {}),
+        ...(workspaceRef === undefined ? {} : { workspaceRef }),
       });
       return access(scope, (current, publish) => {
         if (current.revision !== expectedRevision) throw new Error("association_revision_conflict");

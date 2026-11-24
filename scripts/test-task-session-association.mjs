@@ -122,7 +122,7 @@ try {
   const attempt = () => handoffF4Writer({
     scope: retryScope, destinationScope, task, previous: first, successor: second, expectedRevision: 1,
     associationStore: open(),
-    restoreWorkspace: async () => ({ taskId: task.id, commit: task.commit, checkpoint: task.checkpoint }),
+    restoreWorkspace: async () => ({ taskId: task.id, commit: task.commit, checkpoint: task.checkpoint, workspace: directory }),
     withFrozenSource: async (_input, run) => run(),
     acceptHandoff: async () => destinationScope,
     discardWorkspace: async () => { discarded += 1; },
@@ -141,6 +141,7 @@ try {
   assert.ok(outcomes.some(result => result.reason === "handoff_already_changed"));
   assert.deepEqual(open().read(retryScope).associations[1], {
     ...second, status: "active", repositoryId: destinationScope.repositoryId, worktreeId: destinationScope.worktreeId,
+    workspaceRef: directory,
   });
   assert.deepEqual(open().read(destinationScope).associations, []);
   store.setStatus(retryScope, { ...second, status: "paused", expectedRevision: 2 });
@@ -149,6 +150,23 @@ try {
     previous: first, successor: second, expectedRevision: 3,
     destinationScope: { ...destinationScope, taskRef: "OTHER" },
   }), /association_scope_invalid/);
+  const recoveryScope = { ...retryScope, taskRef: "TASK-6" };
+  const recoveryDestination = { ...destinationScope, taskRef: recoveryScope.taskRef };
+  store.link(recoveryScope, { ...first, expectedRevision: 0 });
+  const lost = await handoffF4Writer({
+    scope: recoveryScope, destinationScope: recoveryDestination,
+    task: { ...task, id: recoveryScope.taskRef }, previous: first, successor: second, expectedRevision: 1,
+    associationStore: open(),
+    withFrozenSource: (_input, run) => run(),
+    restoreWorkspace: () => ({ taskId: recoveryScope.taskRef, commit: task.commit,
+      checkpoint: task.checkpoint, workspace: directory }),
+    acceptHandoff: () => recoveryDestination,
+    discardWorkspace: () => assert.fail("uncertain launch must retain the workspace"),
+    launchWriter: () => { throw new Error("response lost"); },
+  });
+  assert.equal(lost.reason, "recovery_required");
+  assert.equal(lost.associationRevision, 2);
+  assert.equal(open().read(recoveryScope).associations.find(record => record.status === "active").workspaceRef, directory);
   console.log("Task-session association and fresh Writer resolution PASS");
 } finally {
   rmSync(directory, { recursive: true, force: true });

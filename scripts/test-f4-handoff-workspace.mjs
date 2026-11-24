@@ -6,7 +6,7 @@ import path from "node:path";
 import { prepareF4HandoffWorkspace } from "./lib/f4-handoff-workspace.mjs";
 
 const dir = mkdtempSync(path.join(os.tmpdir(), "f4-handoff-test-"));
-const git = (cwd, ...args) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+const git = (cwd, ...args) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 try {
   git(dir, "init", "-q");
   writeFileSync(path.join(dir, "work.txt"), "initial\n");
