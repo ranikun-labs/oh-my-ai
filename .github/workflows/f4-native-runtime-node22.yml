@@ -5,6 +5,8 @@ on:
     paths:
       - ".github/workflows/f4-native-runtime-node22.yml"
       - "scripts/lib/f4-*.mjs"
+      - "scripts/lib/task-session-association.mjs"
+      - "scripts/test-task-session-association.mjs"
       - "scripts/lib/pending-handoff-*.mjs"
       - "scripts/lib/rpl-118-capability-preflight-mvp.mjs"
       - "scripts/test-f4-*.mjs"
@@ -48,6 +50,8 @@ on:
     paths:
       - ".github/workflows/f4-native-runtime-node22.yml"
       - "scripts/lib/f4-*.mjs"
+      - "scripts/lib/task-session-association.mjs"
+      - "scripts/test-task-session-association.mjs"
       - "scripts/lib/pending-handoff-*.mjs"
       - "scripts/lib/rpl-118-capability-preflight-mvp.mjs"
       - "scripts/test-f4-*.mjs"
@@ -149,6 +153,10 @@ jobs:
           node scripts/test-f4-scope-preservation-checkpoint-user-local-store-fixtures.mjs
           node scripts/test-f4-worker-result.mjs
           node scripts/test-f4-worker-result-checkpoint.mjs
+          node scripts/test-f4-cross-clone-binding.mjs
+          node scripts/test-f4-handoff-workspace.mjs
+          node scripts/test-task-session-association.mjs
+          node scripts/test-f4-writer-continuation.mjs
       - name: Run RPL-95 source fixture when integrated
         if: hashFiles('scripts/test-user-local-state-fixtures.mjs') != ''
         run: node scripts/test-user-local-state-fixtures.mjs

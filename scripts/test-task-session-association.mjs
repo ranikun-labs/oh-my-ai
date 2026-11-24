@@ -1,4 +1,4 @@
-import { handoffF4Writer } from "./lib/f4-writer-continuation.mjs";
+import { handoffF4Writer, recoverF4Writer } from "./lib/f4-writer-continuation.mjs";
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -122,8 +122,9 @@ try {
   const attempt = () => handoffF4Writer({
     scope: retryScope, destinationScope, task, previous: first, successor: second, expectedRevision: 1,
     associationStore: open(),
-    restoreWorkspace: async () => ({ taskId: task.id, commit: task.commit, checkpoint: task.checkpoint, workspace: directory }),
+    restoreWorkspace: async () => ({ taskId: task.id, commit: task.commit, checkpoint: task.checkpoint, workspace: mkdtempSync(path.join(directory, "clone-")) }),
     withFrozenSource: async (_input, run) => run(),
+    deriveDestinationScope: ({ workspace }) => ({ ...destinationScope, workspaceRef: workspace.workspace }),
     acceptHandoff: async () => destinationScope,
     discardWorkspace: async () => { discarded += 1; },
     launchWriter: async input => {
@@ -141,8 +142,9 @@ try {
   assert.ok(outcomes.some(result => result.reason === "handoff_already_changed"));
   assert.deepEqual(open().read(retryScope).associations[1], {
     ...second, status: "active", repositoryId: destinationScope.repositoryId, worktreeId: destinationScope.worktreeId,
-    workspaceRef: directory,
+    workspaceRef: store.read(retryScope).associations[1].workspaceRef,
   });
+  assert.ok(store.read(retryScope).associations[1].workspaceRef.startsWith(directory));
   assert.deepEqual(open().read(destinationScope).associations, []);
   store.setStatus(retryScope, { ...second, status: "paused", expectedRevision: 2 });
   assert.equal(open().read(retryScope).associations[1].worktreeId, destinationScope.worktreeId);
@@ -160,6 +162,7 @@ try {
     withFrozenSource: (_input, run) => run(),
     restoreWorkspace: () => ({ taskId: recoveryScope.taskRef, commit: task.commit,
       checkpoint: task.checkpoint, workspace: directory }),
+    deriveDestinationScope: ({ workspace }) => ({ ...recoveryDestination, workspaceRef: workspace.workspace }),
     acceptHandoff: () => recoveryDestination,
     discardWorkspace: () => assert.fail("uncertain launch must retain the workspace"),
     launchWriter: () => { throw new Error("response lost"); },
@@ -167,6 +170,66 @@ try {
   assert.equal(lost.reason, "recovery_required");
   assert.equal(lost.associationRevision, 2);
   assert.equal(open().read(recoveryScope).associations.find(record => record.status === "active").workspaceRef, directory);
+  // A successful durable save can throw before the caller receives its result.
+  const ambiguousScope = { ...scope, taskRef: "TASK-7" };
+  const ambiguousDestination = { ...destinationScope, taskRef: ambiguousScope.taskRef };
+  const ambiguousTask = { ...task, id: ambiguousScope.taskRef };
+  store.link(ambiguousScope, { ...first, expectedRevision: 0 });
+  let removed = 0;
+  let repeatLaunches = 0;
+  const uncertain = await handoffF4Writer({
+    scope: ambiguousScope, task: ambiguousTask, previous: first, successor: second, expectedRevision: 1,
+    associationStore: { read: store.read, replaceWriter: (...args) => {
+      store.replaceWriter(...args); throw new Error("response lost after save");
+    } },
+    withFrozenSource: (_input, run) => run(),
+    restoreWorkspace: () => ({ taskId: ambiguousTask.id, commit: task.commit,
+      checkpoint: task.checkpoint, workspace: directory }),
+    deriveDestinationScope: ({ workspace }) => ({ ...ambiguousDestination, workspaceRef: workspace.workspace }),
+    acceptHandoff: ({ destinationScope: accepted }) => accepted,
+    discardWorkspace: () => { removed += 1; },
+    launchWriter: () => { repeatLaunches += 1; },
+  });
+  assert.equal(uncertain.reason, "recovery_required");
+  assert.equal(uncertain.workspaceRef, directory);
+  assert.equal(uncertain.associationRevision, 2);
+  assert.equal(removed, 0);
+  assert.equal(repeatLaunches, 0);
+  let observedRequest;
+  const recover = observeWriter => recoverF4Writer({ scope: ambiguousScope, task: ambiguousTask,
+    associationStore: open(), observeWriter,
+    resumeWriter: request => ({ ok: true, session: request.session }),
+  });
+  assert.deepEqual(await recover(request => { observedRequest = request; return { status: "unknown" }; }),
+    { ok: false, reason: "recovery_required" });
+  assert.equal(observedRequest.successor.sessionId, second.sessionId);
+  assert.equal(observedRequest.workspaceRef, directory);
+  assert.deepEqual(observedRequest.destinationScope, ambiguousDestination);
+  assert.deepEqual(await recover(() => ({ status: "available", session: "wrong", sessionIdentity: first.sessionId })),
+    { ok: false, reason: "recovery_required" });
+  assert.deepEqual(await recover(() => ({ status: "available", session: "found", sessionIdentity: second.sessionId })),
+    { ok: true, session: "found" });
+  assert.equal(repeatLaunches, 0);
+  const invalidDestination = await handoffF4Writer({
+    scope: { ...scope, taskRef: "TASK-8" }, destinationScope: { ...destinationScope, taskRef: "TASK-8" },
+    task: { ...task, id: "TASK-8" }, previous: first, successor: second, expectedRevision: 0,
+    associationStore: { replaceWriter: () => assert.fail("unverified scope must not be stored") },
+    withFrozenSource: (_input, run) => run(),
+    restoreWorkspace: () => ({ taskId: "TASK-8", commit: task.commit, checkpoint: task.checkpoint, workspace: directory }),
+    deriveDestinationScope: ({ workspace }) => ({ ...scope, taskRef: "TASK-8", workspaceRef: workspace.workspace }),
+    acceptHandoff: () => assert.fail("mismatched scope must not be accepted"),
+    discardWorkspace: () => {}, launchWriter: () => assert.fail(),
+  });
+  assert.equal(invalidDestination.reason, "handoff_scope_not_supported");
+  const missingDestination = await handoffF4Writer({
+    scope: { ...scope, taskRef: "TASK-9" }, destinationScope: { ...destinationScope, taskRef: "TASK-9" },
+    task: { ...task, id: "TASK-9" }, previous: first, successor: second, expectedRevision: 0,
+    associationStore: { replaceWriter: () => assert.fail("missing workspace must not be stored") },
+    withFrozenSource: (_input, run) => run(),
+    restoreWorkspace: () => ({ taskId: "TASK-9", commit: task.commit, checkpoint: task.checkpoint }),
+    acceptHandoff: () => assert.fail(), discardWorkspace: () => {}, launchWriter: () => assert.fail(),
+  });
+  assert.equal(missingDestination.reason, "handoff_scope_not_supported");
   console.log("Task-session association and fresh Writer resolution PASS");
 } finally {
   rmSync(directory, { recursive: true, force: true });

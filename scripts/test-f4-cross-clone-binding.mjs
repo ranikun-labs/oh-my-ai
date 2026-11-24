@@ -30,7 +30,7 @@ try {
     scope, task, previous: {}, successor: {}, expectedRevision: 1,
     withFrozenSource: (_input, run) => run(),
     restoreWorkspace: () => prepareF4HandoffWorkspace({ source, parentDirectory: root, task }),
-    deriveDestinationScope: ({ workspace }) => ({ ...scope, worktreeId: derive(workspace.workspace) }),
+    deriveDestinationScope: ({ workspace }) => ({ ...scope, worktreeId: derive(workspace.workspace), workspaceRef: workspace.workspace }),
     acceptHandoff: ({ destinationScope }) => destinationScope,
     associationStore: { replaceWriter: (_scope, assignment) => { persisted = assignment; return { revision: 2 }; } },
     discardWorkspace: () => assert.fail("accepted workspace must remain available"),
@@ -43,6 +43,17 @@ try {
   });
   assert.deepEqual(result, { ok: true });
   assert.equal(persisted.destinationScope.worktreeId, derive(persisted.workspaceRef));
+  const attemptSameIdentity = workspacePath => handoffF4Writer({
+    scope, sourceWorkspaceRef: source, task, previous: {}, successor: {}, expectedRevision: 1,
+    withFrozenSource: (_input, run) => run(),
+    restoreWorkspace: () => ({ workspace: workspacePath, taskId: task.id, commit: task.commit, checkpoint: task.checkpoint }),
+    deriveDestinationScope: ({ workspace }) => ({ ...scope, workspaceRef: workspace.workspace }),
+    acceptHandoff: ({ destinationScope }) => destinationScope,
+    associationStore: { replaceWriter: () => ({ revision: 2 }) },
+    discardWorkspace: () => {}, launchWriter: () => ({ ok: true }),
+  });
+  assert.equal((await attemptSameIdentity(persisted.workspaceRef)).reason, "handoff_scope_not_supported");
+  assert.deepEqual(await attemptSameIdentity(source), { ok: true });
   console.log("F4 restored clone binding PASS");
 } finally {
   rmSync(root, { recursive: true, force: true });
