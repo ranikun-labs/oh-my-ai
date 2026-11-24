@@ -32,6 +32,7 @@ test-routing-fixtures:
 	node ./scripts/test-weekly-report-routing.mjs
 	node ./scripts/test-spec-advisory-routing.mjs
 	node ./skills/research/evals/check-routing.mjs
+	node ./skills/research/evals/check-routing.mjs ./skills/tech-hive/evals/cases.json
 
 test-work-start-fixtures:
 	./scripts/test-work-start-fixtures.sh

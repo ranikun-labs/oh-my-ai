@@ -1,0 +1,6 @@
+interface:
+  display_name: Tech Hive
+  short_description: Deep technology research and approved knowledge publication
+  default_prompt: Use $tech-hive for deep initial technical research, follow-up adoption advice, or explicit authorized knowledge publication. Do not write by default.
+policy:
+  allow_implicit_invocation: true

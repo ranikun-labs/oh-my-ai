@@ -1,0 +1,7 @@
+# Adoption procedure (only when requested)
+
+1. Identify target product/workflow, accepted contracts, current implementation, constraints and intended benefit. Retrieve only relevant authorized current Git, issue and knowledge records; avoid broad scans and refresh only stale evidence.
+2. Reuse earlier technology research and compare the current state against the candidate. Distinguish already implemented capability, missing requirement, optional improvement, product decision, future seam and overengineering. An existing field or exploratory document is not an approved requirement.
+3. Explain exactly where the candidate fits: existing component or workflow, integration boundary, data/control flow, example configuration or usage, what the user would do, and what new work would be necessary. Do not write core implementation or modify any system in research mode.
+4. Compare keeping the current solution with proportionate alternatives. Consider access, secrets, permissions, data consistency, rollback, cost, operational effort and compatibility. Mark estimated effects and untested behavior.
+5. Recommend immediate use, small pilot, later revisit or rejection; specify the reason, first action, acceptance criteria and revisit trigger. Link real internal evidence where authorized. If internal access is unavailable, mark the affected conclusions conditional.
