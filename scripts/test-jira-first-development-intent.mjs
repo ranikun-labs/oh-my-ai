@@ -240,6 +240,44 @@ const newTrackableWorkCases = [
 ];
 cases.push(...newTrackableWorkCases);
 
+// RPL-113 independent review: actual natural-language misses, false positives and scoped withdrawals.
+const reviewerDeltaCases = [
+  ["Research Skill 개발해줘",true],
+  ["새로운 Hook을 구현해줘",true],
+  ["새로운 훅을 만들어줘",true],
+  ["Research Skill 개발 부탁해",true],
+  ["Research Skill 생성해줘",true],
+  ["TechHive Skill 설계부터 진행해줘",true],
+  ["새 `SKILL.md` 작성해줘",true],
+  ["Please design a new research skill",true],
+  ["“Research Skill 개발해줘”라는 문장을 분석해줘",false],
+  ["“새 SKILL.md 작성해줘”라는 문장을 분석해줘",false],
+  ["Skill에서 build 명령어가 사용되는지 확인해줘",false],
+  ["Skill build 방법을 조사해줘",false],
+  ["Research Skill을 설계해 봤어",false],
+  ["> Research Skill 개발해줘",false],
+  ["Research Skill 설계해줘. 아니, 취소할게",false],
+  ["Research Skill 설계해줘. 취소할게",false],
+  ["Research Skill 설계해줘. 아니 보류해줘",false],
+  ["Research Skill 설계해줘. 아니 Research Skill 설계하지 마",false],
+  ["Research Skill 설계해줘. 아니 Research 스킬 설계하지 마",false],
+  ["로그인 API 수정해줘. Research Skill 설계해줘. 취소할게",true],
+  ["로그인 API 수정해줘. Research Skill 설계해줘. 아니 Research 스킬 설계하지 마",true],
+  ["Research Skill 설계해줘. 로그인 API 수정해줘. 아니 Research 스킬 설계하지 마",true],
+  ["Research Skill 생성하지 마",false],
+  ["Research Skill을 생성해 봤습니다",false],
+  ["“새 `SKILL.md` 작성해줘”라는 문장을 분석해줘",false],
+  ["> Research Skill 개발해줘\n로그인 API 수정해줘",true],
+  ["Please build a new skill",true],
+  ["Explain how to build a skill",false],
+  ["Do not design a research skill",false],
+  ["Research Skill 설계해줘. 보류해줘",false],
+  ["Research Skill 설계해줘. 로그인 API 수정해줘. 취소할게",true],
+  ["\"Please design a new research skill\" 문장 번역해줘",false],
+  ["\"Please design a new research skill\". 로그인 API 수정해줘",true],
+];
+cases.push(...reviewerDeltaCases);
+
 for (const [prompt, expected] of cases) {
   assert.equal(needsJiraFirstDevelopmentPreflight(prompt), expected, prompt);
 }
@@ -312,6 +350,7 @@ for (const [prompt, expected] of [
   ["로그인 API에 검증 추가해 줬어.", false],
   ["로그인 API 오류 고쳐줘 하지만 실제로는 수정하지 마", false],
   ...newTrackableWorkCases,
+  ...reviewerDeltaCases,
 ]) {
   const result = spawnSync(process.execPath, ["scripts/prompt-routing-hook.mjs", "--format=text"], {
     cwd: root,
