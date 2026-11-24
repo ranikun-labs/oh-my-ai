@@ -278,6 +278,27 @@ const reviewerDeltaCases = [
 ];
 cases.push(...reviewerDeltaCases);
 
+// RPL-113 Runtime feedback: explicit resume intent and withdrawal boundaries.
+const resumeIntentCases = [
+  ["RPL-113 기존 작업 이어서 진행해줘",true],
+  ["RPL-113 이어서 진행해",true],
+  ["PR #208 이어 진행해 주세요",true],
+  ["Carelog OAuth 이어서 진행해주세요",true],
+  ["RPL-113 이어서 진행해줘?",true],
+  ["RPL-113 이어서 진행해?",false],
+  ["RPL-113 이어서 진행하지 마",false],
+  ["RPL-113 이어서 진행해주지 마",false],
+  ["RPL-113 이어서 진행해 주지 말아줘",false],
+  ["RPL-113 이어서 진행해 줬어.",false],
+  ["“RPL-113 이어서 진행해줘”라는 문장을 분석해줘",false],
+  ["RPL-113 이어서 진행해줘. 아니, 취소할게",false],
+  ["RPL-113 이어서 진행해줘. 아니 RPL-113 진행하지 마",false],
+  ["로그인 API 수정해줘. RPL-113 이어서 진행해줘. 취소할게",true],
+  ["RPL-113 이어서 진행하는 방법만 설명해줘",false],
+  ["이어서 진행해줘",false],
+];
+cases.push(...resumeIntentCases);
+
 for (const [prompt, expected] of cases) {
   assert.equal(needsJiraFirstDevelopmentPreflight(prompt), expected, prompt);
 }
@@ -351,6 +372,7 @@ for (const [prompt, expected] of [
   ["로그인 API 오류 고쳐줘 하지만 실제로는 수정하지 마", false],
   ...newTrackableWorkCases,
   ...reviewerDeltaCases,
+  ...resumeIntentCases,
 ]) {
   const result = spawnSync(process.execPath, ["scripts/prompt-routing-hook.mjs", "--format=text"], {
     cwd: root,
