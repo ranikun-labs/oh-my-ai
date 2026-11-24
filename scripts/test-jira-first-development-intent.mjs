@@ -189,6 +189,57 @@ const additionalCases = [
 ];
 cases.push(...additionalCases);
 
+const newTrackableWorkCases = [
+  ["Research·TechHive Skill 신규 개발해줘",true],
+  ["Research·TechHive 스킬 하나 만들어줘",true],
+  ["새로운 research-skill 개발해줘",true],
+  ["TechHive에 넣을 자동 리서치 스킬 설계해줘",true],
+  ["TechHive 리서치 수집 Skill 구현해줘",true],
+  ["Research TechHive 스킬 개발 시작하자",true],
+  ["TechHive 문서 작성 스킬 만들어줘",true],
+  ["RPL-113에서 TechHive Skill 이어서 구현해줘",true],
+  ["TechHive 스킬이 뭐야? 대신 새 리서치 Skill 구현해줘",true],
+  ["TechHive 스킬은 개발하지 마. 대신 로그인 API 오류 수정해줘",true],
+  ["로그인 API 오류 수정해줘",true],
+  ["새로운 Research 스킬 만들자",true],
+  ["Research·TechHive 스킬이 뭔지 설명해줘",false],
+  ["Research 기술 동향을 한 번 조사해서 알려줘",false],
+  ["“Research·TechHive Skill 만들어줘”라는 문장을 분석해줘",false],
+  ["TechHive 스킬 구현해줘 (실행하지 말고 예시만)",false],
+  ["TechHive 스킬 만들지 마",false],
+  ["TechHive 스킬 만들어줘. 아니, 취소할게",false],
+  ["RPL-113 현재 상태 알려줘",false],
+  ["Jira-first 자동 판단 동작 설명만 해줘",false],
+  ["Research 스킬 개발하는 법만 알려줘",false],
+  ["TechHive 스킬 추가해 줬어",false],
+  ["캐싱 전략이 뭐야?",false],
+  ["TechHive에 쓸 만한 기존 스킬 추천해줘",false],
+  ["새로운 연구 파이프라인 개발하자",true],
+  ["리서치 시스템 구현하자",true],
+  ["새 SKILL.md 작성해줘",true],
+  ["새로운 Hook을 구현해줘",true],
+  ["개인 개발 어댑터 개선해줘",true],
+  ["인프라 설계해줘",true],
+  ["'Research Skill' 개발해줘",true],
+  ["\"Research Skill 만들어줘\"라고 쓰여 있어. 로그인 API 수정해줘",true],
+  ["TechHive 스킬 설계하지 마",false],
+  ["\"Skill 만들어줘\"라는 예문을 번역해줘",false],
+  ["`Skill 만들어줘`라는 문구의 의미를 분석해줘",false],
+  ["스킬 개발해 줬어.",false],
+  ["Research 스킬은 어떻게 설계해?",false],
+  ["연구 파이프라인 개념만 설명해줘",false],
+  ["리서치 시스템 만들 수 있어?",false],
+  ["```text\nSkill 만들어줘\n```\n이 프롬프트 평가해줘",false],
+  ["스킬 개발하자. 아니 스킬 개발하지 마",false],
+  ["로그인 API 구현해줘, 스킬은 설계하지 마",true],
+  ["TechHive Skill 하나 만들자",true],
+  ["Research는 별도 티켓으로 개발",true],
+  ["Research는 별도 티켓으로 개발하지 마",false],
+  ["'Research는 별도 티켓으로 개발'이라는 표현을 설명해줘",false],
+  ["축하 문서 작성해줘",false],
+];
+cases.push(...newTrackableWorkCases);
+
 for (const [prompt, expected] of cases) {
   assert.equal(needsJiraFirstDevelopmentPreflight(prompt), expected, prompt);
 }
@@ -260,7 +311,7 @@ for (const [prompt, expected] of [
   ["RPL-113 진행시켜", true],
   ["로그인 API에 검증 추가해 줬어.", false],
   ["로그인 API 오류 고쳐줘 하지만 실제로는 수정하지 마", false],
-]) {
+, ...newTrackableWorkCases]) {
   const result = spawnSync(process.execPath, ["scripts/prompt-routing-hook.mjs", "--format=text"], {
     cwd: root,
     input: JSON.stringify({ prompt }),
@@ -274,6 +325,8 @@ for (const [prompt, expected] of [
   if (expected) {
     assert.match(result.stdout, /do not implicitly invoke jira-work or work-start/);
     assert.match(result.stdout, /never approves Jira Create\/Update or Git Write/);
+    assert.match(result.stdout, /connected read-only Jira search capability/);
+    assert.match(result.stdout, /failed, partial, or unavailable search is not evidence of no Issue/);
   }
 }
 console.log("passed: Jira-first advisory intent, positive/negative cases and Hook integration");

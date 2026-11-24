@@ -124,7 +124,7 @@ function buildPromptRoutingPayload(prompt, options = {}) {
   let workStartSuggestion = null;
 
   if (needsJiraFirstDevelopmentPreflight(prompt)) {
-    notes.push("- Jira-first development preflight (advisory only): check for an existing RPL Primary Issue and reuse it when appropriate before implementation. If no issue exists, use the approved Ticket Contract/duplicate/preview/approval procedure. Inspect applicable Skill contracts; do not implicitly invoke jira-work or work-start. This hint never approves Jira Create/Update or Git Write.");
+    notes.push("- Jira-first development preflight (advisory only): for trackable new work or an existing approved development objective, use the connected read-only Jira search capability before implementation; reuse a verified matching Primary Issue. If the search succeeds completely with no suitable Issue, prepare the existing Ticket Contract and Create Preview candidate for human approval; a failed, partial, or unavailable search is not evidence of no Issue. Similar or ambiguous matches require resolution, not creation. Inspect applicable Skill contracts; do not implicitly invoke jira-work or work-start. This hint never approves Jira Create/Update or Git Write.");
   }
 
   if (hasToilSignal(prompt, normalized)) {
