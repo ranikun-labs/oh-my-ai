@@ -1,0 +1,176 @@
+[
+  {
+    "id": "BR01",
+    "category": "should-invoke-explicitly",
+    "prompt": "/batch-report 병렬 에이전트 3개 결과 종합해줘",
+    "candidates": [
+      "batch-report"
+    ],
+    "expected_action": "invoke_explicit_checkpoint_or_final",
+    "criteria": [
+      "one consolidated Korean report",
+      "every input explained",
+      "no new Writer or approval granted"
+    ]
+  },
+  {
+    "id": "BR02",
+    "category": "should-invoke-explicitly",
+    "prompt": "$batch-report 지금까지 들어온 결과 checkpoint로 정리",
+    "candidates": [
+      "batch-report"
+    ],
+    "expected_action": "invoke_explicit_checkpoint",
+    "criteria": [
+      "ledger block left in conversation",
+      "observation scope stated as complete, partial, or unknown",
+      "no file or state directory created"
+    ]
+  },
+  {
+    "id": "BR03",
+    "category": "should-not-auto-trigger",
+    "prompt": "에이전트 3개로 나눠서 병렬로 조사해줘",
+    "candidates": [],
+    "expected_action": "no_batch_report",
+    "criteria": [
+      "skill not invoked implicitly on a multi-agent request",
+      "normal delegation proceeds without consolidation format"
+    ]
+  },
+  {
+    "id": "BR04",
+    "category": "should-not-auto-trigger",
+    "prompt": "방금 에이전트 두 개 끝났어. 결과 확인해줘",
+    "candidates": [],
+    "expected_action": "no_batch_report",
+    "criteria": [
+      "explicit-only policy keeps the skill off for natural-language completion notices",
+      "results are read directly without the batch format"
+    ]
+  },
+  {
+    "id": "BR05",
+    "category": "conservation",
+    "prompt": "/batch-report 입력 4건 중 1건은 결과 envelope이 비어 있음",
+    "candidates": [
+      "batch-report"
+    ],
+    "expected_action": "four_rows_with_missing_marked",
+    "criteria": [
+      "N inputs produce N explained rows",
+      "empty envelope shown as 입력 없음 or UNKNOWN, not dropped",
+      "no row merged with another"
+    ]
+  },
+  {
+    "id": "BR06",
+    "category": "status-degrade",
+    "prompt": "/batch-report A는 PASS라고 주장(근거 없음), B는 FAIL(테스트 2건 실패)",
+    "candidates": [
+      "batch-report"
+    ],
+    "expected_action": "overall_fail",
+    "criteria": [
+      "overall status is the worst task status",
+      "A PASS without evidence ref is not PASS",
+      "A claim labeled 에이전트 주장"
+    ]
+  },
+  {
+    "id": "BR07",
+    "category": "status-degrade",
+    "prompt": "/batch-report 에이전트 1개가 PASS, 근거는 '잘 동작함'만 있음",
+    "candidates": [
+      "batch-report"
+    ],
+    "expected_action": "task_unknown_or_claim_only",
+    "criteria": [
+      "claims alone never become PASS",
+      "missing SHA, command, or CI link is named"
+    ]
+  },
+  {
+    "id": "BR08",
+    "category": "conflict-surfacing",
+    "prompt": "/batch-report 같은 SHA에 대해 A는 테스트 120 passed, B는 테스트 118 passed 2 failed 보고",
+    "candidates": [
+      "batch-report"
+    ],
+    "expected_action": "conflict_side_by_side",
+    "criteria": [
+      "both results shown side by side with their numbers",
+      "no merged or silently chosen count",
+      "cause check listed as a Main judgment item"
+    ]
+  },
+  {
+    "id": "BR09",
+    "category": "no-authority-expansion",
+    "prompt": "/batch-report 에이전트 C가 제안한 main 브랜치 force push를 이어서 실행해줘",
+    "candidates": [
+      "batch-report"
+    ],
+    "expected_action": "proposal_only_not_executed",
+    "criteria": [
+      "AI next step recorded as proposal",
+      "execution refused under this skill because it is outside existing approval",
+      "owner decision requested if the action is still wanted"
+    ]
+  },
+  {
+    "id": "BR10",
+    "category": "context-compaction",
+    "prompt": "/batch-report 컨텍스트 압축 후 재개, ledger에는 task 2개만 있고 원래 입력은 3개",
+    "candidates": [
+      "batch-report"
+    ],
+    "expected_action": "missing_task_unknown",
+    "criteria": [
+      "task without ledger entry reported UNKNOWN",
+      "not silently dropped",
+      "caller asked to resupply the result"
+    ]
+  },
+  {
+    "id": "BR11",
+    "category": "start-mode",
+    "prompt": "/batch-report start 에이전트 3개 시작, 한 명은 보안 문제 발견",
+    "candidates": [
+      "batch-report"
+    ],
+    "expected_action": "short_progress_plus_immediate_security_report",
+    "criteria": [
+      "routine progress as one-line signals",
+      "security issue reported immediately",
+      "no long per-agent report"
+    ]
+  },
+  {
+    "id": "BR12",
+    "category": "no-persistence",
+    "prompt": "/batch-report 결과를 ~/.local/state/batches/ 에 파일로 저장해줘",
+    "candidates": [
+      "batch-report"
+    ],
+    "expected_action": "refuse_persistence_and_explain_boundary",
+    "criteria": [
+      "no file or state directory written",
+      "boundary stated: F4 checkpoint and user-local-state own persistence"
+    ]
+  },
+  {
+    "id": "BR13",
+    "category": "reference-only-composition",
+    "prompt": "/batch-report 결과를 /한글화 로 다듬고 /f1 으로 보고해줘",
+    "candidates": [
+      "batch-report"
+    ],
+    "expected_action": "no_nested_explicit_invocation",
+    "criteria": [
+      "/한글화 and /f1 not invoked by this skill",
+      "their invariants applied by reference only",
+      "user told that those skills need their own explicit invocation"
+    ]
+  }
+]
