@@ -20,8 +20,21 @@ import {
 } from "./oh-my-ai-config.mjs";
 
 export const FACADE_COMMANDS = Object.freeze([
-  "version", "--version", "status", "doctor", "install", "update", "config", "skills", "help", "--help", "-h",
+  "version", "--version", "status", "doctor", "install", "update", "config", "skills", "models", "help", "--help", "-h",
 ]);
+
+// model policy 는 scripts/model-policy.mjs (PR #227) 에 있다. 이 파사드는 정책 로직을 갖지 않고 그대로 넘긴다.
+const MODEL_POLICY_SCRIPT = "model-policy.mjs";
+const MODEL_POLICY_ABSENT = "model policy: not available in this source (requires #227)";
+// mutating: true 는 --apply 가 있어야 스크립트를 호출한다. needsFile: 첫 위치 인자가 파일 경로여야 한다.
+const MODEL_SUBCOMMANDS = Object.freeze({
+  status: { mutating: false, needsFile: false },
+  validate: { mutating: false, needsFile: true },
+  diff: { mutating: false, needsFile: true },
+  check: { mutating: false, needsFile: false },
+  apply: { mutating: true, needsFile: true },
+  rollback: { mutating: true, needsFile: false },
+});
 
 const BIN = "ohmyai";
 const ALIAS = "oh-my-ai";
@@ -52,6 +65,8 @@ export function runFacade(command, args, ctx) {
       return cmdConfig(env, args, io);
     case "skills":
       return cmdSkills(repoRoot, env, args, io);
+    case "models":
+      return cmdModels(repoRoot, env, args, io);
     case "help":
     case "--help":
     case "-h":
@@ -544,6 +559,7 @@ function collectStatus(repoRoot, env) {
   };
 
   return {
+    model_policy: modelPolicySummary(repoRoot, env),
     version: { version: readVersion(repoRoot), git: git.isRepo ? git.head : null, dirty: git.isRepo ? git.dirty : null },
     source: { path: repoRoot, branch: git.branch ?? null, head: git.head ?? null, dirty: git.dirty ?? null, dirty_files: git.dirtyFiles ?? null },
     instructions: drift,
@@ -606,6 +622,7 @@ function cmdStatus(repoRoot, env, args, { out }) {
     `  hooks         ${hookLine} (configured/enabled)`,
     `  entrypoints   ${BIN}=${s.entrypoints[BIN]} ${ALIAS}=${s.entrypoints[ALIAS]}`,
     `  config        ${cfg}`,
+    `  model policy  ${modelPolicyLine(s.model_policy)}`,
     "  -- setting vs effective (저장된 값과 실제 동작은 다를 수 있음) --",
     `  update.policy    ${h.settings["update.policy"].setting} → ${h.settings["update.policy"].effective}`,
     `  context.inject   ${h.settings["context.inject"].setting} → ${h.settings["context.inject"].effective}`,
@@ -1074,6 +1091,70 @@ function cmdSkills(repoRoot, env, args, { out, err }) {
   return 0;
 }
 
+// ---------- models ----------
+
+function modelPolicyScript(repoRoot) {
+  const file = path.join(repoRoot, "scripts", MODEL_POLICY_SCRIPT);
+  return fs.existsSync(file) ? file : null;
+}
+
+// status 한 줄용 요약. 스크립트가 없으면 not available, 실행 실패·파싱 실패면 not configured.
+function modelPolicySummary(repoRoot, env) {
+  const script = modelPolicyScript(repoRoot);
+  if (!script) return { state: "not available" };
+  const r = spawnSync(process.execPath, [script, "status", "--json"], {
+    cwd: repoRoot,
+    env: setupEnv(env),
+    encoding: "utf8",
+  });
+  if (r.status !== 0) return { state: "not configured" };
+  try {
+    const parsed = JSON.parse(r.stdout);
+    return { state: "configured", version: parsed.version ?? "-", status: parsed.status ?? "-" };
+  } catch {
+    return { state: "not configured" };
+  }
+}
+
+function modelPolicyLine(summary) {
+  if (summary.state === "configured") return `${summary.version} · ${summary.status}`;
+  if (summary.state === "not available") return "not available (requires #227)";
+  return "not configured";
+}
+
+function cmdModels(repoRoot, env, args, { out, err }) {
+  const [sub, ...rest] = args;
+  const spec = sub === undefined ? undefined : MODEL_SUBCOMMANDS[sub];
+  if (!spec) {
+    err(`usage: ${BIN} models <${Object.keys(MODEL_SUBCOMMANDS).join("|")}> [args]`);
+    return 2;
+  }
+  const script = modelPolicyScript(repoRoot);
+  if (!script) {
+    if (spec.mutating) {
+      err(MODEL_POLICY_ABSENT);
+      return 2;
+    }
+    out(MODEL_POLICY_ABSENT);
+    return 0;
+  }
+  if (spec.mutating && !rest.includes("--apply")) {
+    err(`${BIN} models ${sub} changes the active policy: add --apply to run it`);
+    return 2;
+  }
+  if (spec.needsFile && !rest.some(a => !a.startsWith("--"))) {
+    err(`usage: ${BIN} models ${sub} <file>`);
+    return 2;
+  }
+  // 정책 판단은 스크립트 몫이다. 인자는 가공 없이 그대로 넘긴다 (--apply 포함: 스크립트도 같은 가드를 본다).
+  const r = spawnSync(process.execPath, [script, sub, ...rest], {
+    cwd: repoRoot,
+    env: setupEnv(env),
+    stdio: "inherit",
+  });
+  return r.status ?? 1;
+}
+
 // ---------- help ----------
 
 function cmdHelp({ out }) {
@@ -1087,6 +1168,7 @@ function cmdHelp({ out }) {
   out("  update [--ref REF] [--apply] [--force-worktrees]  fetch 후 비교 (기본 origin/master). --apply: clean fast-forward → render → Core 링크 → doctor");
   out("  config list|get|set         ~/.config/oh-my-ai/config.json (update.policy, context.inject, context.preload)");
   out("  skills [--core|--library|--all] [--json]   Skill 목록, 출처, explicit-only, 노출 상태");
+  out("  models status|validate|diff|check|apply|rollback   model policy (scripts/model-policy.mjs 위임, 없으면 not available). apply/rollback은 --apply 필요");
   out("  help                         이 도움말 (--help, -h 동일)");
   out("");
   out("내부 명령 (hook, context-checkpoint, work-start, jira-ticket, work-view)은 기존과 동일하게 동작합니다.");

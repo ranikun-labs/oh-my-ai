@@ -9,7 +9,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildPreloadBlock, PRELOAD_BYTE_CAP, PRELOAD_SUMMARY_CHARS } from "./lib/oh-my-ai-context.mjs";
+import { buildPreloadBlock, clipSummary, PRELOAD_BYTE_CAP, PRELOAD_SUMMARY_CHARS } from "./lib/oh-my-ai-context.mjs";
 import { coreIdsOf, discoverSkills } from "./lib/skill-discovery.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -604,6 +604,122 @@ test("update --apply: a Core skill that appears upstream is linked for both runt
   assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
   assertLinkedTo(path.join(sb.claude, "skills", "brand-new-core"), path.join(sb.clone, "skills", "brand-new-core"));
   assertLinkedTo(path.join(sb.agents, "skills", "brand-new-core"), path.join(sb.clone, "skills", "brand-new-core"));
+});
+
+test("preload clip: a cut never splits a backtick span or a bare token, and the id line stays whole", () => {
+  // 백틱 span 이 상한 안에서 열린 채 끝나면 span 시작 전에서 자른다.
+  assert.equal(clipSummary(`abc \`${"y".repeat(80)}\` tail`), "abc…");
+  // 공백 없는 긴 토큰(경로·식별자) 한가운데면 토큰 시작 전에서 자른다.
+  assert.equal(clipSummary(`ab ${"p".repeat(80)}`), "ab…");
+  // 닫힌 span 뒤 토큰이 상한을 넘으면 그 토큰만 뺀다.
+  assert.equal(clipSummary(`\`a b\` ${"z".repeat(80)}`), "`a b`…");
+  // 일반 문장은 기존처럼 상한-1 글자 + …
+  const prose = "가".repeat(100);
+  assert.equal(Array.from(clipSummary(prose)).length, PRELOAD_SUMMARY_CHARS);
+
+  const samples = [
+    "`scripts/lib/oh-my-ai-facade.mjs` 를 고치고 `models` 서브커맨드를 추가하는 긴 설명 문장입니다 그리고 더 길게 이어짐",
+    "경로 scripts/lib/some/very/deep/path/to/a/module-with-long-name.mjs 를 참조하는 요약 문장이 상한을 넘는다 끝",
+    "a `b c d` e `f g h i j k l m n o p q r s t u v w x y z aa bb cc dd ee ff gg hh ii jj kk ll mm nn` tail words",
+  ];
+  for (const s of samples) {
+    const clipped = clipSummary(s);
+    assert.ok(Array.from(clipped).length <= PRELOAD_SUMMARY_CHARS, clipped);
+    assert.ok(clipped.endsWith("…"), clipped);
+    const kept = clipped.slice(0, -1);
+    assert.ok(s.startsWith(kept), `${kept} is not a prefix`);
+    assert.equal((kept.match(/`/g) ?? []).length % 2, 0, `split backtick span: ${kept}`);
+    // 잘린 지점이 ASCII 식별자·경로 토큰 한가운데면 실패. 한글 문장 중간 절단은 허용.
+    const tail = s.slice(kept.length).split(/\s/)[0] ?? "";
+    const head = kept.split(/\s/).pop() ?? "";
+    const straddles = head.length > 0 && tail.length > 0 && /[A-Za-z0-9_./\\-]/.test(head + tail);
+    assert.ok(!straddles, `cut inside token: ${kept}`);
+  }
+
+  const fx = fs.mkdtempSync(path.join(root, "preload-token-"));
+  const dir = path.join(fx, "skills", "work-start");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "SKILL.md"),
+    `---\nname: work-start\ndescription: test\nmetadata:\n  summary: ${samples[0]}\n---\n\n# body\n`);
+  const block = buildPreloadBlock(fx, ["work-start"]);
+  const line = block.text.split("\n").find(l => l.startsWith("- work-start — "));
+  assert.ok(line, block.text);
+  assert.ok(line.startsWith("- work-start — "));
+  assert.ok(block.bytes <= PRELOAD_BYTE_CAP);
+});
+
+// model policy 스텁: 같은 디렉터리의 mode.txt 로 status --json 동작을 고른다. argv 를 그대로 되돌려 준다.
+function writeModelStub(sb, mode = "ok") {
+  const dir = path.join(sb.clone, "scripts");
+  fs.writeFileSync(path.join(dir, "model-policy.mjs"), [
+    "import fs from 'node:fs';",
+    "import path from 'node:path';",
+    "import { fileURLToPath } from 'node:url';",
+    "const here = path.dirname(fileURLToPath(import.meta.url));",
+    "const mode = fs.readFileSync(path.join(here, 'stub-mode.txt'), 'utf8').trim();",
+    "const argv = process.argv.slice(2);",
+    "if (argv[0] === 'status' && argv[1] === '--json') {",
+    "  if (mode === 'missing') process.exit(1);",
+    "  console.log(JSON.stringify({ version: 'v9', status: 'ACTIVE' }));",
+    "  process.exit(0);",
+    "}",
+    "console.log(JSON.stringify({ argv }));",
+    "process.exit(argv.some(a => a.startsWith('fail')) ? 3 : 0);",
+    "",
+  ].join("\n"));
+  fs.writeFileSync(path.join(dir, "stub-mode.txt"), `${mode}\n`);
+}
+
+test("models: absent script prints not-available, status exits 0, mutating exits 2", () => {
+  const sb = makeFixture("models-absent");
+  const st = cli(sb, ["models", "status"]);
+  assert.equal(st.status, 0, st.stderr);
+  assert.match(st.stdout, /model policy: not available in this source \(requires #227\)/);
+  for (const args of [["models", "apply", "p.json", "--apply"], ["models", "rollback", "--apply"]]) {
+    const r = cli(sb, args);
+    assert.equal(r.status, 2, `${args.join(" ")}: ${r.stdout}${r.stderr}`);
+    assert.match(r.stderr, /not available in this source/);
+  }
+  const line = JSON.parse(cli(sb, ["status", "--json"]).stdout).model_policy;
+  assert.equal(line.state, "not available");
+  assert.match(cli(sb, ["status"]).stdout, /model policy  not available \(requires #227\)/);
+});
+
+test("models: passthrough of each subcommand, --apply gate, exit status propagated", () => {
+  const sb = makeFixture("models-passthrough");
+  writeModelStub(sb, "ok");
+  const argvOf = r => JSON.parse(r.stdout.trim().split("\n").pop()).argv;
+
+  assert.deepEqual(argvOf(cli(sb, ["models", "validate", "p.json"])), ["validate", "p.json"]);
+  assert.deepEqual(argvOf(cli(sb, ["models", "diff", "p.json"])), ["diff", "p.json"]);
+  assert.deepEqual(
+    argvOf(cli(sb, ["models", "check", "--role", "R", "--runtime", "claude", "--risk", "low", "--model", "M"])),
+    ["check", "--role", "R", "--runtime", "claude", "--risk", "low", "--model", "M"],
+  );
+  assert.deepEqual(argvOf(cli(sb, ["models", "apply", "p.json", "--apply"])), ["apply", "p.json", "--apply"]);
+  assert.deepEqual(argvOf(cli(sb, ["models", "rollback", "--apply"])), ["rollback", "--apply"]);
+
+  // --apply 없이는 스크립트를 부르지 않는다.
+  const noApply = cli(sb, ["models", "apply", "p.json"]);
+  assert.equal(noApply.status, 2);
+  assert.doesNotMatch(noApply.stdout, /argv/);
+  assert.equal(cli(sb, ["models", "rollback"]).status, 2);
+  // 파일 인자 누락은 usage 오류.
+  assert.equal(cli(sb, ["models", "validate"]).status, 2);
+  assert.equal(cli(sb, ["models", "bogus"]).status, 2);
+  // 스크립트 종료 코드를 그대로 돌려준다.
+  assert.equal(cli(sb, ["models", "diff", "fail.json"]).status, 3);
+});
+
+test("models: status line shows version/status, not configured, or not available", () => {
+  const sb = makeFixture("models-status-line");
+  writeModelStub(sb, "ok");
+  assert.match(cli(sb, ["status"]).stdout, /model policy  v9 · ACTIVE/);
+  assert.equal(JSON.parse(cli(sb, ["status", "--json"]).stdout).model_policy.status, "ACTIVE");
+
+  fs.writeFileSync(path.join(sb.clone, "scripts", "stub-mode.txt"), "missing\n");
+  assert.match(cli(sb, ["status"]).stdout, /model policy  not configured/);
+  assert.equal(cli(sb, ["status", "--json"]).status, 0);
 });
 
 // ---------------- report ----------------

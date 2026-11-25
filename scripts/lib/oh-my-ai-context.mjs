@@ -55,10 +55,28 @@ export function readSkillSummary(file) {
 export const PRELOAD_SUMMARY_CHARS = 60;
 
 // 코드포인트 기준으로 자른다 (한글·이모지 중간에서 끊기지 않게).
+// 식별자·경로가 반쪽으로 잘리면 안 된다: 백틱 코드 span 이 열린 채 잘리면 span 시작 전으로,
+// 공백 없는 토큰(경로·식별자) 중간이면 토큰 시작 전으로 되돌린다.
 export function clipSummary(text, maxChars = PRELOAD_SUMMARY_CHARS) {
   const chars = Array.from(text);
   if (chars.length <= maxChars) return text;
-  return `${chars.slice(0, maxChars - 1).join("")}…`;
+  let cut = maxChars - 1;
+  let open = -1;
+  for (let i = 0; i < cut; i += 1) {
+    if (chars[i] === "`") open = open === -1 ? i : -1;
+  }
+  if (open !== -1) cut = open;
+  const isSpace = ch => /\s/.test(ch);
+  // 공백 없는 한글 문장은 토큰이 아니다. ASCII 식별자·경로 문자가 든 토큰만 통째로 뺀다.
+  if (cut > 0 && cut < chars.length && !isSpace(chars[cut - 1]) && !isSpace(chars[cut])) {
+    let start = cut;
+    while (start > 0 && !isSpace(chars[start - 1])) start -= 1;
+    let end = cut;
+    while (end < chars.length && !isSpace(chars[end])) end += 1;
+    if (/[A-Za-z0-9_./\\-]/.test(chars.slice(start, end).join(""))) cut = start;
+  }
+  const kept = chars.slice(0, cut).join("").replace(/\s+$/, "");
+  return `${kept}…`;
 }
 
 // preload 대상 Core Skill 을 "id — summary" 한 줄로 담는다. 경로는 넣지 않는다(id → SKILL.md 는 skill discovery 로 해석).

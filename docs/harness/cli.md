@@ -39,6 +39,7 @@ ohmyai status                             # 설치 결과 확인 (또는 node sc
 | `ohmyai update [--ref REF] [--apply]` | `git fetch` 후 기준 ref(기본 `origin/master`)와 비교 | git; `--apply` 시 render + doctor |
 | `ohmyai config list|get|set` | 사용자 설정 조회·저장 | 직접 (`config.json`) |
 | `ohmyai skills [--core\|--library\|--all] [--json]` | Skill 목록, 출처, explicit-only, 노출 상태 | skill-discovery |
+| `ohmyai models status\|validate\|diff\|check\|apply\|rollback` | model policy 위임. `apply`·`rollback`은 `--apply` 필요. `scripts/model-policy.mjs`(#227)가 없으면 status는 "not available" 안내 후 0, 변경 명령은 2 | `scripts/model-policy.mjs` (정책 로직 없음) |
 | `ohmyai help` / `--help` / `-h` | 사용법 | 직접 |
 
 내부 명령 `hook`, `context-checkpoint`, `work-start`, `jira-ticket`, `work-view` 는 기존과 바이트 단위로 같게 동작한다.
