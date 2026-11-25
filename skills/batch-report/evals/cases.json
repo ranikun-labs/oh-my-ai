@@ -256,5 +256,65 @@
       "the input count in the consolidated output is 1 for worker E, not 3",
       "a report with different content from the same worker would be kept as a separate input"
     ]
+  },
+  {
+    "id": "BR20",
+    "category": "duplicate-arrival",
+    "prompt": "/batch-report 워커 F 보고 2건. 둘 다 같은 SHA와 테스트 120 passed. 첫 보고 task_status=PASS, 두 번째 보고 task_status=FAIL (CI 재실행 실패)",
+    "candidates": [
+      "batch-report"
+    ],
+    "expected_action": "both_kept_later_marked_update_difference_shown",
+    "criteria": [
+      "same SHA and test count alone do not make the two reports duplicates",
+      "both reports kept as separate inputs, so worker F counts as 2 inputs, not 1",
+      "the later report is marked 갱신 or 정정 and the task_status difference PASS vs FAIL is shown side by side",
+      "overall status is FAIL (worst task status)",
+      "no silent drop of the PASS report"
+    ]
+  },
+  {
+    "id": "BR21",
+    "category": "duplicate-arrival",
+    "prompt": "/batch-report 워커 G 보고 2건. 같은 SHA, 같은 테스트 118 passed, 같은 task_status=PASS. 두 번째 보고에만 새 Finding(설정 키 누락 경고) 1건 추가",
+    "candidates": [
+      "batch-report"
+    ],
+    "expected_action": "both_kept_new_finding_surfaced",
+    "criteria": [
+      "identical fields except findings means the two reports are not duplicates",
+      "both reports kept, worker G counts as 2 inputs",
+      "the later report is marked 갱신 and the new Finding is shown as the difference",
+      "the new Finding is not merged into or dropped from the earlier report"
+    ]
+  },
+  {
+    "id": "BR22",
+    "category": "duplicate-arrival",
+    "prompt": "/batch-report 워커 H 보고 2건. 같은 SHA, 같은 테스트 118 passed, 같은 task_status=PASS, 같은 findings. 두 번째 보고의 owner_requests에만 '릴리즈 브랜치 머지 여부 결정 요청' 1건 추가",
+    "candidates": [
+      "batch-report"
+    ],
+    "expected_action": "both_kept_owner_request_surfaced_as_owner_decision",
+    "criteria": [
+      "difference in owner_requests alone prevents dedup",
+      "both reports kept, worker H counts as 2 inputs",
+      "the added owner request appears in the Owner 결정 section with one recommendation",
+      "the owner request is not treated as already approved"
+    ]
+  },
+  {
+    "id": "BR23",
+    "category": "duplicate-arrival",
+    "prompt": "/batch-report 워커 I 보고가 같은 묶음에 3번 도착. agent, task, claim, evidence, task_status, findings, blockers, owner_requests, objective_ref, ac_ref, approved_scope_ref, 정정 기록이 세 번 모두 완전히 동일",
+    "candidates": [
+      "batch-report"
+    ],
+    "expected_action": "deduped_once_with_duplicate_note",
+    "criteria": [
+      "all meaningful fields identical, so the three arrivals are deduped",
+      "worker I counts as 1 input with the note 중복 3회 수신, 내용 동일",
+      "conservation still holds: the consolidated output explains 1 input for worker I"
+    ]
   }
 ]

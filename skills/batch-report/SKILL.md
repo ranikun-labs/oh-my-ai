@@ -44,7 +44,10 @@ SHA, 수치, trade-off, 위험, unknown은 요약하면서 줄이거나 다른 �
 
 ## 4. 집계 규칙 (이 Skill만 소유한다)
 a. **보존**: 입력 N개는 설명 N개가 된다. 병합·누락·삭제를 하지 않는다. 빠진 입력은 `입력 없음`으로 드러낸다.
-   단, 동일한 `agent`·`task`·`claim`·`evidence`가 여러 번 도착한 중복 수신은 입력 1건으로 세고 중복 횟수를 함께 적는다. 내용이 다른 재보고는 별도 입력으로 보존한다.
+   **중복 판정**: 중복은 의미 필드가 전부 동일할 때만 성립한다. 비교 대상은 `agent`·`task`·`claim`·`evidence`·`task_status`·`findings`·`blockers`·`owner_requests`·`objective_ref`/`ac_ref`·`approved_scope_ref`와 정정 기록(§4f)이다. 같은 SHA·테스트 수라도 한 필드라도 다르면 중복이 아니다.
+   - 전부 동일한 재수신: 입력 1건으로 세고 `중복 N회 수신, 내용 동일`을 적는다.
+   - 한 필드라도 다른 재보고(예: 같은 SHA·테스트인데 `task_status` PASS→FAIL, 새 Finding, 다른 `owner_requests`): 둘 다 보존한다. 나중 도착분은 `갱신` 또는 `정정`으로 표시하고, 달라진 필드를 나란히 드러낸다(§4d). 임의로 버리거나 합치지 않는다.
+   - 차이 여부가 애매하면 중복으로 접지 않는다. 보존 쪽으로 판단한다.
 b. **악화만**: 묶음 상태는 작업 상태 중 최악이다. 순서는 `FAIL > BLOCKED > UNKNOWN > NOT_RUN > PASS`.
    주장만으로는 `PASS`가 되지 않는다. `PASS`에는 실행 명령, CI 링크, 고정 SHA 같은 evidence ref가 있어야 한다.
    작업별 상태는 묶음 상태와 분리한다. Objective 판정은 Main 또는 호출자가 내며, 이 Skill은 Objective `PASS`를 만들지 않는다.
