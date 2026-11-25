@@ -648,7 +648,9 @@ test("preload clip: a cut never splits a backtick span or a bare token, and the 
   assert.ok(block.bytes <= PRELOAD_BYTE_CAP);
 });
 
-// model policy 스텁: 같은 디렉터리의 mode.txt 로 status --json 동작을 고른다. argv 를 그대로 되돌려 준다.
+// model policy 스텁 (#227 scripts/model-policy.mjs 의 출력 형태를 따른다).
+// status 는 describeActivePolicy() JSON 을 항상 출력하고 VALID 가 아니면 exit 1.
+// 그 밖의 서브커맨드는 받은 argv 를 되돌려 준다. mode.txt: ok | draft | missing | garbage.
 function writeModelStub(sb, mode = "ok") {
   const dir = path.join(sb.clone, "scripts");
   fs.writeFileSync(path.join(dir, "model-policy.mjs"), [
@@ -658,9 +660,12 @@ function writeModelStub(sb, mode = "ok") {
     "const here = path.dirname(fileURLToPath(import.meta.url));",
     "const mode = fs.readFileSync(path.join(here, 'stub-mode.txt'), 'utf8').trim();",
     "const argv = process.argv.slice(2);",
-    "if (argv[0] === 'status' && argv[1] === '--json') {",
-    "  if (mode === 'missing') process.exit(1);",
-    "  console.log(JSON.stringify({ version: 'v9', status: 'ACTIVE' }));",
+    "if (argv[0] === 'status') {",
+    "  if (mode === 'garbage') { console.log('not json'); process.exit(0); }",
+    "  if (mode === 'missing') { console.log(JSON.stringify({ path: '/x', via: 'default', status: 'POLICY_MISSING', errors: [], advisory: ['cost_limits'] })); process.exit(1); }",
+    "  const base = { path: '/x', via: 'default', errors: [], advisory: ['cost_limits'], policy_version: '2026.11.25-1', previous_version: null, enabled_models: [], roles: ['senior'] };",
+    "  if (mode === 'draft') { console.log(JSON.stringify({ ...base, status: 'POLICY_NOT_APPROVED' })); process.exit(1); }",
+    "  console.log(JSON.stringify({ ...base, status: 'VALID' }));",
     "  process.exit(0);",
     "}",
     "console.log(JSON.stringify({ argv }));",
@@ -696,30 +701,43 @@ test("models: passthrough of each subcommand, --apply gate, exit status propagat
     argvOf(cli(sb, ["models", "check", "--role", "R", "--runtime", "claude", "--risk", "low", "--model", "M"])),
     ["check", "--role", "R", "--runtime", "claude", "--risk", "low", "--model", "M"],
   );
-  assert.deepEqual(argvOf(cli(sb, ["models", "apply", "p.json", "--apply"])), ["apply", "p.json", "--apply"]);
-  assert.deepEqual(argvOf(cli(sb, ["models", "rollback", "--apply"])), ["rollback", "--apply"]);
+  // --apply 는 파사드 게이트이므로 스크립트로 넘어가지 않는다 (스크립트는 값 없는 플래그를 usage 오류로 거부).
+  assert.deepEqual(argvOf(cli(sb, ["models", "apply", "p.json", "--apply"])), ["apply", "p.json"]);
+  assert.deepEqual(argvOf(cli(sb, ["models", "rollback", "--apply"])), ["rollback"]);
+  // validate 는 파일 없이도 스크립트 기본 경로를 본다.
+  assert.deepEqual(argvOf(cli(sb, ["models", "validate"])), ["validate"]);
 
   // --apply 없이는 스크립트를 부르지 않는다.
   const noApply = cli(sb, ["models", "apply", "p.json"]);
   assert.equal(noApply.status, 2);
   assert.doesNotMatch(noApply.stdout, /argv/);
   assert.equal(cli(sb, ["models", "rollback"]).status, 2);
-  // 파일 인자 누락은 usage 오류.
-  assert.equal(cli(sb, ["models", "validate"]).status, 2);
+  // apply/diff 는 후보 파일이 필요하다.
+  assert.equal(cli(sb, ["models", "apply", "--apply"]).status, 2);
+  assert.equal(cli(sb, ["models", "diff"]).status, 2);
   assert.equal(cli(sb, ["models", "bogus"]).status, 2);
   // 스크립트 종료 코드를 그대로 돌려준다.
   assert.equal(cli(sb, ["models", "diff", "fail.json"]).status, 3);
 });
 
-test("models: status line shows version/status, not configured, or not available", () => {
+test("models: status line shows version, approval and validation result for each policy state", () => {
   const sb = makeFixture("models-status-line");
   writeModelStub(sb, "ok");
-  assert.match(cli(sb, ["status"]).stdout, /model policy  v9 · ACTIVE/);
-  assert.equal(JSON.parse(cli(sb, ["status", "--json"]).stdout).model_policy.status, "ACTIVE");
+  assert.match(cli(sb, ["status"]).stdout, /model policy  2026\.11\.25-1 · ACTIVE · validation VALID/);
+  const ok = JSON.parse(cli(sb, ["status", "--json"]).stdout).model_policy;
+  assert.deepEqual(ok, { state: "configured", version: "2026.11.25-1", approval: "ACTIVE", validation: "VALID" });
 
-  fs.writeFileSync(path.join(sb.clone, "scripts", "stub-mode.txt"), "missing\n");
-  assert.match(cli(sb, ["status"]).stdout, /model policy  not configured/);
+  // 스크립트 status 는 DRAFT 정책에 exit 1 을 주지만 JSON 은 그대로 읽는다.
+  writeModelStub(sb, "draft");
+  assert.match(cli(sb, ["status"]).stdout, /model policy  2026\.11\.25-1 · NOT ACTIVE · validation POLICY_NOT_APPROVED/);
   assert.equal(cli(sb, ["status", "--json"]).status, 0);
+
+  writeModelStub(sb, "missing");
+  assert.match(cli(sb, ["status"]).stdout, /model policy  not configured\n/);
+  assert.equal(JSON.parse(cli(sb, ["status", "--json"]).stdout).model_policy.state, "not configured");
+
+  writeModelStub(sb, "garbage");
+  assert.match(cli(sb, ["status"]).stdout, /model policy  not configured \(UNREADABLE\)/);
 });
 
 // ---------------- report ----------------

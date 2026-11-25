@@ -29,7 +29,7 @@ const MODEL_POLICY_ABSENT = "model policy: not available in this source (require
 // mutating: true 는 --apply 가 있어야 스크립트를 호출한다. needsFile: 첫 위치 인자가 파일 경로여야 한다.
 const MODEL_SUBCOMMANDS = Object.freeze({
   status: { mutating: false, needsFile: false },
-  validate: { mutating: false, needsFile: true },
+  validate: { mutating: false, needsFile: false },
   diff: { mutating: false, needsFile: true },
   check: { mutating: false, needsFile: false },
   apply: { mutating: true, needsFile: true },
@@ -1098,28 +1098,40 @@ function modelPolicyScript(repoRoot) {
   return fs.existsSync(file) ? file : null;
 }
 
-// status 한 줄용 요약. 스크립트가 없으면 not available, 실행 실패·파싱 실패면 not configured.
+// status 한 줄용 요약. 스크립트 status 는 describeActivePolicy() JSON 을 항상 출력하고, 검증 실패면 exit 1 이다.
+// 그래서 exit 코드가 아니라 JSON 내용으로 판단한다.
+//  - policy_version: 활성 정책 버전 (정책이 로드된 경우에만 있음)
+//  - status: 검증 결과 (VALID | POLICY_MISSING | POLICY_INVALID | POLICY_NOT_APPROVED)
+//  - 승인 상태: describeActivePolicy 는 policy.status 를 노출하지 않는다. VALID 는 ACTIVE 로만 통과하므로
+//    VALID -> ACTIVE, POLICY_NOT_APPROVED -> not ACTIVE 로 유도한다.
 function modelPolicySummary(repoRoot, env) {
   const script = modelPolicyScript(repoRoot);
   if (!script) return { state: "not available" };
-  const r = spawnSync(process.execPath, [script, "status", "--json"], {
+  const r = spawnSync(process.execPath, [script, "status"], {
     cwd: repoRoot,
     env: setupEnv(env),
     encoding: "utf8",
   });
-  if (r.status !== 0) return { state: "not configured" };
+  let parsed;
   try {
-    const parsed = JSON.parse(r.stdout);
-    return { state: "configured", version: parsed.version ?? "-", status: parsed.status ?? "-" };
+    parsed = JSON.parse(r.stdout);
   } catch {
-    return { state: "not configured" };
+    return { state: "not configured", validation: "UNREADABLE" };
   }
+  if (!parsed.policy_version) return { state: "not configured", validation: parsed.status ?? "unknown" };
+  const approval = parsed.status === "VALID" ? "ACTIVE" : parsed.status === "POLICY_NOT_APPROVED" ? "NOT ACTIVE" : "unknown";
+  return {
+    state: "configured",
+    version: parsed.policy_version,
+    approval,
+    validation: parsed.status ?? "unknown",
+  };
 }
 
 function modelPolicyLine(summary) {
-  if (summary.state === "configured") return `${summary.version} · ${summary.status}`;
+  if (summary.state === "configured") return `${summary.version} · ${summary.approval} · validation ${summary.validation}`;
   if (summary.state === "not available") return "not available (requires #227)";
-  return "not configured";
+  return summary.validation === "POLICY_MISSING" || !summary.validation ? "not configured" : `not configured (${summary.validation})`;
 }
 
 function cmdModels(repoRoot, env, args, { out, err }) {
@@ -1146,8 +1158,10 @@ function cmdModels(repoRoot, env, args, { out, err }) {
     err(`usage: ${BIN} models ${sub} <file>`);
     return 2;
   }
-  // 정책 판단은 스크립트 몫이다. 인자는 가공 없이 그대로 넘긴다 (--apply 포함: 스크립트도 같은 가드를 본다).
-  const r = spawnSync(process.execPath, [script, sub, ...rest], {
+  // --apply 는 이 파사드의 승인 게이트다. 스크립트는 값 없는 플래그를 usage 오류(exit 2)로 거부하므로 넘기지 않는다.
+  const passthrough = rest.filter(a => a !== "--apply");
+  // 정책 판단은 스크립트 몫이다. 나머지 인자는 가공 없이 그대로 넘긴다.
+  const r = spawnSync(process.execPath, [script, sub, ...passthrough], {
     cwd: repoRoot,
     env: setupEnv(env),
     stdio: "inherit",
