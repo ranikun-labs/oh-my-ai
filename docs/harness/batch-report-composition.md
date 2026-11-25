@@ -16,11 +16,23 @@
 | 진행 신호 `[묶음] n/m 완료 (작업명)` 한 줄, 에이전트별 긴 보고 억제 | batch-report `start` | 소유, 본문에 기술 | SKILL §1 |
 | 입력 envelope, 결과별 추출, 집계(최악 상태·출처·충돌·보존) | batch-report | 소유, 본문에 기술 | SKILL §2–§4 |
 | 긴급 실패, 보안 문제, Owner Gate의 즉시 보고 | 호출자 계약 | 참조만, 묶음 종료까지 지연 금지 | SKILL §1 |
+| 검증 전제를 뒤집는 발견, 비용·타인 영향(예: 공유 Runner 중지로 팀원 CI 대기), 승인 범위 이탈·hook 우회 시도 | 호출자 계약 | 참조만, 묶음 종료까지 지연 금지 | SKILL §1·§4 (운영 사례 반영, 호출자 목록에 추가) |
 | blocker, handoff, recovery, AttemptOutcome, 필수 checkpoint의 즉시 갱신 | dev-main-flow F4 계약 | 참조만 | PR #211 `skills/dev-main-flow/SKILL.md` 77행 |
 | PR 본문·Jira·F1 요약 같은 일반 갱신의 F4 fan-in 일괄 반영 | dev-main-flow F4 | 참조만 | PR #211 77행 |
 | 완료 알림(completion-notify) 발화 | 런타임·훅 (두 Skill 모두 통제 불가) | 통제 불가 명시 | SKILL §10 |
 
 핵심 원칙: **"언제 대화에 보고하나"는 batch-report `start`가, "언제 PR·Jira·F1을 외부에 갱신하나"는 dev-main-flow F4가 정한다.** 즉시 보고 항목은 위 표의 호출자 행에만 존재한다.
+
+## 호출자 소유 위임 규칙 (이 Skill 밖, 정본은 호출자)
+
+병렬 Worker를 띄우는 방법은 보고 타이밍이 아니다. 따라서 위 정본 표에 넣지 않고, batch-report 본문에도 넣지 않는다(SKILL §9: 호출자별 계약은 호출자 소유). 호출자(dev-main-flow 또는 실행 지시문)가 Worker 지시문에 아래를 넣는다.
+
+- **Writer 분리**: Worktree·Terraform state 하나당 Writer 1명. 같은 대상을 쓰는 작업은 한 Worker에 순서대로 묶는다. 독립 작업은 한 메시지에서 병렬로 띄운다.
+- **단일 핸드백**: 보고는 한 번만 한다. 핸드백이 delivered면 재전송하지 않는다.
+- **정확한 커밋 명령**: `git commit -m "<msg>" -m "Co-Authored-By: ..."`만 쓴다. `git -c`, `core.hooksPath`, `--no-verify`는 금지한다. Worker가 hook 우회 옵션을 습관적으로 넣는 사례가 반복되어 명시한다. 우회 시도가 보이면 즉시 보고 항목이다(위 정본 표 호출자 행).
+- **덮어쓰기 금지**: 기존 파일·백업은 덮어쓰지 않고 새 파일명을 쓴다. 임시 파일은 scratchpad에만 둔다. force push, rebase, history rewrite는 금지한다.
+- **기존 Worker 우선**: 추가 지시가 이미 실행 중인 Worker 범위와 같으면 새 Worker를 띄우지 않고 그 Worker에게 메시지로 전달한다.
+- 허용·불허 범위(push, merge, 배포, apply, CI 취소 등)는 지시문마다 명시한다. 읽기 전용이면 그렇게 적는다.
 
 ## 대안과 선택
 
