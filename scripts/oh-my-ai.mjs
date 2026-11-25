@@ -17,6 +17,7 @@ import { handleJiraTicketRuntimeInput } from "./lib/jira-ticket-runtime-entry.mj
 import { formatWorkStateObservationView } from "./lib/work-state-observation-view.mjs";
 import { formatWorkTree } from "./lib/work-tree-view.mjs";
 import { jiraObservations } from "./lib/jira-observations.mjs";
+import { FACADE_COMMANDS, runFacade } from "./lib/oh-my-ai-facade.mjs";
 
 const args = process.argv.slice(2);
 const command = args[0];
@@ -31,6 +32,8 @@ if (command === "hook") {
   runJiraTicket(args.slice(1));
 } else if (command === "work-view") {
   runWorkView(args.slice(1));
+} else if (FACADE_COMMANDS.includes(command)) {
+  process.exit(runFacade(command, args.slice(1), { repoRoot: findRepoRoot(), env: process.env }));
 } else {
   usage(command ? `unknown command: ${command}` : "");
 }

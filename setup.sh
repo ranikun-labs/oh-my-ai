@@ -564,6 +564,7 @@ doctor() {
   doctor_skill_links "Claude" "$CLAUDE_DIR/skills"
   doctor_skill_links "Codex" "$AGENT_DIR/skills"
   path_state "$LOCAL_BIN/oh-my-ai" "$REPO/scripts/oh-my-ai.mjs"
+  path_state "$LOCAL_BIN/ohmyai" "$REPO/scripts/oh-my-ai.mjs"
   path_state "$LOCAL_BIN/harness-event" "$REPO/scripts/harness-event.mjs"
   if [ -f "$REPO/scripts/work-start.sh" ] && [ -x "$REPO/scripts/work-start.sh" ]; then
     say "work-start engine: $REPO/scripts/work-start.sh (executable)"
@@ -612,6 +613,7 @@ install_shared() {
   safe_link "$REPO/claude/CLAUDE.md" "$CLAUDE_DIR/CLAUDE.md" "Claude instruction"
   safe_link "$REPO/AGENTS.md" "$CODEX_DIR/AGENTS.md" "Codex instruction"
   safe_link "$REPO/scripts/oh-my-ai.mjs" "$LOCAL_BIN/oh-my-ai" "oh-my-ai"
+  safe_link "$REPO/scripts/oh-my-ai.mjs" "$LOCAL_BIN/ohmyai" "ohmyai"
   safe_link "$REPO/scripts/harness-event.mjs" "$LOCAL_BIN/harness-event" "harness-event"
   install_runtime_hooks claude "$REPO/claude/settings.json" "$CLAUDE_DIR/settings.json" "Claude managed hooks"
   install_runtime_hooks codex "$REPO/codex/hooks.json" "$CODEX_DIR/hooks.json" "Codex managed hooks"
