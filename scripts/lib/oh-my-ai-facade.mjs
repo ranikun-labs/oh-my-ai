@@ -369,7 +369,7 @@ function settingsHonesty(config, hooks, entrypoints, repoHead, repoRoot, version
   let preloadEffective;
   if (preload.length === 0) preloadEffective = "not injected (empty list)";
   else if (inject === "off") preloadEffective = "not injected (context.inject=off)";
-  else if (hookWired && entryThisSource) preloadEffective = `injected on SessionStart (summary+path, cap 2048 bytes)`;
+  else if (hookWired && entryThisSource) preloadEffective = `injected on SessionStart (id+summary, cap 2048 bytes)`;
   else preloadEffective = "not injected: hooks not installed/other source";
 
   return {

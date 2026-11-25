@@ -51,8 +51,18 @@ export function readSkillSummary(file) {
   return null;
 }
 
-// preload 대상 Core Skill 의 summary + 경로만 담는다. 본문은 넣지 않는다.
-// 바이트 상한을 넘는 항목은 빼고 "+N more" 한 줄로 알린다 (상한 안에 머문다).
+// preload 한 줄 요약 상한(말줄임 포함, 코드포인트 기준). 넘으면 자르고 "…"을 붙인다.
+export const PRELOAD_SUMMARY_CHARS = 60;
+
+// 코드포인트 기준으로 자른다 (한글·이모지 중간에서 끊기지 않게).
+export function clipSummary(text, maxChars = PRELOAD_SUMMARY_CHARS) {
+  const chars = Array.from(text);
+  if (chars.length <= maxChars) return text;
+  return `${chars.slice(0, maxChars - 1).join("")}…`;
+}
+
+// preload 대상 Core Skill 을 "id — summary" 한 줄로 담는다. 경로는 넣지 않는다(id → SKILL.md 는 skill discovery 로 해석).
+// 항목 단위로 빼지 않고 요약만 자른다. 상한을 넘어 빠진 항목은 "+N more" 한 줄로 명시한다.
 export function buildPreloadBlock(repoRoot, ids, capBytes = PRELOAD_BYTE_CAP) {
   if (!Array.isArray(ids) || ids.length === 0) return { text: "", bytes: 0, included: [], omitted: [] };
   let index = new Map();
@@ -64,40 +74,42 @@ export function buildPreloadBlock(repoRoot, ids, capBytes = PRELOAD_BYTE_CAP) {
     index = new Map();
   }
 
-  const header = "[HARNESS:preload] Core skills (summary and path only; open SKILL.md when needed):";
-  const lines = [];
-  const included = [];
-  const omitted = [];
+  const header = "[HARNESS:preload] Core skills (id — summary; resolve path via skill discovery):";
   const omittedNote = n => `- (+${n} more not shown: preload byte cap ${capBytes})`;
-  const reserve = Buffer.byteLength(omittedNote(ids.length), "utf8");
-  let total = Buffer.byteLength(header, "utf8");
-
-  ids.forEach(id => {
+  const lineOf = id => {
     const skill = index.get(id);
-    let line;
-    if (!skill) {
-      line = `- ${id}: (missing source; not preloaded)`;
-    } else {
-      const summary = readSkillSummary(skill.skillFile) ?? "(no summary)";
-      const rel = path.relative(repoRoot, skill.skillFile).split(path.sep).join("/");
-      line = `- ${id}: ${summary} — ${rel}`;
-    }
-    const size = Buffer.byteLength(`\n${line}`, "utf8");
-    // 상한 안에 "+N more" 줄이 항상 들어가도록 그 줄 길이를 미리 남겨 둔다.
-    if (total + size + reserve > capBytes) {
-      omitted.push(id);
-      return;
-    }
-    lines.push(line);
-    included.push(id);
-    total += size;
-  });
+    if (!skill) return `- ${id} — (missing source; not preloaded)`;
+    const summary = clipSummary(readSkillSummary(skill.skillFile) ?? "(no summary)");
+    return `- ${id} — ${summary}`;
+  };
+  const size = line => Buffer.byteLength(`\n${line}`, "utf8");
+  const headerBytes = Buffer.byteLength(header, "utf8");
 
-  if (omitted.length > 0) {
-    const note = omittedNote(omitted.length);
-    lines.push(note);
-    total += Buffer.byteLength(`\n${note}`, "utf8");
+  // 1차: 전부 들어가는지 본다. 들어가면 "+N more" 줄 없이 끝낸다.
+  const layout = reserve => {
+    const lines = [];
+    const included = [];
+    const omitted = [];
+    let total = headerBytes;
+    for (const id of ids) {
+      const line = lineOf(id);
+      if (total + size(line) + reserve > capBytes) {
+        omitted.push(id);
+        continue;
+      }
+      lines.push(line);
+      included.push(id);
+      total += size(line);
+    }
+    return { lines, included, omitted };
+  };
+
+  let out = layout(0);
+  if (out.omitted.length > 0) {
+    // 2차: 생략이 생기면 "+N more" 줄을 위해 그 줄 길이(최대 자릿수 기준)를 미리 남기고 다시 배치한다.
+    out = layout(Buffer.byteLength(`\n${omittedNote(ids.length)}`, "utf8"));
+    out.lines.push(omittedNote(out.omitted.length));
   }
-  const text = [header, ...lines].join("\n");
-  return { text, bytes: Buffer.byteLength(text, "utf8"), included, omitted };
+  const text = [header, ...out.lines].join("\n");
+  return { text, bytes: Buffer.byteLength(text, "utf8"), included: out.included, omitted: out.omitted };
 }

@@ -9,7 +9,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildPreloadBlock } from "./lib/oh-my-ai-context.mjs";
+import { buildPreloadBlock, PRELOAD_BYTE_CAP, PRELOAD_SUMMARY_CHARS } from "./lib/oh-my-ai-context.mjs";
 import { coreIdsOf, discoverSkills } from "./lib/skill-discovery.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -388,7 +388,7 @@ test("context.inject=off: advisory hints and backlog skipped, Jira-first kept", 
   assert.match(hookRun(sb, "claude", "SessionStart", "{}").stdout, /BACKLOG-MARKER/);
 });
 
-test("context.preload: summary and path only, within the 2048-byte cap", () => {
+test("context.preload: id and summary only, no per-line path, within the 2048-byte cap", () => {
   const sb = makeFixture("preload");
   const ids = ["work-start", "f1", "senior", "project-context", "handoff-prompt", "git-work-preflight",
     "execution-recovery", "dev-main-flow", "adaptive-goal-closure", "engineering-communication-ko", "batch-report"];
@@ -400,22 +400,47 @@ test("context.preload: summary and path only, within the 2048-byte cap", () => {
   assert.ok(start >= 0, "preload block missing");
   const block = ctx.slice(start);
   assert.ok(Buffer.byteLength(block, "utf8") <= 2048, `preload is ${Buffer.byteLength(block, "utf8")} bytes`);
-  assert.match(block, /- work-start: .+ — skills\/work-start\/SKILL\.md/);
+  assert.match(block, /^- work-start — .+$/m);
   const batchPresent = coreIdsOf(discoverSkills(sb.clone)).find(e => e.id === "batch-report").present;
-  if (batchPresent) assert.match(block, /- batch-report: .+ — skills\/batch-report\/SKILL\.md/);
-  else assert.match(block, /- batch-report: \(missing source; not preloaded\)/);
+  if (batchPresent) assert.match(block, /^- batch-report — .+$/m);
+  else assert.match(block, /^- batch-report — \(missing source; not preloaded\)$/m);
+  assert.doesNotMatch(block, /skills\//, "per-line paths must not be injected");
   assert.doesNotMatch(block, /^## /m, "full skill body must not be injected");
   assert.doesNotMatch(block, /^---$/m, "frontmatter must not be injected");
 });
 
-test("context.preload: byte cap truncates and reports omitted entries", () => {
-  const r = buildPreloadBlock(repoRoot, [...CORE_SKILLS], 400);
-  assert.ok(Buffer.byteLength(r.text, "utf8") <= 400, `bytes=${Buffer.byteLength(r.text, "utf8")}`);
-  assert.ok(r.omitted.length > 0);
-  assert.match(r.text, /\+\d+ more not shown/);
-  const full = buildPreloadBlock(repoRoot, [...CORE_SKILLS]);
-  assert.ok(full.bytes <= 2048, `full bytes=${full.bytes}`);
+test("context.preload: no skill dropped when the cap allows, omissions reported exactly when not", () => {
+  const ids = [...CORE_SKILLS];
+  const full = buildPreloadBlock(repoRoot, ids);
+  assert.ok(full.bytes <= PRELOAD_BYTE_CAP, `full bytes=${full.bytes}`);
   assert.deepEqual(full.omitted, []);
+  assert.deepEqual(full.included, ids);
+  assert.deepEqual(buildPreloadBlock(repoRoot, ids, full.bytes).omitted, [], "cap == full size must drop nothing");
+
+  const tightCap = Math.floor(full.bytes / 2);
+  const tight = buildPreloadBlock(repoRoot, ids, tightCap);
+  assert.ok(tight.bytes <= tightCap, `tight bytes=${tight.bytes} cap=${tightCap}`);
+  assert.ok(tight.omitted.length > 0, "half cap must omit something");
+  assert.equal(tight.included.length + tight.omitted.length, ids.length);
+  assert.match(tight.text, new RegExp(`\\+${tight.omitted.length} more not shown`));
+  for (const id of tight.included) assert.ok(tight.text.includes(`\n- ${id} — `), `${id} missing from block`);
+});
+
+test("context.preload: long summary is clipped with an ellipsis and the skill is kept", () => {
+  const fx = fs.mkdtempSync(path.join(root, "preload-clip-"));
+  const dir = path.join(fx, "skills", "work-start");
+  fs.mkdirSync(dir, { recursive: true });
+  const longSummary = "가".repeat(150);
+  fs.writeFileSync(path.join(dir, "SKILL.md"),
+    `---\nname: work-start\ndescription: test\nmetadata:\n  summary: ${longSummary}\n---\n\n# body\n`);
+  const r = buildPreloadBlock(fx, ["work-start"]);
+  const line = r.text.split("\n").find(l => l.startsWith("- work-start — "));
+  assert.ok(line, r.text);
+  const shown = line.slice("- work-start — ".length);
+  assert.equal(Array.from(shown).length, PRELOAD_SUMMARY_CHARS);
+  assert.ok(shown.endsWith("…"), shown);
+  assert.deepEqual(r.included, ["work-start"]);
+  assert.deepEqual(r.omitted, []);
 });
 
 test("config read failure: defaults stay on, hook exits 0, SessionStart warns once", () => {

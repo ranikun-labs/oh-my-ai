@@ -140,9 +140,10 @@ Hook은 항상 exit 0 이다. `SessionStart` 에서만 세션당 한 번 경고 
   - **Jira-first 힌트.** 중복 이슈 방지와 Jira Create/Update 승인 경계를 알리는 안전 문구라서 주입 설정으로 끄지 않는다
     (설정이 꺼져도 Jira 생성 승인과 Git Write 승인은 그대로 필요하다).
   - 라우팅·state 쓰기(toil 후보 기록), 실패 진단 문구, 가드, checkpoint 훅, telemetry.
-- `context.preload` (Core skill id 목록): `SessionStart` 에 **summary 한 줄과 경로만** 주입한다. 본문은 넣지 않는다.
-  - 바이트 상한 **2048 bytes** (블록 전체, 헤더 포함). 넘는 항목은 빼고 `+N more not shown` 한 줄을 붙인다.
-  - 측정: Core 12개 전부 = 1836 bytes (상한 이내). 단일 항목 약 260 bytes.
+- `context.preload` (Core skill id 목록): `SessionStart` 에 **`id — summary` 한 줄씩** 주입한다. 경로는 줄마다 넣지 않고 헤더 한 번으로 안내하며, id → SKILL.md 는 skill discovery 로 해석한다. 본문은 넣지 않는다.
+  - 요약은 60자(말줄임 `…` 포함)로 자른다. 항목을 통째로 빼지 않는다.
+  - 바이트 상한 **2048 bytes** (블록 전체, 헤더 포함). 그래도 넘으면 빠진 항목을 `+N more not shown` 한 줄로 명시한다.
+  - 측정: Core 12개 전부 = 1471 bytes (상한 이내, 단일 항목 약 120 bytes).
   - `inject=off` 이면 preload도 주입하지 않는다. 소스에 없는 id는 `(missing source; not preloaded)` 로 표시한다.
 
 ## Core skill 분류 (단일 원본)
