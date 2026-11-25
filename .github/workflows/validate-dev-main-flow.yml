@@ -34,9 +34,13 @@ jobs:
           const assert = require('node:assert/strict');
           const fs = require('node:fs');
           const path = require('node:path');
+          const { execFileSync } = require('node:child_process');
 
           const root = process.cwd();
-          const skillDir = path.join(root, 'skills', 'dev-main-flow');
+          // Source 위치는 depth를 가정하지 않고 discovery CLI로 찾는다(skills/<id> 또는 skills/{core,library}/<id>).
+          const skillDir = execFileSync(process.execPath, [
+            path.join(root, 'scripts', 'lib', 'skill-discovery.mjs'), '--resolve', 'dev-main-flow', '--root', root,
+          ], { encoding: 'utf8' }).trim();
           const skillPath = path.join(skillDir, 'SKILL.md');
           const skill = fs.readFileSync(skillPath, 'utf8');
           const match = skill.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
@@ -48,10 +52,8 @@ jobs:
 
           const linkPath = path.join(root, '.agents', 'skills', 'dev-main-flow');
           assert.ok(fs.lstatSync(linkPath).isSymbolicLink(), 'Repository Skill link must be a symlink');
-          const linkTarget = fs.readlinkSync(linkPath);
-          assert.equal(linkTarget, '../../skills/dev-main-flow', 'Repository Skill link must stay relative');
-          const linkedDir = path.resolve(path.dirname(linkPath), linkTarget);
-          assert.equal(fs.realpathSync(linkedDir), fs.realpathSync(skillDir), 'Repository Skill link must resolve to the source directory');
+          // 링크 문자열(상대 경로 여부·위치)은 아래 exposure 검사가 realpath 기준으로 판정한다. 여기서는 실체만 확인한다.
+          assert.equal(fs.realpathSync(linkPath), fs.realpathSync(skillDir), 'Repository Skill link must resolve to the discovered source directory');
           for (const name of ['SKILL.md', 'agents/openai.yaml']) {
             assert.equal(
               fs.realpathSync(path.join(linkPath, name)),
@@ -62,124 +64,8 @@ jobs:
           console.log('Explicit-only metadata and relative source link are valid. This check does not establish Native discovery or Apply.');
           NODE
 
-      - name: Validate .claude/skills links (dynamic enumeration)
-        run: |
-          node <<'NODE'
-          const fs = require('node:fs');
-          const path = require('node:path');
-          const { validateSkillFrontmatter } = require(path.join(
-            process.cwd(),
-            'scripts',
-            'lib',
-            'skill-frontmatter-validation.cjs',
-          ));
-
-          const root = process.cwd();
-          const claudeSkillsDir = path.join(root, '.claude', 'skills');
-          const sourceSkillsDir = path.join(root, 'skills');
-
-          // 링크 구조 검사 실패는 LinkError로 던지고, 최상위에서 원인 메시지만 출력한다.
-          class LinkError extends Error {}
-          const fail = (name, reason) => new LinkError(`[.claude/skills/${name}] ${reason}`);
-
-          // 대상이 없으면(댕글링) null을 돌려주고, 그 밖의 예외는 그대로 올린다.
-          const statOrNull = (target) => {
-            try {
-              return fs.statSync(target);
-            } catch (error) {
-              if (error.code === 'ENOENT') return null;
-              throw error;
-            }
-          };
-
-          const frontmatterText = (file) => {
-            const match = fs.readFileSync(file, 'utf8').match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
-            return match ? match[1] : null;
-          };
-
-          const checkLink = (name) => {
-            const linkPath = path.join(claudeSkillsDir, name);
-            let info;
-            try {
-              info = fs.lstatSync(linkPath);
-            } catch (error) {
-              throw fail(name, `lstat 실패(${error.code ?? error.message})`);
-            }
-
-            // (a) 심볼릭 링크여야 한다. 일반 파일·실제 디렉터리 복사는 실패.
-            if (!info.isSymbolicLink()) {
-              if (info.isDirectory()) {
-                throw fail(name, '실제 디렉터리 복사본입니다. 심볼릭 링크여야 합니다.');
-              }
-              throw fail(name, '일반 파일입니다(심볼릭 링크 아님). core.symlinks=false 체크아웃이거나 링크가 깨진 상태입니다.');
-            }
-
-            // (b) 정확히 상대 경로 ../../skills/<name> 이어야 한다.
-            const target = fs.readlinkSync(linkPath);
-            const expected = `../../skills/${name}`;
-            if (path.isAbsolute(target)) {
-              throw fail(name, `절대 경로 링크입니다(${target}). 상대 경로 ${expected} 이어야 합니다.`);
-            }
-            if (target !== expected) {
-              throw fail(name, `대상이 다른 Skill을 가리킵니다(${target}). 기대값: ${expected}`);
-            }
-
-            // (c) 대상 skills/<name>이 존재하는 디렉터리여야 한다. 댕글링은 실패.
-            const sourceDir = path.join(sourceSkillsDir, name);
-            const sourceDirStat = statOrNull(sourceDir);
-            if (!sourceDirStat || !sourceDirStat.isDirectory()) {
-              throw fail(name, `댕글링 링크입니다. 대상 skills/${name} 디렉터리가 없습니다.`);
-            }
-
-            // (d) 링크를 통과한 SKILL.md가 원본과 같은 실체(realpath)여야 한다.
-            const linkedSkill = path.join(linkPath, 'SKILL.md');
-            const linkedStat = statOrNull(linkedSkill);
-            if (!linkedStat || !linkedStat.isFile()) {
-              throw fail(name, '링크 경로에서 SKILL.md를 읽을 수 없습니다.');
-            }
-            const sourceSkill = path.join(sourceDir, 'SKILL.md');
-            if (fs.realpathSync(linkedSkill) !== fs.realpathSync(sourceSkill)) {
-              throw fail(name, `SKILL.md realpath가 원본 skills/${name}/SKILL.md와 다릅니다.`);
-            }
-
-            // (e) frontmatter name이 항목 이름과 같고 description이 있어야 한다.
-            const frontmatter = frontmatterText(linkedSkill);
-            if (frontmatter === null) {
-              throw fail(name, 'SKILL.md에 frontmatter가 없습니다.');
-            }
-            try {
-              validateSkillFrontmatter(frontmatter, name);
-            } catch (error) {
-              throw fail(name, error.message);
-            }
-          };
-
-          let entries;
-          try {
-            entries = fs.readdirSync(claudeSkillsDir);
-          } catch (error) {
-            console.error(`FAIL: .claude/skills 디렉터리를 읽을 수 없습니다(${error.code ?? error.message}).`);
-            process.exit(1);
-          }
-          // 검사 대상이 0개면 디렉터리 유실을 통과시키지 않도록 실패로 처리한다.
-          if (entries.length === 0) {
-            console.error('FAIL: .claude/skills에 검사할 링크가 없습니다. 디렉터리가 비었거나 유실되었습니다.');
-            process.exit(1);
-          }
-
-          try {
-            for (const name of entries.sort()) {
-              checkLink(name);
-            }
-          } catch (error) {
-            if (!(error instanceof LinkError)) throw error;
-            console.error(`FAIL: ${error.message}`);
-            process.exit(1);
-          }
-
-          console.log(`검사한 링크 수: ${entries.length}`);
-          console.log('이 검사는 링크 구조만 검증하며 Claude의 Native Skill 발견·호출 성공을 증명하지 않는다.');
-          NODE
+      - name: Validate .claude/skills and .agents/skills exposure links
+        run: node scripts/check-skill-exposure-links.mjs
 
       - name: Regenerate instructions and check generated diffs
         run: |

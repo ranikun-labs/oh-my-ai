@@ -11,11 +11,13 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { discoverSkills } from "./lib/skill-discovery.mjs";
+import { checkExposureLinks } from "./check-skill-exposure-links.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const cli = path.join(repoRoot, "scripts", "lib", "skill-discovery.mjs");
 const renderer = path.join(repoRoot, "scripts", "render-skill-index.mjs");
 const gate = path.join(repoRoot, "scripts", "check-skill-source-boundary.mjs");
+const exposureGate = path.join(repoRoot, "scripts", "check-skill-exposure-links.mjs");
 
 const work = fs.mkdtempSync(path.join(os.tmpdir(), "skill-discovery-"));
 let counter = 0;
@@ -28,6 +30,10 @@ try {
   testNameMismatchIsError();
   testCli();
   testRealTreeRegression();
+  testResolve();
+  testExposureLinksPass();
+  testExposureLinksFailures();
+  testExposureLinksCli();
   console.log("skill-discovery fixtures: PASS");
 } finally {
   fs.rmSync(work, { recursive: true, force: true });
@@ -187,4 +193,114 @@ function testRealTreeRegression() {
 
 function render(root) {
   return spawnSync(process.execPath, [renderer, "--root", root], { encoding: "utf8" });
+}
+
+// --resolve: 그룹 Source도 ID 하나로 절대 디렉터리 하나를 돌려준다. 없음·발견 오류는 exit 1.
+function testResolve() {
+  const root = newRoot("resolve");
+  writeSkill(path.join(root, "skills", "library", "lib-one"), "lib-one");
+  writeSkill(path.join(root, "skills", "flat-one"), "flat-one");
+  const grouped = spawnSync(process.execPath, [cli, "--resolve", "lib-one", "--root", root], { encoding: "utf8" });
+  assert.equal(grouped.status, 0, grouped.stderr);
+  assert.equal(grouped.stdout, `${path.join(root, "skills", "library", "lib-one")}\n`);
+  const flat = spawnSync(process.execPath, [cli, "--resolve", "flat-one", "--root", root], { encoding: "utf8" });
+  assert.equal(flat.stdout, `${path.join(root, "skills", "flat-one")}\n`);
+  const missing = spawnSync(process.execPath, [cli, "--resolve", "nope", "--root", root], { encoding: "utf8" });
+  assert.equal(missing.status, 1, "unknown id must exit 1");
+  assert.match(missing.stderr, /skill "nope" must resolve to exactly one source/);
+  assert.match(missing.stderr, /found 0/);
+
+  writeSkill(path.join(root, "skills", "library", "flat-one"), "flat-one");
+  const dup = spawnSync(process.execPath, [cli, "--resolve", "flat-one", "--root", root], { encoding: "utf8" });
+  assert.equal(dup.status, 1, "duplicate id must exit 1, not pick one");
+  assert.equal(dup.stdout, "");
+
+  // 다른 Skill의 발견 오류는 이 ID의 Source 해석을 막지 않는다(경고로만 남긴다).
+  const isolated = newRoot("resolve-isolated");
+  writeSkill(path.join(isolated, "skills", "keep-me"), "keep-me");
+  fs.mkdirSync(path.join(isolated, "skills", "broken-sibling"));
+  const kept = spawnSync(process.execPath, [cli, "--resolve", "keep-me", "--root", isolated], { encoding: "utf8" });
+  assert.equal(kept.status, 0, kept.stderr);
+  assert.equal(kept.stdout, `${path.join(isolated, "skills", "keep-me")}\n`);
+  assert.match(kept.stderr, /warning: unrelated to "keep-me": .*broken-sibling/);
+  const broken = spawnSync(process.execPath, [cli, "--resolve", "broken-sibling", "--root", isolated], { encoding: "utf8" });
+  assert.equal(broken.status, 1, "a skill whose own directory is broken must not resolve");
+  console.log("ok: --resolve returns one absolute source; missing, duplicate and self-broken fail; sibling errors only warn");
+}
+
+function exposureRoot(label) {
+  const root = newRoot(label);
+  fs.mkdirSync(path.join(root, ".claude", "skills"), { recursive: true });
+  fs.mkdirSync(path.join(root, ".agents", "skills"), { recursive: true });
+  writeSkill(path.join(root, "skills", "flat-a"), "flat-a");
+  writeSkill(path.join(root, "skills", "library", "grouped-b"), "grouped-b");
+  return root;
+}
+
+function relLink(root, exposureDir, id, targetDir) {
+  const linkPath = path.join(root, exposureDir, id);
+  fs.symlinkSync(path.relative(path.dirname(linkPath), targetDir), linkPath, "dir");
+}
+
+function testExposureLinksPass() {
+  const root = exposureRoot("exposure-pass");
+  relLink(root, ".claude/skills", "flat-a", path.join(root, "skills", "flat-a"));
+  relLink(root, ".claude/skills", "grouped-b", path.join(root, "skills", "library", "grouped-b"));
+  relLink(root, ".agents/skills", "flat-a", path.join(root, "skills", "flat-a"));
+  relLink(root, ".agents/skills", "grouped-b", path.join(root, "skills", "library", "grouped-b"));
+  const result = checkExposureLinks(root);
+  assert.deepEqual(result.problems, [], result.problems.join("\n"));
+  assert.equal(result.ok, true);
+  console.log("ok: exposure links pass for flat and grouped sources in both runtime dirs");
+}
+
+function testExposureLinksFailures() {
+  const expect = (label, setup, pattern) => {
+    const root = exposureRoot(`exposure-${label}`);
+    relLink(root, ".claude/skills", "flat-a", path.join(root, "skills", "flat-a"));
+    relLink(root, ".agents/skills", "grouped-b", path.join(root, "skills", "library", "grouped-b"));
+    setup(root);
+    const result = checkExposureLinks(root);
+    assert.equal(result.ok, false, `${label} must fail`);
+    assert.ok(result.problems.some(problem => pattern.test(problem)), `${label}: ${result.problems.join(" | ")}`);
+  };
+
+  expect("dangling", root => relLink(root, ".claude/skills", "gone", path.join(root, "skills", "gone")), /\[\.claude\/skills\/gone\] is a dangling link/);
+  expect("absolute", root => fs.symlinkSync(path.join(root, "skills", "flat-a"), path.join(root, ".claude", "skills", "abs-a"), "dir"), /abs-a\] is an absolute link/);
+  expect("outside", root => {
+    const external = path.join(work, `outside-${counter += 1}`, "ext");
+    writeSkill(external, "ext");
+    relLink(root, ".claude/skills", "ext", external);
+  }, /\[\.claude\/skills\/ext\] points outside/);
+  expect("id-mismatch", root => relLink(root, ".agents/skills", "wrong-id", path.join(root, "skills", "flat-a")), /wrong-id\] id mismatch: exposed as "wrong-id" but the target Skill is "flat-a"/);
+  expect("real-copy", root => writeSkill(path.join(root, ".claude", "skills", "copied"), "copied"), /copied\] is a real directory copy/);
+  expect("regular-file", root => fs.writeFileSync(path.join(root, ".claude", "skills", "plain"), "x\n"), /plain\] is a regular file/);
+  expect("empty-dir", root => fs.rmSync(path.join(root, ".claude", "skills", "flat-a")), /\.claude\/skills: no exposure links to check/);
+  expect("missing-dir", root => fs.rmSync(path.join(root, ".agents", "skills"), { recursive: true, force: true }), /\.agents\/skills: cannot read directory/);
+  expect("discovery-error", root => fs.mkdirSync(path.join(root, "skills", "orphan")), /skills\/orphan\/: directory has no SKILL\.md/);
+  expect("duplicate-normalized", root => {
+    writeSkill(path.join(root, "skills", "\uD55C\uAE00"), "\uD55C\uAE00");
+    relLink(root, ".claude/skills", "\uD55C\uAE00", path.join(root, "skills", "\uD55C\uAE00"));
+    relLink(root, ".claude/skills", "\u1112\u1161\u11AB\u1100\u1173\u11AF", path.join(root, "skills", "\uD55C\uAE00"));
+  }, /duplicate exposure id/);
+  console.log("ok: exposure link failures: dangling, absolute, outside, id mismatch, copy, file, empty, missing dir, discovery error, duplicate");
+}
+
+function testExposureLinksCli() {
+  const good = exposureRoot("exposure-cli-good");
+  relLink(good, ".claude/skills", "flat-a", path.join(good, "skills", "flat-a"));
+  relLink(good, ".agents/skills", "flat-a", path.join(good, "skills", "flat-a"));
+  const passed = spawnSync(process.execPath, [exposureGate, "--root", good], { encoding: "utf8" });
+  assert.equal(passed.status, 0, `${passed.stdout}${passed.stderr}`);
+  assert.match(passed.stdout, /skill-exposure-links: OK/);
+
+  const bad = exposureRoot("exposure-cli-bad");
+  relLink(bad, ".claude/skills", "gone", path.join(bad, "skills", "gone"));
+  const failed = spawnSync(process.execPath, [exposureGate, "--root", bad], { encoding: "utf8" });
+  assert.equal(failed.status, 1, "CLI must exit 1 on a dangling link");
+  assert.match(failed.stderr, /FAIL: \[\.claude\/skills\/gone\]/);
+
+  const real = spawnSync(process.execPath, [exposureGate], { encoding: "utf8" });
+  assert.equal(real.status, 0, `repository exposure links must pass: ${real.stdout}${real.stderr}`);
+  console.log("ok: exposure-link CLI exit codes, and the real repository passes");
 }

@@ -37,6 +37,7 @@ test-routing-fixtures:
 test-skill-discovery:
 	node ./scripts/test-skill-discovery.mjs
 	node ./scripts/check-skill-source-boundary.mjs
+	node ./scripts/check-skill-exposure-links.mjs
 
 test-work-start-fixtures:
 	./scripts/test-work-start-fixtures.sh
