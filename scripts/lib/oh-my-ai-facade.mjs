@@ -8,8 +8,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { discoverSkills } from "./skill-discovery.mjs";
-import { CORE_SKILLS } from "./oh-my-ai-core-skills.mjs";
+import { coreIdsOf, discoverSkills } from "./skill-discovery.mjs";
 import {
   CONFIG_KEYS,
   ConfigError,
@@ -436,10 +435,11 @@ function collectStatus(repoRoot, env) {
     codex: { dir: dirs.codex, detected: isDir(dirs.codex) },
   };
   const roots = { claude: path.join(dirs.claude, "skills"), codex: path.join(dirs.agentSkills, "skills") };
+  const coreEntries = coreIdsOf(index.discovery);
   const core = {};
   for (const runtime of ["claude", "codex"]) {
     const legacy = skillRootState(roots[runtime], repoRoot);
-    const items = CORE_SKILLS.map(id => {
+    const items = coreEntries.map(({ id }) => {
       const source = index.sourceOf(id);
       if (!source) return { id, state: "missing-source" };
       return { id, state: legacy || linkState(path.join(roots[runtime], id), id, source, repoRoot) };
@@ -528,12 +528,12 @@ function collectStatus(repoRoot, env) {
     })),
     path_has_local_bin: pathHasDir(env, dirs.localBin),
   };
-  const sourceSkillFiles = CORE_SKILLS.filter(id => index.sourceOf(id)).length;
+  const sourceSkillFiles = coreEntries.filter(e => e.present).length;
   const honesty = {
     settings: settingsHonesty(config.values ?? {}, hooks, entrypoints, repoHead, repoRoot, version, dirs.localBin),
     installed,
     discovery: {
-      core_skill_files_in_source: `${sourceSkillFiles}/${CORE_SKILLS.length}`,
+      core_skill_files_in_source: `${sourceSkillFiles}/${coreEntries.length}`,
       native_discovery: "NOT_VERIFIED (requires runtime E2E)",
     },
     guards: {
@@ -677,7 +677,7 @@ function cmdDoctor(repoRoot, env, args, { out, err }) {
 // ---------- install ----------
 
 function cmdInstall(repoRoot, env, args, { out, err }) {
-  const opts = { apply: false, profile: null, devMain: false, handoff: false, recordSync: false, spec: false };
+  const opts = { apply: false, profile: null, devMain: false, handoff: false, recordSync: false, spec: false, withIds: [] };
   for (let i = 0; i < args.length; i += 1) {
     const a = args[i];
     if (a === "--apply") opts.apply = true;
@@ -688,11 +688,23 @@ function cmdInstall(repoRoot, env, args, { out, err }) {
     else if (a === "--with-handoff") opts.handoff = true;
     else if (a === "--with-record-sync") opts.recordSync = true;
     else if (a === "--with-spec") opts.spec = true;
-    else {
+    else if (a === "--with") {
+      const id = args[i + 1] ?? "";
+      if (id === "" || id.startsWith("-")) {
+        err("--with requires a skill id (library skills are opt-in)");
+        return 2;
+      }
+      opts.withIds.push(id);
+      i += 1;
+    } else {
       err(`unknown argument: ${a}`);
-      out(`usage: ${BIN} install [--profile <name>] [--dev-main-flow [--with-handoff] [--with-record-sync] [--with-spec]] [--apply]`);
+      out(`usage: ${BIN} install [--profile <name>] [--dev-main-flow [--with-handoff] [--with-record-sync] [--with-spec]] [--with <skill-id>]... [--apply]`);
       return 2;
     }
+  }
+  if (opts.withIds.length > 0 && (opts.profile !== null || opts.devMain)) {
+    err("--with applies to the shared install only (not --profile or --dev-main-flow)");
+    return 2;
   }
   if (opts.profile !== null && (opts.profile === "" || !/^[A-Za-z0-9._-]+$/.test(opts.profile))) {
     err("--profile requires a name of letters, digits, '.', '_' or '-'");
@@ -711,20 +723,21 @@ function cmdInstall(repoRoot, env, args, { out, err }) {
     return 1;
   }
 
+  if (opts.profile === null && !opts.devMain) {
+    return cmdInstallShared(repoRoot, env, opts, { out, err });
+  }
+
   let setupArgs;
   let label;
   if (opts.profile !== null) {
     setupArgs = ["--install-profile", "--profile", opts.profile];
     label = `profile ${opts.profile}`;
-  } else if (opts.devMain) {
+  } else {
     setupArgs = ["--install-dev-main-flow"];
     if (opts.handoff) setupArgs.push("--with-handoff");
     if (opts.recordSync) setupArgs.push("--with-record-sync");
     if (opts.spec) setupArgs.push("--with-spec");
     label = "dev-main-flow bundle";
-  } else {
-    setupArgs = ["--install-shared"];
-    label = "shared";
   }
   if (!opts.apply) setupArgs.push("--dry-run");
 
@@ -733,6 +746,66 @@ function cmdInstall(repoRoot, env, args, { out, err }) {
     : `${BIN} install (${label}): dry-run. 변경하려면 --apply를 붙이세요.`);
   const r = runSetup(repoRoot, env, setupArgs, { inherit: true });
   return r.status ?? 1;
+}
+
+// ---------- step aggregation (install / update) ----------
+
+// setup.sh 한 단계를 실행해 결과를 모은다. 실패 = 종료 코드 != 0. FAIL: 줄은 실패 사유로 따로 모은다.
+function runStep(label, repoRoot, env, setupArgs) {
+  const r = runSetup(repoRoot, env, setupArgs);
+  const status = r.status ?? 1;
+  const stdout = (r.stdout || "").replace(/\n$/, "");
+  const reasons = stdout.split("\n").filter(line => line.startsWith("FAIL:")).map(line => line.slice("FAIL:".length).trim());
+  if (status !== 0 && reasons.length === 0) reasons.push(`setup.sh ${setupArgs[0]} exited ${status} (see output above)`);
+  return { label, ok: status === 0, status, stdout, stderr: (r.stderr || "").trim(), reasons };
+}
+
+function printStep(out, err, step) {
+  if (step.stdout) out(step.stdout);
+  if (step.stderr) err(step.stderr);
+}
+
+// 실패가 하나라도 있으면 성공이라고 쓰지 않는다. 실패 단계와 사유를 모두 보여준다.
+function reportPartial(err, steps) {
+  const failed = steps.filter(s => !s.ok);
+  err(`PARTIAL: ${failed.length} step(s) failed (not reported as success)`);
+  for (const s of failed) {
+    for (const reason of s.reasons) err(`  - [${s.label}] ${reason}`);
+  }
+}
+
+// install (shared 기본): install-shared 뒤 Core 링크 + --with 링크. 둘 다 끝까지 실행하고 결과를 합친다.
+function cmdInstallShared(repoRoot, env, opts, { out, err }) {
+  const index = discoveryIndex(repoRoot);
+  for (const id of opts.withIds) {
+    const matches = index.byName.get(id) ?? [];
+    if (matches.length !== 1) {
+      err(`--with ${id}: must name exactly one skill source (found ${matches.length})`);
+      return 2;
+    }
+  }
+  const dry = opts.apply ? [] : ["--dry-run"];
+  out(opts.apply
+    ? `${BIN} install (shared + Core): --apply. 기존 사용자 파일은 덮어쓰지 않습니다 (setup.sh 정책).`
+    : `${BIN} install (shared + Core): dry-run. 변경하려면 --apply를 붙이세요.`);
+  const steps = [
+    runStep("shared", repoRoot, env, ["--install-shared", ...dry]),
+    runStep("core-links", repoRoot, env, ["--install-core", ...opts.withIds.flatMap(id => ["--with", id]), ...dry]),
+  ];
+  for (const step of steps) printStep(out, err, step);
+  const notInTree = coreIdsOf(index.discovery).filter(e => !e.present).map(e => e.id);
+  if (notInTree.length > 0) out(`note: Core ids with no source in this tree (not linked): ${notInTree.join(", ")}`);
+  if (steps.some(s => !s.ok)) {
+    reportPartial(err, steps);
+    return 1;
+  }
+  if (!opts.apply) {
+    out(`${BIN} install: dry-run complete. planned links are listed above; nothing changed.`);
+    return 0;
+  }
+  const extra = opts.withIds.length ? ` + --with ${opts.withIds.join(", ")}` : "";
+  out(`${BIN} install: OK (shared + Core links${extra})`);
+  return 0;
 }
 
 // ---------- update ----------
@@ -834,25 +907,36 @@ function cmdUpdate(repoRoot, env, args, { out, err }) {
     err("refuse: local and ref have diverged; resolve manually (no merge or rebase is done automatically)");
     return 1;
   }
-  if (state !== "behind") {
-    out(`nothing to fast-forward (state: ${state})`);
-    return 0;
+  if (state === "behind") {
+    const ff = git(repoRoot, ["merge", "--ff-only", ref]);
+    if (!ff.ok) {
+      err(`fast-forward failed: ${ff.err} (nothing applied)`);
+      return 1;
+    }
+    out(`fast-forwarded to ${ref}`);
+  } else {
+    out(`nothing to fast-forward (state: ${state}); refreshing render and Core links`);
   }
-  const ff = git(repoRoot, ["merge", "--ff-only", ref]);
-  if (!ff.ok) {
-    err(`fast-forward failed: ${ff.err}`);
-    return 1;
-  }
-  out(`fast-forwarded to ${ref}`);
+
+  // 단계별 결과를 모두 모은 뒤 판정한다: render → Core 링크(새 Core Skill 포함) → doctor.
   const render = spawnSync("sh", [path.join(repoRoot, "scripts", "render-instructions.sh")], { cwd: repoRoot, encoding: "utf8" });
-  if (render.status !== 0) {
-    err(`render failed after update: ${(render.stderr || "").trim()} (run make instructions manually)`);
+  const renderStep = {
+    label: "render",
+    ok: render.status === 0,
+    reasons: render.status === 0 ? [] : [`render failed (run make instructions manually): ${(render.stderr || "").trim()}`],
+  };
+  if (renderStep.ok) out("instructions re-rendered");
+  const core = runStep("core-links", repoRoot, env, ["--install-core"]);
+  printStep(out, err, core);
+  const doctor = runStep("doctor", repoRoot, env, ["--doctor"]);
+  printStep(out, err, doctor);
+  const steps = [renderStep, core, doctor];
+  if (steps.some(s => !s.ok)) {
+    reportPartial(err, steps);
     return 1;
   }
-  out("instructions re-rendered");
-  const doctor = runSetup(repoRoot, env, ["--doctor"]);
-  out((doctor.stdout || "").replace(/\n$/, ""));
-  return doctor.status === 0 ? 0 : 1;
+  out(`update --apply: OK (${state === "behind" ? "fast-forwarded" : "no fast-forward needed"}, render, Core links, doctor)`);
+  return 0;
 }
 
 // ---------- config ----------
@@ -950,11 +1034,10 @@ function cmdSkills(repoRoot, env, args, { out, err }) {
   for (const skill of index.discovery.skills) {
     const id = skill.name;
     seen.add(id);
-    const isCore = CORE_SKILLS.includes(id);
     const meta = readSkillMeta(skill.skillFile);
     rows.push({
       id,
-      tier: isCore ? "core" : "library",
+      tier: skill.tier,
       provenance: meta.source,
       source_path: skill.relPath,
       explicit_only: meta.explicitOnly,
@@ -964,8 +1047,8 @@ function cmdSkills(repoRoot, env, args, { out, err }) {
       ])),
     });
   }
-  for (const id of CORE_SKILLS) {
-    if (seen.has(id)) continue;
+  for (const { id, present } of coreIdsOf(index.discovery)) {
+    if (present || seen.has(id)) continue;
     rows.push({
       id,
       tier: "core",
@@ -987,7 +1070,7 @@ function cmdSkills(repoRoot, env, args, { out, err }) {
   for (const r of shown) {
     out(`${r.id.padEnd(30)} ${r.tier.padEnd(8)} ${String(r.provenance).padEnd(12)} ${(r.explicit_only ? "explicit" : "auto").padEnd(10)} ${r.exposure.claude.padEnd(16)} ${r.exposure.codex}`);
   }
-  out("Core list is provisional (scripts/lib/oh-my-ai-core-skills.mjs). Exposure = link state in each runtime's skills dir.");
+  out("Tier: skills/core/ > skills/library/ > metadata.tier > TRANSITIONAL_CORE_IDS (scripts/lib/skill-discovery.mjs). Exposure = link state in each runtime's skills dir.");
   return 0;
 }
 
@@ -999,9 +1082,9 @@ function cmdHelp({ out }) {
   out("  version [--version]          VERSION + git SHA (+dirty)");
   out("  status [--json]              한 화면 요약 (읽기 전용)");
   out("  doctor [--strict]            setup.sh --doctor / --doctor-dev-main-flow 위임 + 수정 안내");
-  out("  install [--profile N] [--dev-main-flow [--with-handoff] [--with-record-sync] [--with-spec]] [--apply]");
-  out("                               기본 dry-run. --apply 해야 변경 (setup.sh 위임, 기존 파일 보존)");
-  out("  update [--ref REF] [--apply] [--force-worktrees]  fetch 후 비교 (기본 origin/master). --apply는 clean fast-forward만");
+  out("  install [--profile N] [--dev-main-flow [--with-handoff] [--with-record-sync] [--with-spec]] [--with <id>]... [--apply]");
+  out("                               기본 dry-run. --apply: shared + Core 링크(claude/codex). Library는 --with <id>로만 추가. 기존 파일 보존, 실패는 PARTIAL + exit 1");
+  out("  update [--ref REF] [--apply] [--force-worktrees]  fetch 후 비교 (기본 origin/master). --apply: clean fast-forward → render → Core 링크 → doctor");
   out("  config list|get|set         ~/.config/oh-my-ai/config.json (update.policy, context.inject, context.preload)");
   out("  skills [--core|--library|--all] [--json]   Skill 목록, 출처, explicit-only, 노출 상태");
   out("  help                         이 도움말 (--help, -h 동일)");

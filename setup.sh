@@ -15,6 +15,11 @@ INSTALL_FAILURE=0
 DEV_MAIN_WITH_HANDOFF=0
 DEV_MAIN_WITH_RECORD_SYNC=0
 DEV_MAIN_WITH_SPEC=0
+WITH_IDS=""
+CORE_FAIL=0
+CORE_LINKED=0
+CORE_READY=0
+CORE_PLANNED=0
 
 usage() {
   cat <<'EOF'
@@ -22,6 +27,7 @@ usage:
   setup.sh --doctor [--strict]
   setup.sh --doctor-dev-main-flow
   setup.sh --install-shared [--dry-run]
+  setup.sh --install-core [--with <skill-id>]... [--dry-run]
   setup.sh --install-dev-main-flow [--with-handoff] [--with-record-sync] [--with-spec] [--dry-run]
   setup.sh --init-profile --profile <name> [--dry-run]
   setup.sh --install-profile --profile <name> [--dry-run]
@@ -47,6 +53,13 @@ while [ "$#" -gt 0 ]; do
     --doctor) MODE="doctor" ;;
     --doctor-dev-main-flow) MODE="doctor-dev-main-flow" ;;
     --install-shared) MODE="install-shared" ;;
+    --install-core) MODE="install-core" ;;
+    --with)
+      shift
+      if [ -z "${1:-}" ]; then echo "--with requires a skill id" >&2; exit 2; fi
+      WITH_IDS="$WITH_IDS$1
+"
+      ;;
     --install-dev-main-flow) MODE="install-dev-main-flow" ;;
     --with-handoff) DEV_MAIN_WITH_HANDOFF=1 ;;
     --with-record-sync) DEV_MAIN_WITH_RECORD_SYNC=1 ;;
@@ -64,6 +77,10 @@ done
 
 if { [ "$DEV_MAIN_WITH_HANDOFF" -eq 1 ] || [ "$DEV_MAIN_WITH_RECORD_SYNC" -eq 1 ] || [ "$DEV_MAIN_WITH_SPEC" -eq 1 ]; } && [ "$MODE" != "install-dev-main-flow" ]; then
   echo "--with-handoff, --with-record-sync and --with-spec require --install-dev-main-flow" >&2
+  exit 2
+fi
+if [ -n "$WITH_IDS" ] && [ "$MODE" != "install-core" ]; then
+  echo "--with requires --install-core" >&2
   exit 2
 fi
 
@@ -650,6 +667,94 @@ install_shared() {
   say "Codex trust: unverified — review the installed hook in Codex /hooks before relying on execution."
 }
 
+# Core Skill 노출 링크 (install --apply 의 2단계). Tier 목록은 skill-discovery 가 준다. 이 파일에는 목록이 없다.
+# 규칙: absent 만 새로 링크한다. ready 는 그대로 둔다. 그 밖(사용자 디렉터리·파일, 옛 링크, 깨진 링크)은
+#       FAIL 로 보고만 하고 건드리지 않는다. 실패가 하나라도 있으면 exit 1.
+# 출력: FAIL: 줄 = 실패 목록 (ohmyai 가 PARTIAL 요약에 모은다), 마지막 줄 CORE-LINKS: 요약.
+core_root_check() {
+  label="$1"
+  root="$2"
+  if is_legacy_dir_link "$root"; then
+    say "FAIL: $label skills root is a legacy directory link ($root -> $(readlink "$root")); remove that link yourself, then re-run install"
+    return 1
+  fi
+  if [ -e "$root" ] && [ ! -d "$root" ]; then
+    say "FAIL: $label skills root is not a directory ($root)"
+    return 1
+  fi
+  return 0
+}
+
+core_link_one() {
+  runtime="$1"
+  root="$2"
+  skill_id="$3"
+  dest="$root/$skill_id"
+  source_dir="$(resolve_skill_source "$skill_id" 2>/dev/null)" || source_dir=""
+  if [ -z "$source_dir" ]; then
+    say "FAIL: $runtime $skill_id source is not resolvable (run: node scripts/lib/skill-discovery.mjs --check)"
+    CORE_FAIL=$((CORE_FAIL + 1))
+    return 0
+  fi
+  state="$(skill_link_state "$dest" "$skill_id" "$source_dir")"
+  case "$state" in
+    ready)
+      CORE_READY=$((CORE_READY + 1))
+      say "ok: $runtime $skill_id already linked"
+      ;;
+    absent)
+      if [ "$DRY_RUN" -eq 1 ]; then
+        CORE_PLANNED=$((CORE_PLANNED + 1))
+        say "plan: $runtime $skill_id  $dest -> $source_dir"
+      elif mkdir -p "$root" && ln -s "$source_dir" "$dest"; then
+        CORE_LINKED=$((CORE_LINKED + 1))
+        say "linked: $runtime $skill_id -> $source_dir"
+      else
+        CORE_FAIL=$((CORE_FAIL + 1))
+        say "FAIL: $runtime $skill_id link could not be created ($dest)"
+      fi
+      ;;
+    *)
+      CORE_FAIL=$((CORE_FAIL + 1))
+      say "FAIL: $runtime $skill_id $state at $dest (not overwritten; move or remove it yourself, then re-run install)"
+      ;;
+  esac
+  return 0
+}
+
+install_core_skills() {
+  say "=== oh-my-ai install-core (links only; existing user files are never overwritten) ==="
+  if ! command -v node >/dev/null 2>&1; then
+    say "FAIL: node is required to read the Core tier from skill-discovery"
+    return 1
+  fi
+  if ! core_names="$(node "$REPO/scripts/lib/skill-discovery.mjs" --list --tier core --format names --root "$REPO" 2>/dev/null)"; then
+    say "FAIL: skill discovery failed (run: node scripts/lib/skill-discovery.mjs --check)"
+    return 1
+  fi
+  ids="$(printf '%s\n%s\n' "$core_names" "$WITH_IDS" | sed '/^$/d' | sort -u)"
+  claude_root="$CLAUDE_DIR/skills"
+  codex_root="$AGENT_DIR/skills"
+  claude_blocked=0
+  codex_blocked=0
+  core_root_check Claude "$claude_root" || claude_blocked=1
+  core_root_check Codex "$codex_root" || codex_blocked=1
+  count=0
+  while IFS= read -r skill_id; do
+    [ -n "$skill_id" ] || continue
+    count=$((count + 1))
+    if [ "$claude_blocked" -eq 0 ]; then core_link_one Claude "$claude_root" "$skill_id"; fi
+    if [ "$codex_blocked" -eq 0 ]; then core_link_one Codex "$codex_root" "$skill_id"; fi
+  done <<IDS
+$ids
+IDS
+  say "CORE-LINKS: ids=$count linked=$CORE_LINKED ready=$CORE_READY planned=$CORE_PLANNED fail=$CORE_FAIL"
+  if [ "$CORE_FAIL" -gt 0 ]; then
+    return 1
+  fi
+  return 0
+}
+
 dev_main_flow_root_status() {
   if [ -L "$AGENT_DIR" ]; then
     printf '%s\n' "conflict: AGENT_DIR is a symlink ($AGENT_DIR)"
@@ -953,6 +1058,7 @@ case "$MODE" in
   doctor) doctor ;;
   doctor-dev-main-flow) dev_main_flow_doctor ;;
   install-shared) install_shared ;;
+  install-core) install_core_skills ;;
   install-dev-main-flow) install_dev_main_flow ;;
   init-profile) init_profile ;;
   install-profile) install_profile ;;

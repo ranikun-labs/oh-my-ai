@@ -10,7 +10,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { discoverSkills } from "./lib/skill-discovery.mjs";
+import { coreIdsOf, discoverSkills } from "./lib/skill-discovery.mjs";
 import { captureExposureBaseline, checkExposureLinks } from "./check-skill-exposure-links.mjs";
 import { DEPENDENCY_MISSING_EXIT_CODE, missingYamlDependency } from "./lib/yaml-dependency.mjs";
 
@@ -39,9 +39,62 @@ try {
   testExposureBaselineLoss();
   testExposureBaselineCli();
   testPilotGates();
+  testTierPrecedence();
   console.log("skill-discovery fixtures: PASS");
 } finally {
   fs.rmSync(work, { recursive: true, force: true });
+}
+
+// Tier 우선순위: 물리 그룹 > metadata.tier > TRANSITIONAL_CORE_IDS > library 기본.
+function testTierPrecedence() {
+  const root = newRoot("tier");
+  writeSkill(path.join(root, "skills", "core", "grouped-core"), "grouped-core");
+  writeSkill(path.join(root, "skills", "library", "senior"), "senior"); // 과도기 목록에 있어도 물리 그룹이 이긴다
+  writeTiered(path.join(root, "skills", "meta-core"), "meta-core", "core");
+  writeTiered(path.join(root, "skills", "meta-lib"), "meta-lib", "library");
+  writeSkill(path.join(root, "skills", "plain"), "plain");
+  writeSkill(path.join(root, "skills", "library", "meta-in-group"), "meta-in-group");
+  writeTiered(path.join(root, "skills", "core", "meta-in-group-x"), "meta-in-group-x", "library");
+  const result = discoverSkills(root);
+  const byName = Object.fromEntries(result.skills.map(s => [s.name, s]));
+  assert.deepEqual([byName["grouped-core"].tier, byName["grouped-core"].tierSource], ["core", "group"]);
+  assert.deepEqual([byName["meta-core"].tier, byName["meta-core"].tierSource], ["core", "metadata"]);
+  assert.deepEqual([byName["meta-lib"].tier, byName["meta-lib"].tierSource], ["library", "metadata"]);
+  assert.deepEqual([byName.plain.tier, byName.plain.tierSource], ["library", "default"]);
+  assert.deepEqual([byName.senior.tier, byName.senior.tierSource], ["library", "group"]);
+  assert.equal(byName["meta-in-group-x"].tier, "core");
+  assert.equal(byName["meta-in-group-x"].tierSource, "group");
+  assert.ok(result.warnings.some(w => /meta-in-group-x.*ignored; physical group "core" wins/.test(w)));
+  // 과도기 목록: 같은 이름이 flat 으로 있을 때만 manifest 경로 검증은 별도 root 로 한다
+  const manifestRoot = newRoot("tier-manifest");
+  writeSkill(path.join(manifestRoot, "skills", "senior"), "senior");
+  const m = discoverSkills(manifestRoot).skills[0];
+  assert.deepEqual([m.tier, m.tierSource], ["core", "manifest"]);
+  // coreIdsOf: 과도기 ID가 library 그룹에 있으면 core 가 아니고 missing 도 아니다
+  const coreIds = coreIdsOf(result).map(e => e.id);
+  assert.ok(!coreIds.includes("senior"), "senior under library/ must not be core");
+  // 잘못된 metadata.tier 값은 오류 (소비자 실패)
+  const badRoot = newRoot("tier-bad");
+  writeTiered(path.join(badRoot, "skills", "bad"), "bad", "gold");
+  const bad = discoverSkills(badRoot);
+  assert.ok(bad.errors.some(e => /metadata\.tier "gold" must be one of core\|library/.test(e)));
+  console.log("ok: tier precedence (group > metadata > manifest > default) and invalid metadata.tier");
+}
+
+function writeTiered(dir, name, tier) {
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "SKILL.md"), [
+    "---",
+    `name: ${name}`,
+    `description: ${name} fixture skill`,
+    "metadata:",
+    "  source: born-here",
+    `  tier: ${tier}`,
+    "---",
+    "",
+    `# ${name}`,
+    "",
+  ].join("\n"));
 }
 
 function newRoot(label) {

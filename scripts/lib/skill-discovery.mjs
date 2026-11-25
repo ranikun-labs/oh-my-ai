@@ -3,9 +3,14 @@
 // 소스는 skills/<n>/ (flat) 또는 skills/{core,library}/<n>/ (그룹) 어디에도 둘 수 있고,
 // 소비자는 항상 평평한 목록만 본다. 그룹 디렉터리 자체는 Skill이 아니다.
 //
-//   node scripts/lib/skill-discovery.mjs --list [--root <dir>] [--format paths|json|names]
+//   node scripts/lib/skill-discovery.mjs --list [--root <dir>] [--tier core|library] [--format paths|json|names]
 //   node scripts/lib/skill-discovery.mjs --check [--root <dir>]
 //   node scripts/lib/skill-discovery.mjs --resolve <id> [--root <dir>]   (절대 Source 디렉터리 1개 출력)
+//
+// Tier(Core/Library) 분류의 단일 원본은 이 파일이다. 우선순위:
+//   1. 물리 그룹: skills/core/<n>/ → core, skills/library/<n>/ → library (그룹이 이김)
+//   2. frontmatter metadata.tier: core | library
+//   3. TRANSITIONAL_CORE_IDS (과도기 목록) 에 있으면 core, 아니면 library
 
 import fs from "node:fs";
 import path from "node:path";
@@ -15,6 +20,25 @@ import { fileURLToPath } from "node:url";
 export const RESERVED_GROUPS = Object.freeze(["core", "library"]);
 // skills/ 바로 아래 SKILL.md 없이 존재해도 되는 디렉터리 (현재 없음). 추가 시 사유를 남긴다.
 export const NON_SKILL_DIRS = Object.freeze([]);
+export const TIERS = Object.freeze(["core", "library"]);
+
+// 과도기 Core 목록. Skill을 skills/core/ 로 물리적으로 옮기거나 metadata.tier 를 쓰면 이 목록에서 빼고 삭제한다.
+// 이 배열이 Core 목록의 유일한 정의다. 다른 파일은 이 목록을 복사하지 말고 discovery 결과의 tier 를 읽는다.
+// 목록에 있어도 source 트리에 없으면 coreIdsOf() 가 present:false 로 돌려준다(missing-source 표시용).
+export const TRANSITIONAL_CORE_IDS = Object.freeze([
+  "dev-main-flow",
+  "adaptive-goal-closure",
+  "senior",
+  "f1",
+  "engineering-communication-ko",
+  "한글화",
+  "project-context",
+  "handoff-prompt",
+  "git-work-preflight",
+  "execution-recovery",
+  "work-start",
+  "batch-report",
+]);
 
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 export const DEFAULT_REPO_ROOT = path.resolve(MODULE_DIR, "..", "..");
@@ -48,7 +72,7 @@ export function discoverSkills(repoRoot = DEFAULT_REPO_ROOT) {
     }
     if (NON_SKILL_DIRS.includes(entry.name)) continue;
     if (fs.existsSync(path.join(full, "SKILL.md"))) {
-      addSkill(full, entry.name);
+      addSkill(full, entry.name, null);
     } else {
       result.errors.push(`${rel(full)}/: directory has no SKILL.md (add SKILL.md, move it into a group, or allow-list it in NON_SKILL_DIRS)`);
     }
@@ -84,7 +108,7 @@ export function discoverSkills(repoRoot = DEFAULT_REPO_ROOT) {
 
   result.skills = found
     .sort((a, b) => compare(a.name, b.name) || compare(a.relPath, b.relPath))
-    .map(({ name, dir, relPath, skillFile }) => ({ name, dir, relPath, skillFile }));
+    .map(({ name, dir, relPath, skillFile, tier, tierSource }) => ({ name, dir, relPath, skillFile, tier, tierSource }));
   return result;
 
   function scanGroup(groupDir, group) {
@@ -99,23 +123,50 @@ export function discoverSkills(repoRoot = DEFAULT_REPO_ROOT) {
       }
       if (!entry.isDirectory()) continue;
       if (fs.existsSync(path.join(full, "SKILL.md"))) {
-        addSkill(full, entry.name);
+        addSkill(full, entry.name, group);
       } else {
         result.errors.push(`${rel(full)}/: directory has no SKILL.md (groups hold skills at depth 2 only)`);
       }
     }
   }
 
-  function addSkill(dir, dirName) {
+  function addSkill(dir, dirName, group) {
     const skillFile = path.join(dir, "SKILL.md");
     const relPath = rel(skillFile);
-    const name = readFrontmatterName(skillFile, relPath, result.errors);
-    if (name === null) return;
-    if (name !== dirName) {
-      result.errors.push(`${relPath}: frontmatter name "${name}" must match directory "${dirName}"`);
+    const front = readFrontmatter(skillFile, relPath, result.errors);
+    if (front === null) return;
+    if (front.name !== dirName) {
+      result.errors.push(`${relPath}: frontmatter name "${front.name}" must match directory "${dirName}"`);
     }
-    found.push({ name, dir, relPath, skillFile, real: fs.realpathSync(dir) });
+    if (front.metaTier !== null && !TIERS.includes(front.metaTier)) {
+      result.errors.push(`${relPath}: metadata.tier "${front.metaTier}" must be one of ${TIERS.join("|")}`);
+    }
+    const { tier, tierSource } = classifyTier(dirName, group, front.metaTier);
+    if (group && front.metaTier !== null && front.metaTier !== group) {
+      result.warnings.push(`${relPath}: metadata.tier "${front.metaTier}" ignored; physical group "${group}" wins`);
+    }
+    found.push({ name: front.name, dir, relPath, skillFile, real: fs.realpathSync(dir), tier, tierSource });
   }
+}
+
+// Tier 우선순위: 물리 그룹 > metadata.tier > 과도기 목록 > 기본 library.
+export function classifyTier(name, group, metaTier) {
+  if (group) return { tier: group, tierSource: "group" };
+  if (metaTier) return { tier: metaTier, tierSource: "metadata" };
+  if (TRANSITIONAL_CORE_IDS.includes(name)) return { tier: "core", tierSource: "manifest" };
+  return { tier: "library", tierSource: "default" };
+}
+
+// discovery 결과 기준 Core 목록. 발견된 core Skill + 과도기 목록에 있으나 source에 없는 ID(present:false).
+// 반환은 id 오름차순. present:false 항목은 source가 없으므로 설치 대상이 아니다.
+// 주의: 과도기 목록의 ID라도 발견됐으면(어떤 tier든) missing이 아니다. 예: skills/library/senior 는 library 이므로 core 목록에 없다.
+export function coreIdsOf(discovery) {
+  const byName = new Map(discovery.skills.map(s => [s.name, s]));
+  const coreFound = discovery.skills.filter(s => s.tier === "core").map(s => s.name);
+  const missing = TRANSITIONAL_CORE_IDS.filter(id => !byName.has(id));
+  return [...new Set([...coreFound, ...missing])]
+    .sort(compare)
+    .map(id => ({ id, present: byName.has(id), skill: byName.get(id) ?? null }));
 }
 
 // Skill ID(= 디렉터리 이름)로 Source 디렉터리를 하나 찾는다.
@@ -137,7 +188,8 @@ export function resolveSkill(repoRoot, id) {
   return { ok: true, skill, otherErrors: discovery.errors.filter(error => !related.includes(error)) };
 }
 
-function readFrontmatterName(file, relPath, errors) {
+// 반환: { name, metaTier } (metaTier 는 metadata.tier 원문 또는 null). 실패 시 null + errors 기록.
+function readFrontmatter(file, relPath, errors) {
   let lines;
   try {
     lines = fs.readFileSync(file, "utf8").split(/\r?\n/);
@@ -154,12 +206,30 @@ function readFrontmatterName(file, relPath, errors) {
     errors.push(`${relPath}: missing frontmatter end`);
     return null;
   }
-  const nameLine = lines.slice(1, end).find(line => line.startsWith("name:"));
+  const fm = lines.slice(1, end);
+  const nameLine = fm.find(line => line.startsWith("name:"));
   if (nameLine === undefined) {
     errors.push(`${relPath}: missing frontmatter key "name"`);
     return null;
   }
-  return unquote(nameLine.slice("name:".length).trim());
+  return { name: unquote(nameLine.slice("name:".length).trim()), metaTier: readMetadataTier(fm) };
+}
+
+// metadata: 블록 안의 tier: 한 줄만 읽는다 (들여쓴 키만 인정).
+function readMetadataTier(fm) {
+  let inMeta = false;
+  for (const line of fm) {
+    if (/^metadata:\s*$/.test(line)) {
+      inMeta = true;
+      continue;
+    }
+    if (/^\S/.test(line)) inMeta = false;
+    if (inMeta) {
+      const m = line.match(/^\s+tier:\s*(.+?)\s*$/);
+      if (m) return unquote(m[1]);
+    }
+  }
+  return null;
 }
 
 function readDir(dir) {
@@ -188,7 +258,7 @@ function compare(a, b) {
 }
 
 function parseArgs(argv) {
-  const opts = { mode: null, root: DEFAULT_REPO_ROOT, format: "paths" };
+  const opts = { mode: null, root: DEFAULT_REPO_ROOT, format: "paths", tier: "all" };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--list" || arg === "--check") {
@@ -209,12 +279,18 @@ function parseArgs(argv) {
       i += 1;
     } else if (arg.startsWith("--format=")) {
       opts.format = arg.slice("--format=".length);
+    } else if (arg === "--tier") {
+      opts.tier = argv[i + 1];
+      i += 1;
+    } else if (arg.startsWith("--tier=")) {
+      opts.tier = arg.slice("--tier=".length);
     } else {
       throw new Error(`unknown argument: ${arg}`);
     }
   }
-  if (!opts.mode) throw new Error("usage: skill-discovery.mjs (--list [--format paths|json] | --check | --resolve <id>) [--root <dir>]");
+  if (!opts.mode) throw new Error("usage: skill-discovery.mjs (--list [--tier core|library] [--format paths|json|names] | --check | --resolve <id>) [--root <dir>]");
   if (!["paths", "json", "names"].includes(opts.format)) throw new Error("--format must be paths, json or names");
+  if (![...TIERS, "all"].includes(opts.tier)) throw new Error("--tier must be core, library or all");
   return opts;
 }
 
@@ -249,12 +325,13 @@ function main(argv) {
     console.log(`skill-discovery: OK (${result.skills.length} skills)`);
     return 0;
   }
+  const shown = result.skills.filter(skill => opts.tier === "all" || skill.tier === opts.tier);
   if (opts.format === "json") {
-    console.log(JSON.stringify(result.skills, null, 2));
+    console.log(JSON.stringify(shown, null, 2));
   } else if (opts.format === "names") {
-    for (const skill of result.skills) console.log(skill.name);
+    for (const skill of shown) console.log(skill.name);
   } else {
-    for (const skill of result.skills) console.log(skill.relPath);
+    for (const skill of shown) console.log(skill.relPath);
   }
   return 0;
 }

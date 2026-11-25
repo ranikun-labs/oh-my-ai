@@ -10,9 +10,10 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildPreloadBlock } from "./lib/oh-my-ai-context.mjs";
-import { CORE_SKILLS } from "./lib/oh-my-ai-core-skills.mjs";
+import { coreIdsOf, discoverSkills } from "./lib/skill-discovery.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const CORE_SKILLS = coreIdsOf(discoverSkills(repoRoot)).map(entry => entry.id);
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "ohmyai-cli-test-"));
 const results = [];
 
@@ -108,6 +109,7 @@ function makeFixture(name) {
 function pushPeerCommit(sb, file, text) {
   const peer = path.join(sb.base, `peer-${Math.random().toString(36).slice(2)}`);
   spawnSync("git", ["clone", "-q", sb.remote, peer], { encoding: "utf8" });
+  fs.mkdirSync(path.dirname(path.join(peer, file)), { recursive: true });
   fs.writeFileSync(path.join(peer, file), text);
   git(peer, ["add", file]);
   git(peer, ["commit", "-q", "-m", `peer ${file}`]);
@@ -166,8 +168,13 @@ test("status --json: required fields, read-only, drift detection", () => {
   assert.equal(s.config["update.policy"], "CHECK");
   assert.equal(s.config["context.inject"], "on");
   assert.deepEqual(s.config["context.preload"], []);
-  assert.equal(s.core_skills.claude.total, 12);
-  assert.ok(s.core_skills.claude.items.some(i => i.id === "batch-report" && i.state === "missing-source"));
+  // 기대값은 이 트리의 discovery 결과에서 계산한다 (특정 Skill의 존재/부재를 가정하지 않는다)
+  const coreEntries = coreIdsOf(discoverSkills(sb.clone));
+  assert.equal(s.core_skills.claude.total, coreEntries.length);
+  for (const entry of coreEntries) {
+    const item = s.core_skills.claude.items.find(i => i.id === entry.id);
+    assert.equal(item.state === "missing-source", !entry.present, `${entry.id}: ${item.state}`);
+  }
   assert.equal(s.runtimes.claude.detected, true);
   assert.equal(s.runtimes.codex.detected, false);
 
@@ -313,7 +320,8 @@ test("skills: tiers, provenance, explicit-only, exposure", () => {
   assert.equal(byId["work-start"].explicit_only, true);
   assert.equal(byId["work-start"].provenance, "born-here");
   assert.equal(byId["senior"].exposure.claude, "absent");
-  assert.equal(byId["batch-report"].exposure.claude, "missing-source");
+  const batchPresent = coreIdsOf(discoverSkills(sb.clone)).find(e => e.id === "batch-report").present;
+  assert.equal(byId["batch-report"].exposure.claude, batchPresent ? "absent" : "missing-source");
   assert.equal(byId["golang-grpc"].tier, "library");
   const core = JSON.parse(cli(sb, ["skills", "--core", "--json"]).stdout);
   assert.ok(core.every(x => x.tier === "core"));
@@ -393,7 +401,9 @@ test("context.preload: summary and path only, within the 2048-byte cap", () => {
   const block = ctx.slice(start);
   assert.ok(Buffer.byteLength(block, "utf8") <= 2048, `preload is ${Buffer.byteLength(block, "utf8")} bytes`);
   assert.match(block, /- work-start: .+ — skills\/work-start\/SKILL\.md/);
-  assert.match(block, /- batch-report: \(missing source; not preloaded\)/);
+  const batchPresent = coreIdsOf(discoverSkills(sb.clone)).find(e => e.id === "batch-report").present;
+  if (batchPresent) assert.match(block, /- batch-report: .+ — skills\/batch-report\/SKILL\.md/);
+  else assert.match(block, /- batch-report: \(missing source; not preloaded\)/);
   assert.doesNotMatch(block, /^## /m, "full skill body must not be injected");
   assert.doesNotMatch(block, /^---$/m, "frontmatter must not be injected");
 });
@@ -505,6 +515,70 @@ test("doctor: prints bootstrap hint when ohmyai entrypoints are absent", () => {
   assert.match(r.stdout, /=== bootstrap/);
   assert.match(r.stdout, /\.\/setup\.sh --install-shared --dry-run/);
   assert.match(r.stdout, /Windows Native/);
+});
+
+function coreOf(dir) {
+  return coreIdsOf(discoverSkills(dir)).filter(e => e.present).map(e => e.skill);
+}
+
+function assertLinkedTo(linkPath, sourceDir) {
+  assert.ok(fs.lstatSync(linkPath).isSymbolicLink(), `${linkPath} is not a symlink`);
+  assert.equal(fs.realpathSync(linkPath), fs.realpathSync(sourceDir));
+}
+
+test("install --apply: links every Core id into both runtimes; library only with --with", () => {
+  const sb = makeFixture("install-core");
+  const core = coreOf(sb.clone);
+  assert.ok(core.length >= 11);
+  const lib = discoverSkills(sb.clone).skills.find(s => s.tier === "library");
+  const r = cli(sb, ["install", "--apply"]);
+  assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
+  assert.match(r.stdout, /CORE-LINKS: ids=\d+ linked=\d+/);
+  for (const s of core) {
+    assertLinkedTo(path.join(sb.claude, "skills", s.name), s.dir);
+    assertLinkedTo(path.join(sb.agents, "skills", s.name), s.dir);
+  }
+  assert.equal(fs.existsSync(path.join(sb.claude, "skills", lib.name)), false, "library linked by default");
+
+  const opt = cli(sb, ["install", "--apply", "--with", lib.name]);
+  assert.equal(opt.status, 0, `${opt.stdout}\n${opt.stderr}`);
+  assertLinkedTo(path.join(sb.claude, "skills", lib.name), lib.dir);
+  assertLinkedTo(path.join(sb.agents, "skills", lib.name), lib.dir);
+});
+
+test("install --apply: user directory with the same name is preserved; PARTIAL and non-zero exit", () => {
+  const sb = makeFixture("install-conflict");
+  const userDir = path.join(sb.claude, "skills", "senior");
+  fs.mkdirSync(userDir, { recursive: true });
+  fs.writeFileSync(path.join(userDir, "mine.md"), "user\n");
+  const r = cli(sb, ["install", "--apply"]);
+  assert.equal(r.status, 1, `${r.stdout}\n${r.stderr}`);
+  assert.match(r.stderr, /PARTIAL/);
+  assert.match(r.stderr, /senior/);
+  assert.doesNotMatch(r.stdout, /install: OK/);
+  assert.equal(fs.readFileSync(path.join(userDir, "mine.md"), "utf8"), "user\n");
+  assert.ok(fs.lstatSync(path.join(sb.agents, "skills", "senior")).isSymbolicLink(), "other runtime still linked");
+  const other = coreOf(sb.clone).find(s => s.name !== "senior");
+  assertLinkedTo(path.join(sb.claude, "skills", other.name), other.dir);
+});
+
+test("install dry-run: prints exact planned links and creates nothing", () => {
+  const sb = makeFixture("install-plan");
+  const before = snapshot(sb.home);
+  const r = cli(sb, ["install"]);
+  assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
+  const senior = coreOf(sb.clone).find(s => s.name === "senior");
+  assert.ok(r.stdout.includes(`plan: Claude senior  ${path.join(sb.claude, "skills", "senior")} -> ${senior.dir}`));
+  assert.deepEqual(snapshot(sb.home), before);
+});
+
+test("update --apply: a Core skill that appears upstream is linked for both runtimes", () => {
+  const sb = makeFixture("update-new-core");
+  pushPeerCommit(sb, "skills/brand-new-core/SKILL.md", "---\nname: brand-new-core\ndescription: \"fixture\"\nmetadata:\n  source: born-here\n  summary: fixture core skill\n  tier: core\n---\n\n# fixture\n");
+  const r = cli(sb, ["update", "--apply"]);
+  assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
+  assertLinkedTo(path.join(sb.claude, "skills", "brand-new-core"), path.join(sb.clone, "skills", "brand-new-core"));
+  assertLinkedTo(path.join(sb.agents, "skills", "brand-new-core"), path.join(sb.clone, "skills", "brand-new-core"));
 });
 
 // ---------------- report ----------------

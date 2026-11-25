@@ -5,9 +5,16 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { CORE_SKILLS } from "./oh-my-ai-core-skills.mjs";
+import { DEFAULT_REPO_ROOT, coreIdsOf, discoverSkills } from "./skill-discovery.mjs";
 
 export class ConfigError extends Error {}
+
+// context.preload 허용 목록 = skill-discovery 의 Core 집합(과도기 목록 포함). 프로세스당 한 번만 계산한다.
+let coreIdCache = null;
+function knownCoreIds() {
+  coreIdCache ??= new Set(coreIdsOf(discoverSkills(DEFAULT_REPO_ROOT)).map(entry => entry.id));
+  return coreIdCache;
+}
 
 export const CONFIG_KEYS = Object.freeze({
   "update.policy": { type: "enum", values: ["OFF", "CHECK", "AUTO"], default: "CHECK" },
@@ -72,7 +79,7 @@ export function validateValue(key, value) {
   if (!Array.isArray(value)) throw new ConfigError(`${key} must be a list of Core skill ids`);
   const seen = new Set();
   for (const id of value) {
-    if (typeof id !== "string" || !CORE_SKILLS.includes(id)) {
+    if (typeof id !== "string" || !knownCoreIds().has(id)) {
       throw new ConfigError(`${key}: "${id}" is not a Core skill id`);
     }
     if (seen.has(id)) throw new ConfigError(`${key}: duplicate "${id}"`);

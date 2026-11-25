@@ -145,10 +145,18 @@ Hook은 항상 exit 0 이다. `SessionStart` 에서만 세션당 한 번 경고 
   - 측정: Core 12개 전부 = 1836 bytes (상한 이내). 단일 항목 약 260 bytes.
   - `inject=off` 이면 preload도 주입하지 않는다. 소스에 없는 id는 `(missing source; not preloaded)` 로 표시한다.
 
-## Core skill 목록 (잠정)
+## Core skill 분류 (단일 원본)
 
-`scripts/lib/oh-my-ai-core-skills.mjs` 의 상수다. 확정된 기준이 없으므로 provisional로 둔다.
-`batch-report` 는 이 레포에 없어서 `missing-source` 로 표시된다.
+Tier 는 `scripts/lib/skill-discovery.mjs` 가 Skill마다 계산한다. 우선순위:
+
+1. 물리 그룹: `skills/core/<n>/` → core, `skills/library/<n>/` → library (그룹이 이긴다)
+2. frontmatter `metadata.tier: core | library`
+3. `TRANSITIONAL_CORE_IDS` (과도기 목록, 같은 파일). Skill을 그룹으로 옮기면 이 목록에서 뺀다.
+
+`ohmyai install --apply` 는 shared 설치 뒤 Core 전부를 claude/codex skill 디렉터리에 심볼릭 링크한다.
+이미 있는 사용자 파일·디렉터리·옛 링크는 덮어쓰지 않고 `FAIL` 로 보고하며 `PARTIAL` 요약과 exit 1 이 된다.
+Library 는 기본으로 링크하지 않고 `--with <id>` 로만 추가한다. `ohmyai update --apply` 는 fast-forward 뒤 render → Core 링크 → doctor 를 같은 방식으로 판정한다.
+`batch-report` 처럼 소스가 없는 Core id 는 `missing-source` 로 표시되고 링크되지 않는다.
 
 ## 안전 경계
 
