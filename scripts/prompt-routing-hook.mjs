@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { matchSkillCandidatesWithStatus } from "./lib/routing-status.mjs";
 import { needsJiraFirstDevelopmentPreflight } from "./lib/jira-first-development-intent.mjs";
+import { extractRoutingPrompt } from "./lib/routing-prompt-source.mjs";
 import {
   appendAutomationCandidate,
   claimWorkStartSuggestion,
@@ -31,8 +32,9 @@ process.stdin.on("data", chunk => {
 });
 process.stdin.on("end", () => {
   const event = parseInput(input);
-  const prompt = String(event.prompt || event.user_prompt || event.message || input || "");
-  if (isSyntheticPromptEvent(event, prompt)) {
+  const originalPrompt = String(event.prompt || event.user_prompt || event.message || input || "");
+  const prompt = extractRoutingPrompt(event, originalPrompt);
+  if (prompt === null) {
     process.exit(0);
   }
   const runtime = format === "claude-json" ? "claude" : format === "codex-json" ? "codex" : "text";
@@ -82,18 +84,6 @@ function parseInput(input) {
   } catch {
     return {};
   }
-}
-
-function isSyntheticPromptEvent(event, prompt) {
-  if (!event || typeof event !== "object") return false;
-
-  // Both adapters pass the UserPromptSubmit JSON payload through unchanged.
-  // A task notification is provider-inserted only when it occupies that prompt field.
-  const hasPromptField = ["prompt", "user_prompt", "message"]
-    .some(field => typeof event[field] === "string");
-  if (!hasPromptField) return false;
-
-  return /^\s*<task-notification(?:\s[^>]*)?>[\s\S]*<\/task-notification>\s*$/i.test(prompt);
 }
 
 function buildPromptRoutingPayload(prompt, options = {}) {
@@ -229,10 +219,8 @@ function buildWorkStartSuggestion(prompt, runtime) {
   const promptHash = crypto.createHash("sha256").update(normalizedPrompt).digest("hex");
   const claim = claimWorkStartSuggestion(process.cwd(), runtime, promptHash);
   if (claim.persisted && !claim.claimed) return "";
-  const command = runtime === "codex"
-    ? `$work-start ${normalizedPrompt}`
-    : `/work-start ${normalizedPrompt}`;
   const commandName = runtime === "codex" ? "$work-start" : "/work-start";
+  const command = `${commandName} <작업 내용>`;
 
   const systemMessage = [
     "Suggested by oh-my-ai: Work-start",
@@ -242,7 +230,7 @@ function buildWorkStartSuggestion(prompt, runtime) {
     "Work-start는 로컬 Artifact를 생성합니다.",
     "아직 Work-start는 실행되지 않았습니다.",
     "",
-    "실행:",
+    "실행하려면 명령 뒤에 작업 내용을 직접 입력하세요:",
     command,
     "",
     "사용하지 않으려면 현재 요청을 그대로 계속하세요.",
@@ -268,7 +256,7 @@ function buildWorkStartSuggestion(prompt, runtime) {
     "  - Suggestion text is not a Skill invocation request",
     "  - Suggestion text is not Engine consent",
     "",
-    "  실행하려면 사용자가 다음 명시 명령을 직접 입력해야 합니다:",
+    "  실행하려면 사용자가 다음 명시 명령 뒤에 작업 내용을 직접 입력해야 합니다:",
     `  ${command}`,
     "",
     "  사용하지 않으려면 현재 요청을 그대로 계속하세요.",
