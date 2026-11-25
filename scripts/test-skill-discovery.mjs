@@ -11,7 +11,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { discoverSkills } from "./lib/skill-discovery.mjs";
-import { checkExposureLinks } from "./check-skill-exposure-links.mjs";
+import { captureExposureBaseline, checkExposureLinks } from "./check-skill-exposure-links.mjs";
 import { DEPENDENCY_MISSING_EXIT_CODE, missingYamlDependency } from "./lib/yaml-dependency.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -36,6 +36,9 @@ try {
   testExposureLinksFailures();
   testExposureLinksCli();
   testPilotDependencyMissing();
+  testExposureBaselineLoss();
+  testExposureBaselineCli();
+  testPilotGates();
   console.log("skill-discovery fixtures: PASS");
 } finally {
   fs.rmSync(work, { recursive: true, force: true });
@@ -332,4 +335,98 @@ function testPilotDependencyMissing() {
   assert.match(run.stderr, /skill-pilot-check: DEPENDENCY_MISSING: /);
   assert.doesNotMatch(`${run.stdout}${run.stderr}`, /STEP|FAIL/, "must not report generic step results");
   console.log("ok: pilot-check reports DEPENDENCY_MISSING (exit 3) when the pinned YAML parser is absent");
+}
+
+// 이동 후 노출 링크 유실: 기준선(이동 전 ID)에 있던 링크가 사라지면 FAIL 해야 한다. 기준선이 없으면 남은 링크만 보고 통과한다(대조군).
+function testExposureBaselineLoss() {
+  const root = exposureBaselineRoot("exposure-baseline-loss");
+  const baseline = captureExposureBaseline(root);
+  assert.deepEqual(baseline, [".agents/skills/flat-a", ".claude/skills/flat-a", ".claude/skills/grouped-b"]);
+  assert.equal(checkExposureLinks(root, { baseline }).ok, true);
+
+  fs.unlinkSync(path.join(root, ".claude", "skills", "flat-a"));
+  assert.equal(checkExposureLinks(root).ok, true, "without a baseline the remaining links still pass (loss is invisible)");
+  const lost = checkExposureLinks(root, { baseline });
+  assert.equal(lost.ok, false, "a baseline ID that disappeared must fail");
+  assert.ok(lost.problems.some(p => /^baseline exposure link\(s\) missing \(1\): \.claude\/skills\/flat-a$/.test(p)), lost.problems.join(" | "));
+  console.log("ok: exposure baseline: a link lost after the move FAILs and names the id; without a baseline it passes");
+}
+
+// CLI --baseline: 파일 기준선과 git ref 기준선 모두. 정상은 exit 0, 유실은 exit 1(ID 목록), 잘못된 기준선은 exit 2.
+function testExposureBaselineCli() {
+  const root = exposureBaselineRoot("exposure-baseline-cli");
+  const baselineFile = path.join(work, `baseline-${counter += 1}.txt`);
+  fs.writeFileSync(baselineFile, `${captureExposureBaseline(root).join("\n")}\n`);
+  const gateArgs = file => [exposureGate, "--root", root, "--baseline", file];
+
+  const passed = spawnSync(process.execPath, gateArgs(baselineFile), { encoding: "utf8" });
+  assert.equal(passed.status, 0, `${passed.stdout}${passed.stderr}`);
+  assert.match(passed.stdout, /skill-exposure-links: OK .*baseline=3 id\(s\) present/);
+
+  fs.unlinkSync(path.join(root, ".claude", "skills", "flat-a"));
+  const failed = spawnSync(process.execPath, gateArgs(baselineFile), { encoding: "utf8" });
+  assert.equal(failed.status, 1, `${failed.stdout}${failed.stderr}`);
+  assert.match(failed.stderr, /FAIL: baseline exposure link\(s\) missing \(1\): \.claude\/skills\/flat-a/);
+
+  // git ref 기준선: 커밋된 상태의 노출 링크 목록을 쓴다.
+  const gitRoot = exposureBaselineRoot("exposure-baseline-git");
+  const git = ["-C", gitRoot, "-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid"];
+  assert.equal(spawnSync("git", [...git, "init", "-q"], { encoding: "utf8" }).status, 0);
+  assert.equal(spawnSync("git", [...git, "add", "-A"], { encoding: "utf8" }).status, 0);
+  assert.equal(spawnSync("git", [...git, "commit", "-q", "-m", "baseline"], { encoding: "utf8" }).status, 0);
+  const viaRef = spawnSync(process.execPath, [exposureGate, "--root", gitRoot, "--baseline", "HEAD"], { encoding: "utf8" });
+  assert.equal(viaRef.status, 0, `${viaRef.stdout}${viaRef.stderr}`);
+  fs.unlinkSync(path.join(gitRoot, ".agents", "skills", "flat-a"));
+  const viaRefLost = spawnSync(process.execPath, [exposureGate, "--root", gitRoot, "--baseline", "HEAD"], { encoding: "utf8" });
+  assert.equal(viaRefLost.status, 1, `${viaRefLost.stdout}${viaRefLost.stderr}`);
+  assert.match(viaRefLost.stderr, /FAIL: baseline exposure link\(s\) missing \(1\): \.agents\/skills\/flat-a/);
+
+  const bad = spawnSync(process.execPath, [exposureGate, "--root", root, "--baseline", "no-such-ref-for-fixture"], { encoding: "utf8" });
+  assert.equal(bad.status, 2, `${bad.stdout}${bad.stderr}`);
+  assert.match(bad.stderr, /neither a file nor a git ref/);
+  console.log("ok: exposure --baseline: file and git-ref baselines pass when complete, FAIL with the lost id, exit 2 for a bad baseline");
+}
+
+// 파일럿 게이트 회귀: 정상 PASS 7/7, 생성기 exit 9 주입 시 해당 단계 FAIL(exit 코드 표기), 생성기가 거부하는 손상 시 옛 산출물로 통과하지 않는다.
+function testPilotGates() {
+  const pilot = path.join(repoRoot, "scripts", "skill-pilot-check.mjs");
+  const normal = spawnSync(process.execPath, [pilot, "senior", "core"], { encoding: "utf8" });
+  assert.equal(normal.status, 0, `${normal.stdout}${normal.stderr}`);
+  assert.match(normal.stdout, /RESULT: PASS \(7\/7\)/);
+
+  for (const renderer of ["skill-index", "instructions"]) {
+    const faulted = spawnSync(process.execPath, [pilot, "senior", "core", `--fault-renderer=${renderer}`], { encoding: "utf8" });
+    assert.equal(faulted.status, 1, `${renderer}: ${faulted.stdout}${faulted.stderr}`);
+    assert.match(faulted.stdout, new RegExp(`^${renderer}\\s+FAIL\\s+render-.*exit 9`, "m"), `${renderer} must FAIL with exit 9`);
+    assert.match(faulted.stdout, /RESULT: FAIL/);
+  }
+  const badFault = spawnSync(process.execPath, [pilot, "senior", "core", "--fault-renderer=nope"], { encoding: "utf8" });
+  assert.equal(badFault.status, 2);
+
+  // 손상 복사본: postgres 의 visibility 를 렌더러가 거부하는 값으로 바꾼다. 옛 skill-index.json 이 남아 있어도 PASS 하면 안 된다.
+  const corrupt = path.join(work, `pilot-corrupt-${counter += 1}`);
+  fs.cpSync(repoRoot, corrupt, {
+    recursive: true,
+    verbatimSymlinks: true,
+    filter: src => path.relative(repoRoot, src).split(path.sep)[0] !== ".git",
+  });
+  const postgres = path.join(corrupt, "skills", "postgres", "SKILL.md");
+  const original = fs.readFileSync(postgres, "utf8");
+  const broken = original.replace("visibility: contextual", "visibility: bogus");
+  assert.notEqual(broken, original, "fixture must actually corrupt postgres routing");
+  fs.writeFileSync(postgres, broken);
+  assert.ok(fs.existsSync(path.join(corrupt, "skills", "skill-index.json")), "stale index exists in the copy");
+  const corruptRun = spawnSync(process.execPath, [path.join(corrupt, "scripts", "skill-pilot-check.mjs"), "senior", "core"], { encoding: "utf8" });
+  assert.equal(corruptRun.status, 1, `${corruptRun.stdout}${corruptRun.stderr}`);
+  assert.match(corruptRun.stdout, /^skill-index\s+FAIL\s+render-skill-index failed: .*exit 1/m, corruptRun.stdout);
+  assert.match(corruptRun.stdout, /^instructions\s+FAIL/m, corruptRun.stdout);
+  console.log("ok: pilot-check PASSes 7/7 normally, FAILs with exit 9 when a renderer is injected to fail, and does not pass on stale outputs when a renderer rejects the tree");
+}
+
+function exposureBaselineRoot(label) {
+  const root = exposureRoot(label);
+  relLink(root, ".claude/skills", "flat-a", path.join(root, "skills", "flat-a"));
+  relLink(root, ".claude/skills", "grouped-b", path.join(root, "skills", "library", "grouped-b"));
+  relLink(root, ".agents/skills", "flat-a", path.join(root, "skills", "flat-a"));
+  return root;
 }

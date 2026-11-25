@@ -2,18 +2,22 @@
 // 파일럿 dry-run 점검: skills/<id> 를 skills/<group>/<id> 로 옮겼다고 가정하고 모든 게이트를 임시 복사본에서 돌린다.
 // 실제 레포 트리는 읽기만 하고 아무것도 쓰지 않는다. 실제 Skill 이동은 하지 않는다.
 //
-//   node scripts/skill-pilot-check.mjs <id> <group> [--verbose] [--keep]
+//   node scripts/skill-pilot-check.mjs <id> <group> [--verbose] [--keep] [--fault-renderer=<skill-index|instructions>]
 //
 // 종료 코드: 0 PASS, 1 FAIL, 2 사용법 오류, 3 DEPENDENCY_MISSING(.github/ci/yaml 미설치 → npm ci --prefix .github/ci/yaml --ignore-scripts)
 //
 // 단계:
 //   1 discovery-pre     복사본(이동 전) discovery --check
 //   2 discovery-post    이동 후 discovery --check, --resolve 가 새 위치를 가리키는지
-//   3 skill-index       render-skill-index: 항목 수 불변, 경로 외 필드 불변
-//   4 instructions      render-instructions: 생성물 diff가 경로 치환 외에 없고, 바뀐 줄은 모두 새 경로를 포함
-//   5 exposure-links    노출 링크(.claude/skills, .agents/skills)를 새 위치로 재지정(없으면 복사본에만 생성) 후 검사
+//   3 skill-index       render-skill-index 실행. exit 코드 확인. 실행 전 산출물을 지워 옛 파일로 통과하지 못하게 한다.
+//                       항목 수 불변, 경로 외 필드 불변, 라우팅 Skill이면 index path 가 skills/<group>/<id>/SKILL.md 로 바뀌었는지 확인.
+//   4 instructions      render-instructions.sh 실행. exit 코드 확인, 산출물 사전 삭제. 생성물 diff는 경로 치환만이고,
+//                       기존 경로를 참조하던 파일은 반드시 바뀌어야 한다(MINE 줄 갱신 등).
+//   5 exposure-links    노출 링크를 새 위치로 재지정 후 검사. 이동 전 노출 ID 기준선(--baseline 파일)의 모든 ID가 남아야 한다.
 //   6 boundary          check-skill-source-boundary: 라우팅 Skill 수·인덱스 일치
-//   7 install-fixture   임시 HOME에 설치 계약대로 링크를 만들고 setup.sh --doctor 가 ready / stale-source 를 보고하는지
+//   7 install-fixture   임시 HOME에 설치 계약대로 링크를 만들고 setup.sh --doctor 의 종료 코드와 ready / stale-source 보고 확인
+//
+// --fault-renderer=<name> (테스트 전용): 복사본의 해당 생성기를 exit 9 스텁으로 바꿔 실패 전파를 검증한다. 실제 트리는 건드리지 않는다.
 //
 // 이 점검은 링크·인덱스·생성물 구조만 본다. Claude/Codex의 Native Skill 발견·호출은 증명하지 않는다.
 
@@ -24,22 +28,32 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { RESERVED_GROUPS, discoverSkills, resolveSkill } from "./lib/skill-discovery.mjs";
 import { DEPENDENCY_MISSING_EXIT_CODE, missingYamlDependency } from "./lib/yaml-dependency.mjs";
+import { EXPOSURE_DIRS, captureExposureBaseline } from "./check-skill-exposure-links.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const EXPOSURE_DIRS = [".claude/skills", ".agents/skills"];
+// 생성물: render-instructions.sh 가 render-skill-index.mjs 도 다시 호출하므로 skill-index.json 도 함께 비교한다.
+const GENERATED = ["skills/skill-index.json", "CLAUDE.md", "claude/CLAUDE.md", "AGENTS.md", "MINE.md"];
+const FAULT_TARGETS = {
+  "skill-index": path.join("scripts", "render-skill-index.mjs"),
+  instructions: path.join("scripts", "render-instructions.sh"),
+};
 
 const args = process.argv.slice(2);
 const verbose = args.includes("--verbose");
 const keep = args.includes("--keep");
+const faultArg = args.find(arg => arg.startsWith("--fault-renderer="));
+const fault = faultArg === undefined ? null : faultArg.slice("--fault-renderer=".length);
 const positional = args.filter(arg => !arg.startsWith("--"));
 
 function usage(message) {
-  console.error(`${message}\nusage: node scripts/skill-pilot-check.mjs <id> <group> [--verbose] [--keep]`);
+  console.error(`${message}\nusage: node scripts/skill-pilot-check.mjs <id> <group> [--verbose] [--keep] [--fault-renderer=<skill-index|instructions>]`);
   process.exitCode = 2;
 }
 
 if (positional.length !== 2) {
   usage("expected exactly two arguments");
+} else if (fault !== null && !Object.hasOwn(FAULT_TARGETS, fault)) {
+  usage(`--fault-renderer must be one of: ${Object.keys(FAULT_TARGETS).join(", ")}`);
 } else {
   main(positional[0], positional[1]);
 }
@@ -87,34 +101,72 @@ function main(id, group) {
     record("discovery-post", post.status === 0 && resolvesToNew && countSame,
       `${firstLine(post)}; resolve=${resolved.ok ? path.relative(moved, resolved.skill.dir) : resolved.errors.join("; ")}`);
 
-    // 3. skill-index: 항목 수 불변, 경로 외 필드 불변
-    run(base, [path.join("scripts", "render-skill-index.mjs"), "--root", base]);
-    run(moved, [path.join("scripts", "render-skill-index.mjs"), "--root", moved]);
-    const baseIndex = JSON.parse(fs.readFileSync(path.join(base, "skills", "skill-index.json"), "utf8"));
-    const movedIndex = JSON.parse(fs.readFileSync(path.join(moved, "skills", "skill-index.json"), "utf8"));
-    const normalizedIndex = normalizePaths(JSON.stringify(movedIndex), id, group);
-    const indexOk = baseIndex.skills.length === movedIndex.skills.length && normalizedIndex === JSON.stringify(baseIndex);
-    record("skill-index", indexOk, `entries ${baseIndex.skills.length} -> ${movedIndex.skills.length}; non-path fields ${indexOk ? "identical" : "DIFFER"}`);
-
-    // 4. render-instructions: 생성물 diff는 경로 치환만
-    const generated = ["CLAUDE.md", "claude/CLAUDE.md", "AGENTS.md", "MINE.md", "skills/skill-index.json"];
-    run(base, ["scripts/render-instructions.sh"], { shell: true });
-    run(moved, ["scripts/render-instructions.sh"], { shell: true });
-    const changed = [];
-    let instructionsOk = true;
-    for (const file of generated) {
-      const b = fs.readFileSync(path.join(base, file), "utf8").split("\n");
-      const m = fs.readFileSync(path.join(moved, file), "utf8").split("\n");
-      if (b.length !== m.length) { instructionsOk = false; changed.push(`${file}: line count ${b.length} -> ${m.length}`); continue; }
-      for (let i = 0; i < b.length; i += 1) {
-        if (b[i] === m[i]) continue;
-        changed.push(`${file}:${i + 1}`);
-        if (!m[i].includes(`skills/${group}/${id}`) || normalizePaths(m[i], id, group) !== b[i]) instructionsOk = false;
-      }
+    if (fault !== null) {
+      // 테스트 전용 주입: 복사본의 생성기를 exit 9 스텁으로 바꾼다.
+      fs.writeFileSync(path.join(moved, FAULT_TARGETS[fault]), fault === "instructions" ? "exit 9\n" : "process.exit(9);\n");
     }
-    record("instructions", instructionsOk, `${changed.length} changed line(s), all expected path rewrites: ${instructionsOk ? "yes" : "NO"}`);
+
+    // 3. skill-index: 실행 실패는 step FAIL(exit 코드 포함). 항목 수·경로 외 필드 불변, 라우팅 Skill은 경로 변경이 실제로 나타나야 한다.
+    const indexBase = generate(base, [path.join("scripts", "render-skill-index.mjs"), "--root", base], ["skills/skill-index.json"]);
+    const indexMoved = generate(moved, [path.join("scripts", "render-skill-index.mjs"), "--root", moved], ["skills/skill-index.json"]);
+    const indexError = renderErrors([["base", indexBase], ["moved", indexMoved]]);
+    if (indexError) {
+      record("skill-index", false, `render-skill-index failed: ${indexError}`);
+    } else {
+      const baseIndex = readJson(path.join(base, "skills", "skill-index.json"));
+      const movedIndex = readJson(path.join(moved, "skills", "skill-index.json"));
+      const baseEntry = baseIndex.skills.find(entry => entry.name === id);
+      const movedEntry = movedIndex.skills.find(entry => entry.name === id);
+      const pathOk = baseEntry === undefined
+        ? movedEntry === undefined
+        : baseEntry.path === `skills/${id}/SKILL.md` && movedEntry?.path === `skills/${group}/${id}/SKILL.md`;
+      const countOk = baseIndex.skills.length === movedIndex.skills.length;
+      const fieldsOk = normalizePaths(JSON.stringify(movedIndex), id, group) === JSON.stringify(baseIndex);
+      const pathNote = baseEntry ? `path ${baseEntry.path} -> ${movedEntry?.path ?? "MISSING"}` : "not routed (no index entry on either side)";
+      record("skill-index", countOk && fieldsOk && pathOk,
+        `entries ${baseIndex.skills.length} -> ${movedIndex.skills.length}; ${pathNote}; non-path fields ${fieldsOk ? "identical" : "DIFFER"}`);
+    }
+
+    // 4. render-instructions: 실행 실패는 step FAIL. 생성물 diff는 경로 치환만이며, 옛 경로를 참조하던 파일은 반드시 바뀌어야 한다.
+    const instrBase = generate(base, ["scripts/render-instructions.sh"], GENERATED, { shell: true });
+    const instrMoved = generate(moved, ["scripts/render-instructions.sh"], GENERATED, { shell: true });
+    const instrError = renderErrors([["base", instrBase], ["moved", instrMoved]]);
+    if (instrError) {
+      record("instructions", false, `render-instructions failed: ${instrError}`);
+    } else {
+      const oldPathRef = new RegExp(`skills/${escapeRegExp(id)}(?![A-Za-z0-9_-])`);
+      const changed = [];
+      const problems = [];
+      for (const file of GENERATED) {
+        const b = fs.readFileSync(path.join(base, file), "utf8").split("\n");
+        const m = fs.readFileSync(path.join(moved, file), "utf8").split("\n");
+        if (b.length !== m.length) {
+          problems.push(`${file}: line count ${b.length} -> ${m.length}`);
+          continue;
+        }
+        let fileChanged = 0;
+        for (let i = 0; i < b.length; i += 1) {
+          if (b[i] === m[i]) continue;
+          fileChanged += 1;
+          changed.push(`${file}:${i + 1}`);
+          if (!m[i].includes(`skills/${group}/${id}`) || normalizePaths(m[i], id, group) !== b[i]) {
+            problems.push(`${file}:${i + 1} is not a pure path rewrite`);
+          }
+        }
+        if (oldPathRef.test(b.join("\n")) && fileChanged === 0) {
+          problems.push(`${file}: references skills/${id} but no path changed`);
+        }
+      }
+      const instructionsOk = problems.length === 0;
+      record("instructions", instructionsOk,
+        `${changed.length} changed line(s); ${instructionsOk ? "all expected path rewrites" : problems.join("; ")}`);
+    }
 
     // 5. 노출 링크: 새 위치로 재지정 (복사본에서만). 링크가 없던 Skill이면 검사용 링크를 복사본에만 만든다.
+    // 기준선 = 이동 전 트리의 노출 ID 전체. 재지정 후에도 모든 ID가 남아 있어야 한다(CLI --baseline 으로 검사).
+    const baseline = captureExposureBaseline(base);
+    const baselineFile = path.join(work, "exposure-baseline.txt");
+    fs.writeFileSync(baselineFile, `${baseline.join("\n")}\n`);
     const linkRows = [];
     for (const rel of EXPOSURE_DIRS) {
       const linkPath = path.join(moved, rel, id);
@@ -125,8 +177,9 @@ function main(id, group) {
       fs.symlinkSync(path.relative(path.dirname(linkPath), newSource), linkPath);
       linkRows.push(`${rel}/${id}: ${hadLink ? "re-pointed" : "synthetic link in copy"}${before && before.status !== 0 ? " (old link failed before re-point)" : ""}`);
     }
-    const exposure = run(moved, ["scripts/check-skill-exposure-links.mjs", "--root", moved]);
-    record("exposure-links", exposure.status === 0, `${linkRows.join("; ")} | ${firstLine(exposure)}`);
+    const exposure = run(moved, ["scripts/check-skill-exposure-links.mjs", "--root", moved, "--baseline", baselineFile]);
+    record("exposure-links", exposure.status === 0,
+      `${linkRows.join("; ")}; baseline ${baseline.length} id(s) | ${firstLine(exposure)}`);
 
     // 6. 경계 게이트
     const boundary = run(moved, [path.join("scripts", "check-skill-source-boundary.mjs"), "--root", moved]);
@@ -157,9 +210,10 @@ function main(id, group) {
     const out = `${doctor.stdout}${doctor.stderr}`;
     const claudeSection = out.slice(out.indexOf("Claude skill links"), out.indexOf("Codex skill links"));
     const codexSection = out.slice(out.indexOf("Codex skill links"));
-    const installOk = codexSection.includes(`  ${id}: ready`) && claudeSection.includes(`  ${id}: stale-source`)
+    const installOk = doctor.status === 0 && codexSection.includes(`  ${id}: ready`) && claudeSection.includes(`  ${id}: stale-source`)
       && fs.realpathSync(path.join(codexRoot, id)) === fs.realpathSync(newSource);
-    record("install-fixture", installOk, `codex=${matchState(codexSection, id)}; claude=${matchState(claudeSection, id)} (temp HOME)`);
+    record("install-fixture", installOk,
+      `setup.sh --doctor exit ${doctor.status}; codex=${matchState(codexSection, id)}; claude=${matchState(claudeSection, id)} (temp HOME)`);
 
     if (verbose) {
       for (const [label, r] of [["discovery-pre", pre], ["discovery-post", post], ["exposure-links", exposure], ["boundary", boundary]]) {
@@ -173,11 +227,29 @@ function main(id, group) {
   }
 
   const passed = results.filter(r => r.ok).length;
-  console.log(`skill-pilot-check: id=${id} group=${group} (dry-run; real tree untouched)`);
+  console.log(`skill-pilot-check: id=${id} group=${group} (dry-run; real tree untouched${fault ? `; fault-renderer=${fault}` : ""})`);
   console.log("STEP              RESULT  DETAIL");
   for (const r of results) console.log(`${r.step.padEnd(18)}${(r.ok ? "PASS" : "FAIL").padEnd(8)}${r.detail}`);
   console.log(`RESULT: ${passed === results.length ? "PASS" : "FAIL"} (${passed}/${results.length})`);
   if (passed !== results.length) process.exitCode = 1;
+}
+
+// 산출물을 먼저 지운 뒤 생성한다. 실행이 실패하거나 파일이 다시 쓰이지 않으면 오류다(옛 파일로 통과 금지).
+function generate(tree, argv, outputs, options = {}) {
+  for (const file of outputs) fs.rmSync(path.join(tree, file), { force: true });
+  const result = run(tree, argv, options);
+  if (result.status !== 0) return { error: firstLine(result) };
+  const missing = outputs.filter(file => !fs.existsSync(path.join(tree, file)));
+  return { error: missing.length > 0 ? `exit 0 but did not write ${missing.join(", ")}` : null };
+}
+
+function renderErrors(pairs) {
+  const errors = pairs.filter(([, gen]) => gen.error !== null).map(([label, gen]) => `${label} ${gen.error}`);
+  return errors.length > 0 ? errors.join("; ") : null;
+}
+
+function readJson(file) {
+  return JSON.parse(fs.readFileSync(file, "utf8"));
 }
 
 function copyTree(src, dst) {

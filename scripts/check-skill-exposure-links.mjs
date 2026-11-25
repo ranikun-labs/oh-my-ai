@@ -3,10 +3,15 @@
 // 목적: Source를 skills/<id> 에서 skills/{core,library}/<id> 로 옮겨도 노출 경로(<id>)와 링크 구조가 깨지지 않게 한다.
 // 링크 대상 경로를 문자열로 고정하지 않고, realpath가 discovery가 찾은 Source 디렉터리와 같은지로 판정한다.
 //
-//   node scripts/check-skill-exposure-links.mjs [--root <dir>]
+//   node scripts/check-skill-exposure-links.mjs [--root <dir>] [--baseline <file|git-ref>]
+//
+// --baseline: 이동 전 노출 ID 기준선. 파일(줄마다 `.claude/skills/<id>` 또는 `.agents/skills/<id>`)이거나
+//             git ref(예: HEAD)면 그 ref의 노출 링크 목록을 쓴다. 기준선의 모든 ID가 현재 트리에 남아 있어야 하며,
+//             없어진 ID는 이름과 함께 FAIL 한다. (기준선 없이는 "남은 링크가 멀쩡한지"만 보므로 유실을 잡지 못한다.)
 //
 // 이 검사는 링크 구조만 본다. Claude/Codex의 Native Skill 발견·호출 성공은 증명하지 않는다.
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
@@ -23,11 +28,55 @@ function validateSkillFrontmatter(frontmatter, name) {
 }
 
 export const EXPOSURE_DIRS = Object.freeze([".claude/skills", ".agents/skills"]);
+const EXPOSURE_KEY = /^(\.claude\/skills|\.agents\/skills)\/([^/]+)/;
 
-export function checkExposureLinks(repoRoot = DEFAULT_REPO_ROOT) {
+// 노출 디렉터리의 모든 항목을 `<rel>/<id>` 키로 모은다. 이동 전 트리에서 호출해 기준선으로 쓴다.
+export function captureExposureBaseline(repoRoot = DEFAULT_REPO_ROOT) {
+  const root = path.resolve(repoRoot);
+  const keys = [];
+  for (const rel of EXPOSURE_DIRS) {
+    let names;
+    try {
+      names = fs.readdirSync(path.join(root, rel));
+    } catch {
+      continue;
+    }
+    for (const name of names) keys.push(`${rel}/${name.normalize("NFC")}`);
+  }
+  return keys.sort();
+}
+
+// --baseline 값을 키 목록으로 바꾼다. 존재하는 파일이면 줄 단위로, 아니면 git ref로 ls-tree 한다.
+export function loadBaseline(spec, repoRoot = DEFAULT_REPO_ROOT) {
+  const file = path.resolve(spec);
+  if (fs.statSync(file, { throwIfNoEntry: false })?.isFile()) {
+    return parseBaselineLines(fs.readFileSync(file, "utf8").split(/\r?\n/), spec);
+  }
+  const listed = spawnSync("git", ["-C", path.resolve(repoRoot), "ls-tree", "-r", "--name-only", spec, "--", ...EXPOSURE_DIRS], { encoding: "utf8" });
+  if (listed.status !== 0) {
+    throw new Error(`--baseline: "${spec}" is neither a file nor a git ref (${listed.stderr.trim() || "git ls-tree failed"})`);
+  }
+  return parseBaselineLines(listed.stdout.split("\n"), spec);
+}
+
+function parseBaselineLines(lines, spec) {
+  const keys = new Set();
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (line === "" || line.startsWith("#")) continue;
+    const match = EXPOSURE_KEY.exec(line);
+    if (!match) throw new Error(`--baseline "${spec}": not an exposure link path: ${line}`);
+    keys.add(`${match[1]}/${match[2].normalize("NFC")}`);
+  }
+  if (keys.size === 0) throw new Error(`--baseline "${spec}": no exposure links listed (an empty baseline proves nothing)`);
+  return [...keys].sort();
+}
+
+export function checkExposureLinks(repoRoot = DEFAULT_REPO_ROOT, options = {}) {
   const root = path.resolve(repoRoot);
   const problems = [];
   const counts = {};
+  const presentKeys = new Set();
 
   const dependency = missingYamlDependency(DEFAULT_REPO_ROOT);
   if (dependency) return { ok: false, problems: [dependency], counts, dependencyMissing: true };
@@ -64,6 +113,7 @@ export function checkExposureLinks(repoRoot = DEFAULT_REPO_ROOT) {
       const label = `[${rel}/${id}]`;
       // 같은 노출 디렉터리 안에서 유니코드 정규화만 다른 이름(NFC/NFD)은 중복으로 본다.
       const normalized = id.normalize("NFC");
+      presentKeys.add(`${rel}/${normalized}`);
       if (seenIds.has(normalized)) {
         problems.push(`${label} duplicate exposure id (also ${seenIds.get(normalized)})`);
         continue;
@@ -74,7 +124,15 @@ export function checkExposureLinks(repoRoot = DEFAULT_REPO_ROOT) {
     }
   }
 
-  return { ok: problems.length === 0, problems, counts };
+  // 기준선의 ID가 하나라도 사라졌으면 실패한다. 남은 링크가 멀쩡해도 유실은 유실이다.
+  if (options.baseline) {
+    const missing = options.baseline.filter(key => !presentKeys.has(key));
+    if (missing.length > 0) {
+      problems.push(`baseline exposure link(s) missing (${missing.length}): ${missing.join(", ")}`);
+    }
+  }
+
+  return { ok: problems.length === 0, problems, counts, baselineCount: options.baseline ? options.baseline.length : null };
 }
 
 function checkEntry(root, dir, entry, sourceByReal) {
@@ -126,17 +184,24 @@ function compare(a, b) {
   return a < b ? -1 : 1;
 }
 
-function parseRoot(argv) {
-  const index = argv.indexOf("--root");
-  if (index === -1) return DEFAULT_REPO_ROOT;
-  if (!argv[index + 1]) throw new Error("--root requires a directory");
-  return path.resolve(argv[index + 1]);
+function parseArgs(argv) {
+  const options = { root: DEFAULT_REPO_ROOT, baseline: null };
+  for (let i = 0; i < argv.length; i += 2) {
+    const flag = argv[i];
+    if (flag !== "--root" && flag !== "--baseline") throw new Error(`unknown argument: ${flag}`);
+    if (!argv[i + 1]) throw new Error(`${flag} requires a value`);
+    if (flag === "--root") options.root = path.resolve(argv[i + 1]);
+    else options.baseline = argv[i + 1];
+  }
+  return options;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   let result;
   try {
-    result = checkExposureLinks(parseRoot(process.argv.slice(2)));
+    const options = parseArgs(process.argv.slice(2));
+    const baseline = options.baseline === null ? null : loadBaseline(options.baseline, options.root);
+    result = checkExposureLinks(options.root, { baseline });
   } catch (error) {
     console.error(error.message);
     process.exitCode = 2;
@@ -144,7 +209,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   if (result) {
     if (result.ok) {
       const summary = Object.entries(result.counts).map(([dir, n]) => `${dir}=${n}`).join(", ");
-      console.log(`skill-exposure-links: OK (${summary})`);
+      const baselineNote = result.baselineCount === null ? "" : `; baseline=${result.baselineCount} id(s) present`;
+      console.log(`skill-exposure-links: OK (${summary}${baselineNote})`);
       console.log("This check validates link structure only; it does not prove Native Skill discovery or invocation.");
     } else if (result.dependencyMissing) {
       console.error(result.problems[0]);
