@@ -15,7 +15,7 @@
 - `skills/dev-main-flow/` — 기존 개발 기능·승인·실행·범용 인계·서비스별 보고를 연결하는 임시 진입 안내
 - `skills/engineering-communication-ko/` — 개발 결과를 사용자 관점과 검증 근거 중심으로 한국어 보고
 - `skills/execution-recovery/` — 도구·권한·샌드박스 장애의 재시도 폭주를 차단하고 안전하게 대피
-- `skills/f1/` — 개발 결과를 F1 보고 순서로 정리하고, 보고서 파일이면 구조 advisory를 읽기 전용으로 실행
+- `skills/f1/` — 일반 질문·설계·연구의 핵심정리와 개발 F1 보고를 구분하고 정식 보고서의 구조 검사를 유지
 - `skills/git-work-preflight/` — Git Mutation 전 공통으로 소비하는 읽기 전용 Repository 안전 Gate
 - `skills/handoff-prompt/` — 세션 전환 시 다음 AI 세션에 붙여넣을 handoff prompt를 사람이 직접 작성하도록 안내
 - `skills/harness-automation/` — 반복 업무를 감지하고 적절한 자동화 형태로 구조화
