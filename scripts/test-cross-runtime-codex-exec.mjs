@@ -177,7 +177,7 @@ for (const changes of [{ cwd: "-x" }, { cwd: "relative" }, { outputLastMessagePa
   { outputLastMessagePath: "relative" }]) {
   test("invalid request path", () => expectBlocked(buildCodexExecArgs({ ...request, ...changes }), "REQUEST_INVALID"));
 }
-test("windows absolute request", () => assert.equal(buildArgs({ ...request, cwd: "C:\\work", 
+test("windows absolute request", () => assert.equal(buildArgs({ ...request, cwd: "C:\\work",
   outputLastMessagePath: "C:\\out" }, "win32").status, "READY"));
 test("option-like resume id", () => expectBlocked(buildCodexExecArgs({ ...request, mode: "RESUME",
   resumeThreadId: "-".repeat(36) }), "RESUME_ID_INVALID"));
@@ -186,7 +186,7 @@ for (const candidate of ["C:\\tools\\codex.cmd ", "C:\\tools\\codex.cmd.",
   test("invalid windows executable", () => expectBlocked(resolve({ configuredPath: candidate }),
     "EXECUTABLE_SHIM_REJECTED"));
 }
-for (const candidate of ["C:\\tools\\codex.cmd:s", "\\work\\codex.exe", 
+for (const candidate of ["C:\\tools\\codex.cmd:s", "\\work\\codex.exe",
   "\\\\server\\share\\codex.exe", "\\\\?\\UNC\\server\\share\\codex.exe"]) {
   test("invalid windows path", () => expectBlocked(resolve({ configuredPath: candidate }), "EXECUTABLE_PATH_INVALID"));
 }
