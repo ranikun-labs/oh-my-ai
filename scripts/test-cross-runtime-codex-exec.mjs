@@ -7,7 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { buildCodexExecArgs as buildArgs, resolveCodexExecutable, buildSpawnEnv, classifyLoginStatus,
-  classifyUsage } from "./lib/cross-runtime-codex-exec.mjs";
+  classifyUsage, RUNNER_PRECONDITIONS } from "./lib/cross-runtime-codex-exec.mjs";
 import { summarizeExecEvents, extractEffectiveSettings, evaluateExecOutcome, normalizeSandbox,
   usageDelta } from "./lib/cross-runtime-codex-observe.mjs";
 
@@ -105,11 +105,13 @@ for (const input of [{ exitCode: 0 }, { exitCode: 1, stdout: "Logged in using Ch
     assert.ok(!JSON.stringify(result).includes("Logged in"));
   });
 }
-const usage = { rateLimits: { primary: { usedPercent: 96 } } };
-test("usage ceiling", () => expectBlocked(classifyUsage(usage, { ceilingPercent: 95 }), "USAGE_CEILING"));
+const usage = { rateLimits: { primary: { usedPercent: 96 }, ordinaryUsageAllowed: true } };
+const usageWindows = [{ name: "primary", usedPercent: 96, windowDurationMins: undefined }];
+test("usage ceiling", () => assert.deepEqual(classifyUsage(usage, { ceilingPercent: 95 }),
+  { status: "BLOCKED", code: "USAGE_CEILING", attemptBoundary: boundary, window: "primary" }));
 test("usage exception", () => assert.deepEqual(classifyUsage(usage, { ceilingPercent: 95,
-  ownerException: true }), { status: "READY", ownerExceptionApplied: true }));
-for (const input of [{}, { rateLimits: { primary: { usedPercent: "96" } } }]) {
+  ownerException: true }), { status: "READY", windows: usageWindows, ownerExceptionApplied: true }));
+for (const input of [{}]) {
   test("unknown usage", () => expectBlocked(classifyUsage(input), "USAGE_UNKNOWN"));
 }
 for (const limits of [{ ordinaryUsageAllowed: false }, { rateLimitReachedType: "weekly" }]) {
@@ -122,11 +124,14 @@ function fixture(name) {
   return readFileSync(new URL(`../fixtures/cross-runtime/${name}`, import.meta.url), "utf8");
 }
 const effective = extractEffectiveSettings(fixture("rollout-terra-low.jsonl"));
-const expectedEffective = { model: request.model, effort: "low", sandbox: { type: "read-only" },
+const expectedEffective = { sessionId: threadId, turnId: "00000000-0000-0000-0000-000000000002",
+  completedTurnId: "00000000-0000-0000-0000-000000000002", turnContextCount: 1, model: request.model,
+  effort: "low", sandbox: { type: "read-only" },
   cwd: request.cwd, modelProvider: "openai" };
 test("fixture settings", () => assert.deepEqual(effective, expectedEffective));
 test("resume uses last context",
-  () => assert.deepEqual(extractEffectiveSettings(fixture("rollout-realistic-resume.jsonl")), expectedEffective));
+  () => assert.deepEqual(extractEffectiveSettings(fixture("rollout-realistic-resume.jsonl")),
+    { ...expectedEffective, turnContextCount: 2 }));
 test("null effort", () => assert.deepEqual(extractEffectiveSettings(fixture("rollout-null-effort.jsonl")),
   { ...expectedEffective, effort: "UNKNOWN" }));
 test("normalize sandbox", () => {
@@ -135,7 +140,8 @@ test("normalize sandbox", () => {
   assert.equal(normalizeSandbox({}), "UNKNOWN");
 });
 const started = JSON.stringify({ type: "thread.started", thread_id: threadId });
-const completed = JSON.stringify({ type: "turn.completed", usage: { input_tokens: 10 } });
+const completed = JSON.stringify({ type: "turn.completed",
+  usage: { input_tokens: 10, cached_input_tokens: 0, output_tokens: 0 } });
 const good = summarizeExecEvents([started, completed].join("\n"));
 const requested = { model: request.model, effort: request.effort, sandbox: request.sandbox, cwd: request.cwd };
 function outcome(changes = {}) {
@@ -202,18 +208,89 @@ test("8.3 alias requires realpath", () => assert.equal(resolve({ configuredPath:
 test("ambiguous env", () => expectBlocked(buildSpawnEnv({ PATH: "a", Path: "b" }, "win32"), "ENV_AMBIGUOUS"));
 test("duplicate same env", () => assert.deepEqual(buildSpawnEnv({ PATH: "a", Path: "a" }, "win32"),
   { status: "READY", env: { PATH: "a" } }));
-test("usage without ceiling", () => assert.deepEqual(classifyUsage({ rateLimits: { primary: { usedPercent: 50 } } }),
-  { status: "READY" }));
+test("usage without ceiling", () => assert.deepEqual(classifyUsage({ rateLimits: { primary: { usedPercent: 50 },
+  ordinaryUsageAllowed: true } }), { status: "READY", windows: [{ name: "primary", usedPercent: 50,
+    windowDurationMins: undefined }] }));
 test("cumulative usage basis", () => assert.equal(good.usageBasis, "THREAD_CUMULATIVE"));
 test("usage delta", () => assert.deepEqual(usageDelta(
   { input_tokens: 269010, cached_input_tokens: 245888, output_tokens: 7040 },
   { input_tokens: 510398, cached_input_tokens: 485120, output_tokens: 14881 }),
-  { input_tokens: 241388, cached_input_tokens: 239232, output_tokens: 7841 }));
+  { input_tokens: 241388, cached_input_tokens: 239232, output_tokens: 7841, nonCachedInput: 2156 }));
 test("usage delta unknown", () => {
   assert.equal(usageDelta({}, {}), "UNKNOWN");
   assert.equal(usageDelta({ input_tokens: 2, cached_input_tokens: 0, output_tokens: 0 },
     { input_tokens: 1, cached_input_tokens: 0, output_tokens: 0 }), "UNKNOWN");
+  assert.equal(usageDelta({ input_tokens: 10, cached_input_tokens: 0, output_tokens: 0 },
+    { input_tokens: 11, cached_input_tokens: 5, output_tokens: 0 }), "UNKNOWN");
 });
+
+test("runner preconditions", () => {
+  assert.ok(Object.isFrozen(RUNNER_PRECONDITIONS));
+  assert.deepEqual(RUNNER_PRECONDITIONS, [
+    "realpath_executable_outside_worktree", "reject_reparse_points_junction_symlink", "resolve_8dot3_short_names",
+    "revalidate_executable_identity_at_spawn_toctou", "writer_lease_acquired_and_dispatched_recorded",
+    "clean_worktree_and_head_revalidated", "spawn_without_shell_with_argv_array", "prompt_via_stdin_then_eof",
+    "process_tree_exit_confirmed_before_release",
+  ]);
+});
+for (const value of [-1, 101, NaN, Infinity, "1", null]) {
+  test("invalid window usage", () => expectBlocked(classifyUsage({ rateLimits: {
+    primary: { usedPercent: value }, ordinaryUsageAllowed: true } }, { ownerException: true }), "USAGE_INVALID"));
+  test("invalid ceiling", () => expectBlocked(classifyUsage(usage, { ceilingPercent: value,
+    ownerException: true }), "USAGE_INVALID"));
+}
+for (const value of [0, -1, Infinity]) {
+  test("invalid duration", () => expectBlocked(classifyUsage({ rateLimits: {
+    primary: { usedPercent: 1, windowDurationMins: value }, ordinaryUsageAllowed: true } }), "USAGE_INVALID"));
+}
+test("null duration is absent", () => assert.equal(classifyUsage({ rateLimits: {
+  primary: { usedPercent: 1, windowDurationMins: null }, ordinaryUsageAllowed: true } }).status, "READY"));
+for (const [nested, top, code] of [[true, false, "USAGE_EXHAUSTED"], [false, true, "USAGE_EXHAUSTED"],
+  [true, "yes", "USAGE_UNKNOWN"], ["yes", true, "USAGE_UNKNOWN"]]) {
+  test("conflicting usage authorization", () => expectBlocked(classifyUsage({
+    rateLimits: { primary: { usedPercent: 1 }, ordinaryUsageAllowed: nested }, ordinaryUsageAllowed: top,
+  }), code));
+}
+test("secondary ceiling", () => assert.deepEqual(classifyUsage({ rateLimits: {
+  primary: { usedPercent: 10 }, secondary: { usedPercent: 90, windowDurationMins: 10080 },
+  ordinaryUsageAllowed: true } }, { ceilingPercent: 80 }),
+{ status: "BLOCKED", code: "USAGE_CEILING", attemptBoundary: boundary, window: "secondary" }));
+test("missing usage authorization", () => expectBlocked(classifyUsage({ rateLimits: {
+  primary: { usedPercent: 10 } } }, { ownerException: true }), "USAGE_UNKNOWN"));
+for (const [changes, code] of [
+  [{ events: { ...good, threadId: null } }, "THREAD_BINDING_UNKNOWN"],
+  [{ effective: { ...effective, sessionId: undefined } }, "THREAD_BINDING_UNKNOWN"],
+  [{ effective: { ...effective, sessionId: "other" } }, "THREAD_BINDING_MISMATCH"],
+  [{ effective: { ...effective, turnId: undefined } }, "TURN_BINDING_UNKNOWN"],
+  [{ effective: { ...effective, completedTurnId: undefined } }, "TURN_BINDING_UNKNOWN"],
+  [{ effective: { ...effective, completedTurnId: "other" } }, "TURN_BINDING_MISMATCH"],
+  [{ events: { ...good, usage: undefined } }, "USAGE_EVIDENCE_MISSING"],
+]) test(code, () => expectIndeterminate(outcome(changes), code));
+test("attributed completion", () => {
+  const text = fixture("rollout-terra-low.jsonl").replace('"turn_id":"00000000-0000-0000-0000-000000000002"}}',
+    '"turn_attribution":{"turn_id":"00000000-0000-0000-0000-000000000002"}}}');
+  assert.equal(extractEffectiveSettings(text).completedTurnId, effective.turnId);
+});
+const validTokens = { input_tokens: 10, cached_input_tokens: 5, output_tokens: 2 };
+for (const invalid of [{}, "x", 5, { ...validTokens, input_tokens: -1 },
+  { ...validTokens, cached_input_tokens: 11 }]) {
+  test("invalid usage evidence", () => expectIndeterminate(outcome({ events: { ...good, usage: invalid } }),
+    "USAGE_EVIDENCE_INVALID"));
+}
+for (const invalid of [null, [], {}, { ...validTokens, input_tokens: -1 },
+  { ...validTokens, output_tokens: 1.5 }, { ...validTokens, cached_input_tokens: 11 },
+  { ...validTokens, cache_write_input_tokens: Infinity }]) {
+  test("invalid usage delta inputs", () => {
+    assert.equal(usageDelta(invalid, validTokens), "UNKNOWN");
+    assert.equal(usageDelta(validTokens, invalid), "UNKNOWN");
+  });
+}
+test("optional usage delta", () => assert.deepEqual(usageDelta(
+  { ...validTokens, reasoning_output_tokens: 1 }, { input_tokens: 20, cached_input_tokens: 8,
+    output_tokens: 4, reasoning_output_tokens: 3, cache_write_input_tokens: 2 }),
+{ input_tokens: 10, cached_input_tokens: 3, output_tokens: 2, reasoning_output_tokens: 2, nonCachedInput: 7 }));
+test("optional usage decreases", () => assert.equal(usageDelta(
+  { ...validTokens, reasoning_output_tokens: 2 }, { ...validTokens, reasoning_output_tokens: 1 }), "UNKNOWN"));
 
 const directory = mkdtempSync(path.join(tmpdir(), "fake-codex-"));
 async function runFake(scenario, timeoutMs, record = true) {

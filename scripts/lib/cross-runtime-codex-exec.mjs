@@ -4,6 +4,18 @@
 // NOT_ACQUIRED/NOT_RUN means this module acquired and executed nothing.
 import path from "node:path";
 
+export const RUNNER_PRECONDITIONS = Object.freeze([
+  "realpath_executable_outside_worktree",
+  "reject_reparse_points_junction_symlink",
+  "resolve_8dot3_short_names",
+  "revalidate_executable_identity_at_spawn_toctou",
+  "writer_lease_acquired_and_dispatched_recorded",
+  "clean_worktree_and_head_revalidated",
+  "spawn_without_shell_with_argv_array",
+  "prompt_via_stdin_then_eof",
+  "process_tree_exit_confirmed_before_release",
+]);
+
 const ATTEMPT_BOUNDARY = { claim_status: "NOT_ACQUIRED", dispatch_status: "NOT_RUN" };
 const EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
 const ALLOWED_ENV = new Set([
@@ -123,15 +135,30 @@ export function classifyLoginStatus({ exitCode, stdout, stderr }) {
 }
 
 export function classifyUsage(result, { ceilingPercent, ownerException } = {}) {
-  const used = result?.rateLimits?.primary?.usedPercent;
-  if (typeof used !== "number" || !Number.isFinite(used)) return blocked("USAGE_UNKNOWN");
-  if (result?.rateLimits?.ordinaryUsageAllowed === false || result?.rateLimits?.rateLimitReachedType != null ||
-      result?.ordinaryUsageAllowed === false || result?.rateLimitReachedType != null) {
+  const limits = result?.rateLimits;
+  const nestedAllowed = limits?.ordinaryUsageAllowed;
+  const topAllowed = result?.ordinaryUsageAllowed;
+  if (nestedAllowed === false || topAllowed === false || limits?.rateLimitReachedType != null ||
+      result?.rateLimitReachedType != null) {
     return blocked("USAGE_EXHAUSTED");
   }
-  if (typeof ceilingPercent === "number" && !Number.isFinite(ceilingPercent)) return blocked("USAGE_UNKNOWN");
-  if (typeof ceilingPercent === "number" && used >= ceilingPercent) {
-    return ownerException === true ? { status: "READY", ownerExceptionApplied: true } : blocked("USAGE_CEILING");
+  if (ceilingPercent !== undefined && (typeof ceilingPercent !== "number" ||
+      !Number.isFinite(ceilingPercent) || ceilingPercent < 0 || ceilingPercent > 100)) return blocked("USAGE_INVALID");
+  if (limits?.primary == null) return blocked("USAGE_UNKNOWN");
+  const windows = [];
+  for (const name of ["primary", "secondary"]) {
+    const window = limits[name];
+    if (window == null && name === "secondary") continue;
+    const usedPercent = window?.usedPercent;
+    const windowDurationMins = window?.windowDurationMins;
+    if (typeof usedPercent !== "number" || !Number.isFinite(usedPercent) || usedPercent < 0 ||
+        usedPercent > 100 || (windowDurationMins != null && (typeof windowDurationMins !== "number" ||
+        !Number.isFinite(windowDurationMins) || windowDurationMins <= 0))) return blocked("USAGE_INVALID");
+    windows.push({ name, usedPercent, windowDurationMins });
   }
-  return { status: "READY" };
+  if ((nestedAllowed != null && topAllowed != null && nestedAllowed !== topAllowed) ||
+      (nestedAllowed !== true && topAllowed !== true)) return blocked("USAGE_UNKNOWN");
+  const exceeded = windows.find(window => ceilingPercent !== undefined && window.usedPercent >= ceilingPercent);
+  if (exceeded && ownerException !== true) return { ...blocked("USAGE_CEILING"), window: exceeded.name };
+  return { status: "READY", windows, ...(exceeded ? { ownerExceptionApplied: true } : {}) };
 }

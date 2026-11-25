@@ -39,32 +39,56 @@ export function summarizeExecEvents(jsonlText) {
   return { threadId, terminal, events, usage, usageBasis: "THREAD_CUMULATIVE", malformed };
 }
 
+const required = ["input_tokens", "cached_input_tokens", "output_tokens"];
+const optional = ["cache_write_input_tokens", "reasoning_output_tokens"];
+
+export function isValidUsage(value) {
+  return value != null && typeof value === "object" && !Array.isArray(value) &&
+    required.every(field => Number.isSafeInteger(value[field]) && value[field] >= 0) &&
+    optional.every(field => !(field in value) || (Number.isSafeInteger(value[field]) && value[field] >= 0)) &&
+    value.cached_input_tokens <= value.input_tokens;
+}
+
+// Thread-cumulative values must never be summed; tokens cannot determine subscription usage deduction.
 export function usageDelta(previous, current) {
-  const fields = ["input_tokens", "cached_input_tokens", "output_tokens"];
+  if (!isValidUsage(previous) || !isValidUsage(current)) return "UNKNOWN";
   const delta = {};
-  for (const field of fields) {
-    const before = previous?.[field];
-    const after = current?.[field];
-    if (!Number.isFinite(before) || !Number.isFinite(after) || after < before) return "UNKNOWN";
-    delta[field] = after - before;
+  for (const field of [...required, ...optional]) {
+    if (previous[field] === undefined || current[field] === undefined) continue;
+    if (current[field] < previous[field]) return "UNKNOWN";
+    delta[field] = current[field] - previous[field];
   }
+  delta.nonCachedInput = delta.input_tokens - delta.cached_input_tokens;
+  if (delta.nonCachedInput < 0) return "UNKNOWN";
   return delta;
 }
 
 export function extractEffectiveSettings(rolloutJsonlText) {
   let context = {};
   let meta = {};
+  let completedTurnId;
+  let turnContextCount = 0;
   for (const line of rolloutJsonlText.split(/\r?\n/)) {
     if (!line.trim()) continue;
     try {
       const event = JSON.parse(line);
-      if (event.type === "turn_context") context = event.payload ?? {};
+      if (event.type === "turn_context") {
+        context = event.payload ?? {};
+        turnContextCount++;
+      }
+      if (event.type === "event_msg" && event.payload?.type === "task_complete") {
+        completedTurnId = event.payload.turn_id ?? event.payload.turn_attribution?.turn_id;
+      }
       if (event.type === "session_meta") meta = event.payload ?? {};
     } catch {
       // An unreadable line cannot provide settings.
     }
   }
   return {
+    sessionId: meta.session_id ?? meta.id,
+    turnId: context.turn_id,
+    completedTurnId,
+    turnContextCount,
     model: context.model ?? "UNKNOWN",
     effort: context.effort ?? context.reasoning_effort ?? "UNKNOWN",
     sandbox: context.sandbox_policy ?? context.sandbox ?? "UNKNOWN",
@@ -91,6 +115,14 @@ export function evaluateExecOutcome({ requested, exitCode, timedOut, events, eff
   if (timedOut) return indeterminate("TIMEOUT");
   if (events?.malformed) return indeterminate("MALFORMED_OUTPUT");
   if (!events || !["completed", "failed"].includes(events.terminal)) return indeterminate("NO_TERMINAL_EVENT");
+  if (typeof events.threadId !== "string" || !events.threadId ||
+      typeof effective?.sessionId !== "string" || !effective.sessionId) return indeterminate("THREAD_BINDING_UNKNOWN");
+  if (events.threadId !== effective.sessionId) return indeterminate("THREAD_BINDING_MISMATCH");
+  if (typeof effective.turnId !== "string" || !effective.turnId ||
+      typeof effective.completedTurnId !== "string" || !effective.completedTurnId) {
+    return indeterminate("TURN_BINDING_UNKNOWN");
+  }
+  if (effective.turnId !== effective.completedTurnId) return indeterminate("TURN_BINDING_MISMATCH");
   const sandbox = normalizeSandbox(effective?.sandbox);
   const settings = [effective?.model, effective?.effort, sandbox, effective?.cwd, effective?.modelProvider];
   if (settings.some(value => typeof value !== "string" || !value || value === "UNKNOWN")) {
@@ -108,5 +140,7 @@ export function evaluateExecOutcome({ requested, exitCode, timedOut, events, eff
   }
   if (events.terminal === "completed" && exitCode == null) return indeterminate("EXIT_UNKNOWN");
   if (events.terminal === "failed" || exitCode !== 0) return { status: "FAILED", retryAllowed: false };
+  if (events.usage == null) return indeterminate("USAGE_EVIDENCE_MISSING");
+  if (!isValidUsage(events.usage)) return indeterminate("USAGE_EVIDENCE_INVALID");
   return { status: "SUCCEEDED" };
 }
