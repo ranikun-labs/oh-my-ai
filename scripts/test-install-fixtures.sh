@@ -1221,6 +1221,39 @@ check_work_start_source_relocation() {
   echo "passed: FX-WS-E2E-005 source relocation/reinstall"
 }
 
+# work-start Source를 skills/library/work-start로 옮긴 뒤: 옛 flat 링크는 stale-source로 보고·보존하고,
+# 사용자가 옛 링크를 제거한 뒤 재설치하면 같은 Skill 경로가 새 Source를 가리켜야 한다.
+check_work_start_skill_moved_source() {
+  local clone home_dir output status
+
+  clone="$(clone_fixture_repo work-start-skill-moved)"
+  home_dir="$TEMP_ROOT/work-start-skill-moved/home"
+  run_setup "$clone" "$home_dir" --install-shared >/dev/null
+  assert_link "$home_dir/.claude/skills/work-start" "$clone/skills/work-start"
+  assert_link "$home_dir/.agents/skills/work-start" "$clone/skills/work-start"
+
+  mkdir -p "$clone/skills/library"
+  mv "$clone/skills/work-start" "$clone/skills/library/work-start"
+
+  set +e
+  output="$(run_setup "$clone" "$home_dir" --install-shared 2>&1)"
+  status=$?
+  set -e
+  [ "$status" -ne 0 ] || fail "moved work-start install over a stale old-path link must fail"
+  require_fixed "stale-source: Claude work-start skill" "$output"
+  require_fixed "stale-source: Codex work-start skill" "$output"
+  [ "$(readlink "$home_dir/.claude/skills/work-start")" = "$clone/skills/work-start" ] \
+    || fail "stale old-path Claude link was overwritten"
+  [ "$(readlink "$home_dir/.agents/skills/work-start")" = "$clone/skills/work-start" ] \
+    || fail "stale old-path Codex link was overwritten"
+
+  rm -f -- "$home_dir/.claude/skills/work-start" "$home_dir/.agents/skills/work-start"
+  run_setup "$clone" "$home_dir" --install-shared >/dev/null
+  assert_link "$home_dir/.claude/skills/work-start" "$clone/skills/library/work-start"
+  assert_link "$home_dir/.agents/skills/work-start" "$clone/skills/library/work-start"
+  echo "passed: work-start moved Source: stale old-path reported and preserved, re-install links the new Source"
+}
+
 check_work_start_consent_boundary() {
   local fixture clone home_dir target before after payload output invocation_log
 
@@ -1241,6 +1274,70 @@ check_work_start_consent_boundary() {
   printf '%s\n' "$output" | grep -q -F -- "Suggested by oh-my-ai: Work-start" \
     || fail "natural-language prompt did not produce a Work-start suggestion"
   echo "passed: FX-WS-E2E-006 consent boundary"
+}
+
+# Skill Source가 skills/<id>에서 skills/library/<id>로 옮겨져도 노출 경로(<id>)와 설치 결과가 같은 규칙을 따르는지 본다.
+# 옛 flat 경로를 가리키는 기존 링크는 자동으로 다시 연결하지 않고 stale-source로 보고·보존해야 한다.
+check_dev_main_flow_moved_source() {
+  local base home_dir clone agents_dir output status
+
+  base="$TEMP_ROOT/dev-main-flow-moved"
+  home_dir="$base/home with spaces"
+  clone="$base/repo"
+  mkdir -p "$clone/scripts/lib"
+  cp -R "$REPO/skills" "$clone/skills"
+  cp "$REPO/setup.sh" "$clone/setup.sh"
+  cp "$REPO/scripts/lib/skill-discovery.mjs" "$clone/scripts/lib/skill-discovery.mjs"
+
+  # 1. 현재 flat 트리: 기존과 같은 링크(회귀)
+  agents_dir="$base/flat agents"
+  output="$(env HOME="$home_dir" AGENT_DIR="$agents_dir" "$clone/setup.sh" --install-dev-main-flow 2>&1)" \
+    || fail "flat dev-main-flow install failed: $output"
+  assert_link "$agents_dir/skills/adaptive-goal-closure" "$clone/skills/adaptive-goal-closure"
+
+  # 2. 옛 flat 경로를 옮긴 뒤 설치: 같은 노출 경로, 새 Source
+  mkdir -p "$clone/skills/library"
+  mv "$clone/skills/adaptive-goal-closure" "$clone/skills/library/adaptive-goal-closure"
+  agents_dir="$base/moved agents"
+  output="$(env HOME="$home_dir" AGENT_DIR="$agents_dir" "$clone/setup.sh" --install-dev-main-flow 2>&1)" \
+    || fail "moved-source dev-main-flow install failed: $output"
+  assert_link "$agents_dir/skills/adaptive-goal-closure" "$clone/skills/library/adaptive-goal-closure"
+  require_fixed "linked: adaptive-goal-closure -> $clone/skills/library/adaptive-goal-closure" "$output"
+  output="$(env HOME="$home_dir" AGENT_DIR="$agents_dir" "$clone/setup.sh" --doctor-dev-main-flow 2>&1)" \
+    || fail "doctor after moved install must be ready: $output"
+  require_fixed "adaptive-goal-closure: ready" "$output"
+
+  # 3. 옛 flat 경로 링크가 남아 있으면 stale-source로 보고하고 덮어쓰지 않는다
+  agents_dir="$base/stale agents"
+  mkdir -p "$agents_dir/skills"
+  ln -s "$clone/skills/adaptive-goal-closure" "$agents_dir/skills/adaptive-goal-closure"
+  set +e
+  output="$(env HOME="$home_dir" AGENT_DIR="$agents_dir" "$clone/setup.sh" --install-dev-main-flow 2>&1)"
+  status=$?
+  set -e
+  [ "$status" -eq 1 ] || fail "stale old-path link install exit was $status, expected 1"
+  require_fixed "stale-source: adaptive-goal-closure" "$output"
+  [ "$(readlink "$agents_dir/skills/adaptive-goal-closure")" = "$clone/skills/adaptive-goal-closure" ] \
+    || fail "stale old-path link was overwritten"
+  set +e
+  output="$(env HOME="$home_dir" AGENT_DIR="$agents_dir" "$clone/setup.sh" --doctor-dev-main-flow 2>&1)"
+  status=$?
+  set -e
+  [ "$status" -eq 1 ] || fail "doctor with stale-source exit was $status, expected 1"
+  require_fixed "adaptive-goal-closure: stale-source:" "$output"
+
+  # 4. 같은 이름이 flat과 library에 둘 다 있으면 Source가 모호하므로 링크를 만들지 않는다
+  cp -R "$clone/skills/library/adaptive-goal-closure" "$clone/skills/adaptive-goal-closure"
+  agents_dir="$base/ambiguous agents"
+  set +e
+  output="$(env HOME="$home_dir" AGENT_DIR="$agents_dir" "$clone/setup.sh" --install-dev-main-flow 2>&1)"
+  status=$?
+  set -e
+  [ "$status" -eq 1 ] || fail "ambiguous source install exit was $status, expected 1"
+  require_fixed "blocked: adaptive-goal-closure source is missing; no target changed" "$output"
+  [ ! -e "$agents_dir/skills/adaptive-goal-closure" ] && [ ! -L "$agents_dir/skills/adaptive-goal-closure" ] \
+    || fail "ambiguous Source created a link"
+  echo "passed: dev-main-flow moved-source install, stale-source report, ambiguous-source fail-closed"
 }
 
 check_dev_main_flow_codex_installer() {
@@ -1371,9 +1468,10 @@ check_dev_main_flow_codex_installer() {
     || fail "installer replaced the symlinked Agent root"
 
   clone="$TEMP_ROOT/dev-main-flow-install/missing-source-repo"
-  mkdir -p "$clone"
+  mkdir -p "$clone/scripts/lib"
   cp -R "$REPO/skills" "$clone/skills"
   cp "$REPO/setup.sh" "$clone/setup.sh"
+  cp "$REPO/scripts/lib/skill-discovery.mjs" "$clone/scripts/lib/skill-discovery.mjs"
   rm -f -- "$clone/skills/work-record-sync/SKILL.md"
   target_root="$TEMP_ROOT/dev-main-flow-install/missing-source-agents"
   set +e
@@ -1392,6 +1490,7 @@ require_file "Makefile"
 
 if [ "${1:-}" = "--dev-main-flow-only" ]; then
   run_isolated_check check_dev_main_flow_codex_installer
+  run_isolated_check check_dev_main_flow_moved_source
   echo "dev-main-flow install fixtures passed"
   exit 0
 fi
@@ -1422,6 +1521,7 @@ run_isolated_check check_work_start_post_execution_boundary
 run_isolated_check check_work_start_public_entry_parser
 run_isolated_check check_work_start_engine_failure_modes
 run_isolated_check check_work_start_source_relocation
+run_isolated_check check_work_start_skill_moved_source
 run_isolated_check check_work_start_consent_boundary
 
 echo "all install fixtures passed"

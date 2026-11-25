@@ -5,6 +5,7 @@
 //
 //   node scripts/lib/skill-discovery.mjs --list [--root <dir>] [--format paths|json]
 //   node scripts/lib/skill-discovery.mjs --check [--root <dir>]
+//   node scripts/lib/skill-discovery.mjs --resolve <id> [--root <dir>]   (절대 Source 디렉터리 1개 출력)
 
 import fs from "node:fs";
 import path from "node:path";
@@ -117,6 +118,25 @@ export function discoverSkills(repoRoot = DEFAULT_REPO_ROOT) {
   }
 }
 
+// Skill ID(= 디렉터리 이름)로 Source 디렉터리를 하나 찾는다.
+// 실패: 해당 ID가 없거나 여러 개이거나, 해당 ID의 디렉터리 자체에 발견 오류가 있을 때.
+// 다른 Skill의 오류는 실패로 막지 않는다(한 개의 선택 Skill 누락이 다른 Skill 설치를 막지 않게 함).
+// 전체 트리 오류는 check-skill-source-boundary / --check 가 계속 실패시킨다(조용한 누락 방지는 그쪽이 담당).
+// 설치기는 이 결과만 Source로 쓰고, 경로 문자열(skills/<id>)을 직접 조립하지 않는다.
+export function resolveSkill(repoRoot, id) {
+  const discovery = discoverSkills(repoRoot);
+  const matches = discovery.skills.filter(skill => skill.name === id);
+  if (matches.length !== 1) {
+    return { ok: false, errors: [`skill "${id}" must resolve to exactly one source under ${path.resolve(repoRoot)} (found ${matches.length})`] };
+  }
+  const skill = matches[0];
+  const related = discovery.errors.filter(error => error.includes(skill.relPath) || error.includes(`/${id}/`) || error.includes(`"${id}"`));
+  if (related.length > 0) {
+    return { ok: false, errors: related };
+  }
+  return { ok: true, skill, otherErrors: discovery.errors.filter(error => !related.includes(error)) };
+}
+
 function readFrontmatterName(file, relPath, errors) {
   let lines;
   try {
@@ -173,6 +193,11 @@ function parseArgs(argv) {
     const arg = argv[i];
     if (arg === "--list" || arg === "--check") {
       opts.mode = arg.slice(2);
+    } else if (arg === "--resolve") {
+      if (!argv[i + 1]) throw new Error("--resolve requires a skill id");
+      opts.mode = "resolve";
+      opts.id = argv[i + 1];
+      i += 1;
     } else if (arg === "--root") {
       if (!argv[i + 1]) throw new Error("--root requires a directory");
       opts.root = path.resolve(argv[i + 1]);
@@ -188,7 +213,7 @@ function parseArgs(argv) {
       throw new Error(`unknown argument: ${arg}`);
     }
   }
-  if (!opts.mode) throw new Error("usage: skill-discovery.mjs (--list [--format paths|json] | --check) [--root <dir>]");
+  if (!opts.mode) throw new Error("usage: skill-discovery.mjs (--list [--format paths|json] | --check | --resolve <id>) [--root <dir>]");
   if (!["paths", "json"].includes(opts.format)) throw new Error("--format must be paths or json");
   return opts;
 }
@@ -200,6 +225,17 @@ function main(argv) {
   } catch (error) {
     console.error(error.message);
     return 2;
+  }
+
+  if (opts.mode === "resolve") {
+    const resolved = resolveSkill(opts.root, opts.id);
+    if (!resolved.ok) {
+      for (const error of resolved.errors) console.error(`error: ${error}`);
+      return 1;
+    }
+    for (const error of resolved.otherErrors) console.error(`warning: unrelated to "${opts.id}": ${error}`);
+    console.log(resolved.skill.dir);
+    return 0;
   }
 
   const result = discoverSkills(opts.root);

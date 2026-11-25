@@ -103,13 +103,34 @@ entrypoint_status() {
   fi
 }
 
-work_start_skill_status() {
-  src="$REPO/skills/work-start"
+# Skill Source 디렉터리는 discovery CLI(--resolve)로만 찾는다. skills/<id> 경로를 직접 조립하지 않는다.
+# 실패(없음·중복·발견 오류·node 없음)면 빈 출력과 비정상 종료를 돌려준다.
+resolve_skill_source() {
+  command -v node >/dev/null 2>&1 || return 1
+  node "$REPO/scripts/lib/skill-discovery.mjs" --resolve "$1" --root "$REPO"
+}
+
+# 이동된 Skill의 옛 flat 경로(skills/<id>)를 가리키는 링크인지. 옛 경로 != 현재 Source 일 때만 참이다.
+# 참이면 자동 재연결하지 않고 stale-source로 보고만 한다(조용한 덮어쓰기 금지).
+is_stale_source_link() {
   dest="$1"
+  skill_id="$2"
+  resolved="$3"
+  [ -L "$dest" ] || return 1
+  [ -n "$resolved" ] || return 1
+  old="$REPO/skills/$skill_id"
+  [ "$(readlink "$dest")" = "$old" ] && [ "$resolved" != "$old" ]
+}
+
+work_start_skill_status() {
+  dest="$1"
+  src="$(resolve_skill_source work-start 2>/dev/null)" || src=""
   if [ ! -f "$src/SKILL.md" ]; then
     printf '%s\n' "incomplete"
   elif same_managed_path "$src" "$dest"; then
     printf '%s\n' "ready"
+  elif is_stale_source_link "$dest" work-start "$src"; then
+    printf '%s\n' "stale-source"
   elif [ -L "$dest" ] && [ ! -e "$dest" ]; then
     printf '%s\n' "incomplete"
   elif [ -e "$dest" ] || [ -L "$dest" ]; then
@@ -249,15 +270,21 @@ install_runtime_hooks() {
 install_work_start_skill() {
   runtime="$1"
   dest="$2"
-  source="$REPO/skills/work-start"
+  source="$(resolve_skill_source work-start 2>/dev/null)" || source=""
   label="$runtime work-start skill"
   if [ ! -f "$source/SKILL.md" ]; then
-    say "incomplete: $label source missing ($source)"
+    say "incomplete: $label source missing or not resolvable by skill-discovery"
     INSTALL_FAILURE=1
     return 0
   fi
   if same_managed_path "$source" "$dest"; then
     say "ok: $label already managed"
+    return 0
+  fi
+  if is_stale_source_link "$dest" work-start "$source"; then
+    say "stale-source: $label was $(readlink "$dest") (old flat path; skill now at $source)"
+    say "      preserving it; remove the old link intentionally, then re-run install"
+    INSTALL_FAILURE=1
     return 0
   fi
   if [ -L "$dest" ] && [ ! -e "$dest" ]; then
@@ -556,19 +583,24 @@ dev_main_flow_root_status() {
 
 dev_main_flow_skill_status() {
   skill_name="$1"
-  source_path="$REPO/skills/$skill_name"
   target_path="$AGENT_DIR/skills/$skill_name"
   root_status="$(dev_main_flow_root_status)"
+  source_path=""
+  if [ "$root_status" = "safe" ]; then
+    source_path="$(resolve_skill_source "$skill_name" 2>/dev/null)" || source_path=""
+  fi
 
   if [ "$root_status" != "safe" ]; then
     printf '%s\n' "blocked: $root_status"
-  elif [ ! -d "$source_path" ] || [ ! -f "$source_path/SKILL.md" ]; then
-    printf '%s\n' "source-missing: $source_path/SKILL.md"
+  elif [ -z "$source_path" ] || [ ! -f "$source_path/SKILL.md" ]; then
+    printf '%s\n' "source-missing: $skill_name is not resolvable to exactly one Skill source (node scripts/lib/skill-discovery.mjs --check)"
   elif [ -L "$target_path" ]; then
-    if [ ! -e "$target_path" ]; then
-      printf '%s\n' "dangling: $(readlink "$target_path")"
-    elif [ "$(readlink "$target_path")" = "$source_path" ]; then
+    if [ "$(readlink "$target_path")" = "$source_path" ]; then
       printf '%s\n' "ready"
+    elif is_stale_source_link "$target_path" "$skill_name" "$source_path"; then
+      printf '%s\n' "stale-source: $(readlink "$target_path") (skill moved to $source_path)"
+    elif [ ! -e "$target_path" ]; then
+      printf '%s\n' "dangling: $(readlink "$target_path")"
     else
       printf '%s\n' "conflict: symlink points to $(readlink "$target_path")"
     fi
@@ -596,8 +628,6 @@ dev_main_flow_doctor() {
 
   say "Core skills (required for this install):"
   for skill_name in dev-main-flow adaptive-goal-closure engineering-communication-ko; do
-    source_path="$REPO/skills/$skill_name"
-    target_path="$AGENT_DIR/skills/$skill_name"
     status="$(dev_main_flow_skill_status "$skill_name")"
     say "  $skill_name: $status"
     if [ "$status" != "ready" ]; then
@@ -623,7 +653,7 @@ dev_main_flow_doctor() {
 dev_main_flow_install_one() {
   local skill_name source_path target_path status root_status
   skill_name="$1"
-  source_path="$REPO/skills/$skill_name"
+  source_path="$(resolve_skill_source "$skill_name" 2>/dev/null)" || source_path=""
   target_path="$AGENT_DIR/skills/$skill_name"
   status="$(dev_main_flow_skill_status "$skill_name")"
 
@@ -639,6 +669,13 @@ dev_main_flow_install_one() {
       ;;
     blocked:*)
       say "blocked: $skill_name target root is unsafe; preserving all paths"
+      INSTALL_FAILURE=1
+      return 0
+      ;;
+    stale-source:*)
+      say "stale-source: $skill_name link points to the old flat path; preserving it (no automatic relink)"
+      say "      $status"
+      say "      remove that link intentionally, then re-run install"
       INSTALL_FAILURE=1
       return 0
       ;;
