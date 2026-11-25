@@ -8,7 +8,7 @@
 
 - `scripts/lib/codex-exec-plan.mjs` — 프로세스를 띄우지 않는 순수 함수
 - `fixtures/codex-exec/mock-codex-exec.mjs` — JSONL 시나리오를 내는 Mock CLI (실제 codex 아님)
-- `scripts/test-codex-exec-plan.mjs` / `make test-codex-exec-plan` — 25개 회귀
+- `scripts/test-codex-exec-plan.mjs` / `make test-codex-exec-plan` — 28개 회귀
 
 ## 구성 요소
 
@@ -18,16 +18,16 @@
 | `resolveCodexExecutable` | explicit path 또는 PATH에서 신뢰 가능한 `codex` 해석 (fs/env/platform 주입) |
 | `createJsonlParser` / `parseJsonl` | chunk 경계·CRLF 허용, malformed/truncated 표시 |
 | `compareRequestedVsReported` | 요청 vs CLI 보고 model/effort → MATCH / MISMATCH / UNKNOWN |
-| `classifyCodexExecRun` | SUCCESS / UNVERIFIED_CONFIG / FAILED / CANCELLED / UNKNOWN 분류 (+ `approvalBlocked`, `autoFollowUpAllowed`) |
+| `classifyCodexExecRun` | `execution`(completed/failed/cancelled/unknown) × `configVerification`(MATCH/MISMATCH/UNKNOWN/NOT_REQUESTED)에서 파생한 `outcome`(SUCCESS/UNVERIFIED_CONFIG/FAILED/CANCELLED/UNKNOWN) + `unverifiedReason`, `approvalBlocked`, `autoFollowUpAllowed` |
 
 ## 불변식
 
-1. **model/effort는 필수, 기본값 없음.** `policy.models`/`policy.efforts` allow-list 밖이면 거부. effort allow-list는 RPL-116 `agent-manifest-guard`의 reasoning 목록(`low|medium|high|max`) 사본(`RPL116_REASONING_ALLOWLIST`)을 쓸 수 있으며, 테스트가 실제 guard와 동등성을 검증한다. 모델 allow-list는 공개 소스에 하드코딩하지 않고 호출자가 넘긴다. 자동 매핑(`xhigh` 등) 없음.
+1. **model/effort는 필수, 기본값 없음.** 누락 시 `assembleCodexExecCommand`가 `PLAN_INVALID`로 계획 생성 단계에서 차단하고, 분류기도 `requested` 누락을 SUCCESS로 취급하지 않는다(이중 방어). `policy.models`/`policy.efforts` allow-list 밖이면 거부. effort allow-list는 RPL-116 `agent-manifest-guard`의 reasoning 목록(`low|medium|high|max`) 사본(`RPL116_REASONING_ALLOWLIST`)을 쓸 수 있으며, 테스트가 실제 guard와 동등성을 검증한다. 모델 allow-list는 공개 소스에 하드코딩하지 않고 호출자가 넘긴다. 자동 매핑(`xhigh` 등) 없음.
 2. **cwd는 절대 경로, sandbox/approval은 명시.** sandbox는 `read-only|workspace-write`만(`danger-full-access` 거부). cwd는 argv가 아니라 spawn cwd로 전달.
 3. **값 주입 차단.** model/effort/sessionId는 선행 `-`·공백·따옴표 없는 토큰만. 프롬프트는 argv에 넣지 않는다.
 4. **실행 파일 해석은 fail-closed.** 절대 경로, 일반 파일, (POSIX) 실행 비트. 빈/상대 PATH 항목과 cwd(작업공간) 내부 후보 거부. Windows는 PATHEXT∩{`.exe`,`.cmd`}만, 대소문자 무시 `Path`, 따옴표 항목 처리. `.cmd` shim은 `shell:false`로 직접 spawn할 수 없으므로 `allowCmdShim: true`일 때만 허용하며 `cmdShim:true`로 표시(쉘 문자열로 우회 금지).
-5. **MISMATCH는 조용히 수용하지 않는다.** 보고 설정이 요청과 다르면 exit 0이어도 `FAILED`로 격상. 보고가 없어 비교가 `UNKNOWN`이면 exit 0 + 완료 이벤트여도 `SUCCESS`가 아니라 **`UNVERIFIED_CONFIG`** 로 분류한다(`approvalBlocked:true`, `autoFollowUpAllowed:false`). 설정을 검증하지 못한 실행은 승인 근거로 쓰지 않고 자동 후속 실행도 막는다(Owner 결정). 계약은 별도 outcome 방식 하나로 고정(SUCCESS+플래그 방식 아님).
-6. **SUCCESS는 좁다.** exit 0 + 신호/타임아웃 없음 + malformed/truncated 없음 + `turn.completed` 존재 + 실패/취소/`error` 이벤트 없음 + MISMATCH 아님. `requested`가 있고 비교 MATCH일 때만 `autoFollowUpAllowed:true`(`requested` 미전달 시 비교 자체를 안 한 것이므로 SUCCESS 유지). 비정상 exit → FAILED, 종료 이벤트 없음/절단/exit 정보 없음/타임아웃 → UNKNOWN.
+5. **MISMATCH는 조용히 수용하지 않는다.** 보고 설정이 요청과 다르면 exit 0이어도 `FAILED`로 격상(`execution`은 `completed` 그대로 두어 실행 결과와 설정 판정을 분리). 설정을 검증하지 못한 완료 실행은 `SUCCESS`가 아니라 **`UNVERIFIED_CONFIG`** 로 분류하고 `approvalBlocked:true`, `autoFollowUpAllowed:false`로 승인 근거·자동 후속 실행을 막는다(Owner 결정). 사유는 `unverifiedReason`으로 구분한다: `REPORTED_CONFIG_UNKNOWN`(CLI가 model/effort를 보고하지 않아 비교 UNKNOWN), `REQUESTED_CONFIG_MISSING`(`requested`의 model/effort 누락·부분 전달, `configVerification: NOT_REQUESTED`). 계약은 별도 outcome 방식 하나로 고정(SUCCESS+플래그 방식 아님).
+6. **SUCCESS는 좁다.** `execution:completed`(exit 0 + 신호/타임아웃 없음 + malformed/truncated 없음 + `turn.completed` 존재 + 실패/취소/`error` 이벤트 없음) **그리고** `configVerification:MATCH`일 때만. `requested`가 없거나 불완전하면 비교 근거가 없으므로 SUCCESS가 아니다(`REQUESTED_CONFIG_MISSING`). `autoFollowUpAllowed:true`는 SUCCESS에서만. 비정상 exit → FAILED, 종료 이벤트 없음/절단/exit 정보 없음/타임아웃 → UNKNOWN. 실행이 failed/cancelled/unknown이면 설정 판정과 무관하게 해당 outcome을 유지한다.
 7. **자동 재시도 없음.** 모든 결과에 `autoRetry:false`. UNKNOWN은 부작용 여부를 모르므로 사람/상위 정책 판단 전 재실행 금지.
 
 ## UNVERIFIED 가정 (실제 Codex CLI로 검증하지 않음)

@@ -268,51 +268,67 @@ const T_FAIL = new Set(["turn.failed"]);
 const T_CANCEL = new Set(["turn.cancelled", "turn.aborted"]);
 
 /**
- * 종료 결과를 SUCCESS / UNVERIFIED_CONFIG / FAILED / CANCELLED / UNKNOWN으로 분류한다.
- * UNVERIFIED_CONFIG: 정상 종료(exit 0 + 완료 이벤트)지만 요청/보고 설정 비교가 UNKNOWN. 승인 불가(approvalBlocked)·자동 후속 실행 금지.
- * SUCCESS 조건: exit 0 + 신호/타임아웃 없음 + 파싱 오류·절단 없음 + 완료 이벤트 존재 + 실패/취소 이벤트 없음
- *   + 요청/보고 설정 MISMATCH 아님. MISMATCH면 SUCCESS 금지(FAILED로 격상).
- * 자동 재시도는 어떤 결과에서도 허용하지 않는다(autoRetry:false). 특히 UNKNOWN은 부작용 여부를
- * 알 수 없으므로 사람/상위 정책의 판단 전까지 재실행 금지.
+ * 결과를 세 층으로 분리해 돌려준다.
+ * - execution: 프로세스/스트림이 어떻게 끝났나 (completed|failed|cancelled|unknown). 설정 검증과 무관.
+ * - configVerification: 요청 vs 보고 설정 (MATCH|MISMATCH|UNKNOWN|NOT_REQUESTED). NOT_REQUESTED는 requested(model+effort)가 없다는 뜻.
+ * - outcome + approvalBlocked/autoFollowUpAllowed: 위 둘에서 파생. SUCCESS/UNVERIFIED_CONFIG/FAILED/CANCELLED/UNKNOWN.
+ * SUCCESS 조건: execution completed + configVerification MATCH. 그 외 completed는 모두 SUCCESS가 아니다.
+ *   MISMATCH -> FAILED로 격상. UNKNOWN(보고 없음) -> UNVERIFIED_CONFIG(unverifiedReason REPORTED_CONFIG_UNKNOWN).
+ *   NOT_REQUESTED(요청 설정 누락) -> UNVERIFIED_CONFIG(unverifiedReason REQUESTED_CONFIG_MISSING). 비교 근거가 없는 성공은 성공이 아니다.
+ * UNVERIFIED_CONFIG는 approvalBlocked:true, autoFollowUpAllowed:false. 자동 재시도는 어떤 결과에서도 금지(autoRetry:false).
+ * 특히 UNKNOWN은 부작용 여부를 알 수 없으므로 사람/상위 정책의 판단 전까지 재실행 금지.
  * @param {{stdout:string|string[], exitCode:number|null, signal?:string|null, timedOut?:boolean, requested?:object}} run
  */
 export function classifyCodexExecRun(run) {
-  if (!isRecord(run)) return { outcome: "UNKNOWN", reasons: ["run must be an object"], autoRetry: false, approvalBlocked: false, autoFollowUpAllowed: false };
+  if (!isRecord(run)) {
+    return { outcome: "UNKNOWN", execution: "unknown", configVerification: "NOT_REQUESTED", unverifiedReason: null, reasons: ["run must be an object"], autoRetry: false, approvalBlocked: false, autoFollowUpAllowed: false };
+  }
   const text = Array.isArray(run.stdout) ? run.stdout.join("") : run.stdout;
   const parsed = parseJsonl(typeof text === "string" ? text : "");
   const types = parsed.events.map(e => e.type);
   const has = set => types.some(t => set.has(t));
   const sessionEvt = parsed.events.find(e => typeof e.thread_id === "string" && e.thread_id !== "");
-  const config = run.requested ? compareRequestedVsReported(run.requested, parsed.events) : null;
+  const r = run.requested;
+  const requestedOk = isRecord(r) && typeof r.model === "string" && r.model !== "" && typeof r.effort === "string" && r.effort !== "";
+  const config = requestedOk ? compareRequestedVsReported(r, parsed.events) : null;
+  const configVerification = config ? config.status : "NOT_REQUESTED";
   const base = {
     sessionId: sessionEvt ? sessionEvt.thread_id : null,
     eventCount: parsed.events.length,
     malformedCount: parsed.malformed.length,
     truncated: parsed.truncated,
     config,
+    configVerification,
     autoRetry: false,
   };
   const reasons = [];
-  let outcome;
-  if (has(T_FAIL)) { outcome = "FAILED"; reasons.push("terminal failure event"); }
+  let execution;
+  if (has(T_FAIL)) { execution = "failed"; reasons.push("terminal failure event"); }
   else if (has(T_CANCEL) || run.signal === "SIGINT" || (run.signal === "SIGTERM" && run.timedOut !== true)) {
-    outcome = "CANCELLED"; reasons.push("cancel event or signal");
-  } else if (run.timedOut === true) { outcome = "UNKNOWN"; reasons.push("timed out; side effects unknown"); }
-  else if (typeof run.exitCode === "number" && run.exitCode !== 0) { outcome = "FAILED"; reasons.push("non-zero exit " + run.exitCode); }
-  else if (run.exitCode !== 0) { outcome = "UNKNOWN"; reasons.push("exit status unavailable"); }
-  else if (parsed.malformed.length > 0 || parsed.truncated) { outcome = "UNKNOWN"; reasons.push("malformed or truncated stream"); }
-  else if (!has(T_OK)) { outcome = "UNKNOWN"; reasons.push("terminal event missing"); }
-  else if (types.includes("error")) { outcome = "UNKNOWN"; reasons.push("error event alongside completion"); }
-  else { outcome = "SUCCESS"; }
-  if (outcome === "SUCCESS" && config && config.status === "MISMATCH") {
-    outcome = "FAILED"; reasons.push("requested/reported model or effort MISMATCH; not accepted");
-  } else if (outcome === "SUCCESS" && config && config.status === "UNKNOWN") {
-    // 설정 검증 불가 → 승인 근거로 못 쓰므로 SUCCESS가 아닌 별도 outcome으로 분리한다.
-    outcome = "UNVERIFIED_CONFIG"; reasons.push("reported model/effort UNKNOWN; settings not verified");
+    execution = "cancelled"; reasons.push("cancel event or signal");
+  } else if (run.timedOut === true) { execution = "unknown"; reasons.push("timed out; side effects unknown"); }
+  else if (typeof run.exitCode === "number" && run.exitCode !== 0) { execution = "failed"; reasons.push("non-zero exit " + run.exitCode); }
+  else if (run.exitCode !== 0) { execution = "unknown"; reasons.push("exit status unavailable"); }
+  else if (parsed.malformed.length > 0 || parsed.truncated) { execution = "unknown"; reasons.push("malformed or truncated stream"); }
+  else if (!has(T_OK)) { execution = "unknown"; reasons.push("terminal event missing"); }
+  else if (types.includes("error")) { execution = "unknown"; reasons.push("error event alongside completion"); }
+  else execution = "completed";
+
+  let outcome = { completed: "SUCCESS", failed: "FAILED", cancelled: "CANCELLED", unknown: "UNKNOWN" }[execution];
+  let unverifiedReason = null;
+  if (execution === "completed") {
+    if (configVerification === "MISMATCH") {
+      outcome = "FAILED"; reasons.push("requested/reported model or effort MISMATCH; not accepted");
+    } else if (configVerification === "UNKNOWN") {
+      outcome = "UNVERIFIED_CONFIG"; unverifiedReason = "REPORTED_CONFIG_UNKNOWN";
+      reasons.push("reported model/effort UNKNOWN; settings not verified");
+    } else if (configVerification === "NOT_REQUESTED") {
+      outcome = "UNVERIFIED_CONFIG"; unverifiedReason = "REQUESTED_CONFIG_MISSING";
+      reasons.push("requested model/effort missing; nothing to verify against");
+    }
   }
-  // 자동 후속 실행은 SUCCESS(검증 통과 또는 비교 미요청)일 때만 허용. 승인 차단은 UNVERIFIED_CONFIG 전용.
   return {
-    ...base, outcome, reasons,
+    ...base, execution, outcome, unverifiedReason, reasons,
     approvalBlocked: outcome === "UNVERIFIED_CONFIG",
     autoFollowUpAllowed: outcome === "SUCCESS",
   };

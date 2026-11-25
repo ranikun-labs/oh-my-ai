@@ -230,15 +230,58 @@ t("CXP-45 truncated / malformed / no terminal / error+complete => UNKNOWN, no au
 });
 t("CXP-46 classifier edge inputs never yield SUCCESS", () => {
   const ok = '{"type":"turn.completed"}\n';
-  assert.equal(classifyCodexExecRun({ stdout: ok, exitCode: 0 }).outcome, "SUCCESS");
-  assert.equal(classifyCodexExecRun({ stdout: ok, exitCode: null }).outcome, "UNKNOWN");
-  assert.equal(classifyCodexExecRun({ stdout: ok, exitCode: 0, timedOut: true }).outcome, "UNKNOWN");
-  assert.equal(classifyCodexExecRun({ stdout: ok, exitCode: 1 }).outcome, "FAILED");
-  assert.equal(classifyCodexExecRun({ stdout: "", exitCode: 0 }).outcome, "UNKNOWN");
-  assert.equal(classifyCodexExecRun({ stdout: ok + '{"type":"turn.failed"}\n', exitCode: 0 }).outcome, "FAILED");
-  assert.equal(classifyCodexExecRun({ stdout: ok, exitCode: null, signal: "SIGINT" }).outcome, "CANCELLED");
-  assert.equal(classifyCodexExecRun({ stdout: [ok.slice(0, 10), ok.slice(10)], exitCode: 0 }).outcome, "SUCCESS");
+  const req = { model: "m", effort: "high" };
+  const rep = '{"type":"x","model":"m","reasoning_effort":"high"}\n' + ok;
+  // requested 없이 완료만 있는 실행은 SUCCESS가 아니다.
+  assert.equal(classifyCodexExecRun({ stdout: ok, exitCode: 0 }).outcome, "UNVERIFIED_CONFIG");
+  assert.equal(classifyCodexExecRun({ stdout: ok, exitCode: null, requested: req }).outcome, "UNKNOWN");
+  assert.equal(classifyCodexExecRun({ stdout: ok, exitCode: 0, timedOut: true, requested: req }).outcome, "UNKNOWN");
+  assert.equal(classifyCodexExecRun({ stdout: ok, exitCode: 1, requested: req }).outcome, "FAILED");
+  assert.equal(classifyCodexExecRun({ stdout: "", exitCode: 0, requested: req }).outcome, "UNKNOWN");
+  assert.equal(classifyCodexExecRun({ stdout: ok + '{"type":"turn.failed"}\n', exitCode: 0, requested: req }).outcome, "FAILED");
+  assert.equal(classifyCodexExecRun({ stdout: ok, exitCode: null, signal: "SIGINT", requested: req }).outcome, "CANCELLED");
+  assert.equal(classifyCodexExecRun({ stdout: [rep.slice(0, 10), rep.slice(10)], exitCode: 0, requested: req }).outcome, "SUCCESS");
   assert.equal(classifyCodexExecRun(null).outcome, "UNKNOWN");
+});
+t("CXP-46b requested missing/partial => UNVERIFIED_CONFIG REQUESTED_CONFIG_MISSING, blocked", () => {
+  const rep = '{"type":"x","model":"m","reasoning_effort":"high"}\n{"type":"turn.completed"}\n';
+  for (const requested of [undefined, null, {}, { model: "m" }, { effort: "high" }, { model: "", effort: "high" }, "m"]) {
+    const c = classifyCodexExecRun({ stdout: rep, exitCode: 0, requested });
+    assert.equal(c.outcome, "UNVERIFIED_CONFIG", JSON.stringify(requested));
+    assert.equal(c.unverifiedReason, "REQUESTED_CONFIG_MISSING");
+    assert.equal(c.execution, "completed"); assert.equal(c.configVerification, "NOT_REQUESTED");
+    assert.equal(c.approvalBlocked, true); assert.equal(c.autoFollowUpAllowed, false); assert.equal(c.autoRetry, false);
+  }
+  // 요청 누락이어도 실행 자체가 실패/불명이면 해당 outcome 유지(UNVERIFIED로 덮지 않음).
+  assert.equal(classifyCodexExecRun({ stdout: rep, exitCode: 1 }).outcome, "FAILED");
+  assert.equal(classifyCodexExecRun({ stdout: rep, exitCode: null }).outcome, "UNKNOWN");
+});
+t("CXP-46c execution / configVerification / outcome are separated", () => {
+  const req = { model: "m", effort: "high" };
+  const done = '{"type":"turn.completed"}\n';
+  const cases = [
+    [{ stdout: '{"type":"x","model":"m","reasoning_effort":"high"}\n' + done, exitCode: 0, requested: req }, "completed", "MATCH", "SUCCESS", null],
+    [{ stdout: '{"type":"x","model":"z","reasoning_effort":"high"}\n' + done, exitCode: 0, requested: req }, "completed", "MISMATCH", "FAILED", null],
+    [{ stdout: done, exitCode: 0, requested: req }, "completed", "UNKNOWN", "UNVERIFIED_CONFIG", "REPORTED_CONFIG_UNKNOWN"],
+    [{ stdout: done, exitCode: 0 }, "completed", "NOT_REQUESTED", "UNVERIFIED_CONFIG", "REQUESTED_CONFIG_MISSING"],
+    [{ stdout: done, exitCode: 2, requested: req }, "failed", "UNKNOWN", "FAILED", null],
+    [{ stdout: done, exitCode: null, signal: "SIGINT", requested: req }, "cancelled", "UNKNOWN", "CANCELLED", null],
+    [{ stdout: "", exitCode: 0, requested: req }, "unknown", "UNKNOWN", "UNKNOWN", null],
+  ];
+  for (const [run, ex, cv, out, why] of cases) {
+    const c = classifyCodexExecRun(run);
+    assert.deepEqual([c.execution, c.configVerification, c.outcome, c.unverifiedReason], [ex, cv, out, why], JSON.stringify(run));
+    assert.equal(c.autoFollowUpAllowed, out === "SUCCESS"); assert.equal(c.approvalBlocked, out === "UNVERIFIED_CONFIG");
+  }
+});
+t("CXP-46d assembler blocks missing model/effort at plan creation", () => {
+  for (const k of ["model", "effort"]) {
+    const rest = { ...base({}) };
+    delete rest[k];
+    const p = assembleCodexExecCommand(rest);
+    assert.equal(p.ok, false); assert.equal(p.code, "PLAN_INVALID");
+    assert.ok(p.reasons.some(r => r.startsWith(k + " required")));
+  }
 });
 t("CXP-47 real-fs resolver rejects non-executable file (Mock acceptance covered by runMock)", () => {
   const plain = path.join(tmp, "codex");
