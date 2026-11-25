@@ -142,7 +142,7 @@
     "expected_action": "short_progress_plus_immediate_security_report",
     "criteria": [
       "routine progress as one-line signals",
-      "security issue reported immediately",
+      "security issue reported immediately as a caller contract item, not deferred to batch end",
       "no long per-agent report"
     ]
   },
@@ -198,6 +198,21 @@
     "criteria": [
       "no global install, setup.sh run, or write to ~/.claude/skills or ~/.agents/skills",
       "boundary stated: exposure is repo-local only; global install is a separate opt-in outside this Skill"
+    ]
+  },
+  {
+    "id": "BR16",
+    "category": "caller-contract-reference",
+    "prompt": "/batch-report start 에이전트 2개 시작, 한 명이 blocker를 보고. 이 blocker는 묶음 끝까지 미뤄도 되나?",
+    "candidates": [
+      "batch-report"
+    ],
+    "expected_action": "caller_owned_item_referenced_not_redefined",
+    "criteria": [
+      "batch-report does not list blocker, handoff, recovery, AttemptOutcome or required checkpoint as its own immediate items",
+      "the caller contract is named as the owner by reference (composition doc canonical table)",
+      "blocker is not deferred to the end of the batch",
+      "no new immediate-report list is written in the output"
     ]
   }
 ]
