@@ -46,6 +46,8 @@ test-agent-manifest-fixtures:
 
 test-git-identity-guard:
 	node ./scripts/test-git-identity-guard.mjs
+	node ./scripts/test-git-identity-runtime-guard.mjs
+	node ./scripts/test-git-identity-native-hooks.mjs
 
 test-result-fixtures:
 	./scripts/test-result-fixtures.sh
