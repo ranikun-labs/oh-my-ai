@@ -62,7 +62,7 @@ e. **권한 확장 금지**: `AI가 이어서 할 일`은 제안이다. 실행�
 | 에이전트별 행 | AI 실행 현황 표 (같은 열 구성, 관측되지 않은 값은 `UNKNOWN`) |
 
 - 관측 범위는 `complete` | `partial` | `unknown`으로 표시한다. `complete`는 호출자가 이 묶음의 입력을 빠짐없이 넘겼다고 확인한 경우에만 쓴다.
-- `/한글화`의 보존 불변식을 기준으로 적용한다: 의미, 수치, 단위, 날짜, URL, 인용, 코드, 경로, 식별자, SHA, 명령어, 표·목록 구조, 고유명사는 바꾸지 않는다.
+- 보존 불변식은 `skills/한글화/SKILL.md`의 `## 보존 대상 (변경 금지)` 절을 따른다. 목록을 이 Skill에 복제하지 않는다.
 - 이 Skill은 `/한글화`와 `/f1`을 호출하지 않는다. 두 Skill은 명시 호출 전용이며, 여기서는 기준만 참조한다.
 
 ## 6. 관측 범위와 증거 표현
@@ -86,16 +86,26 @@ checkpoint마다 대화 안에 ledger 블록을 남긴다(파일이 아니다).
 
 ## 9. 호출 관계
 - 단독 사용과 다른 workflow의 참조 사용을 모두 허용한다.
+- 노출 범위: 레포 로컬 상대 심볼릭 링크(`.claude/skills/batch-report`, `.agents/skills/batch-report`)만 추가한다. setup.sh와 전역 설치(`~/.claude/skills`, `~/.agents/skills`)는 바꾸지 않는다.
 - 호출자가 바뀌어도 입력 envelope와 집계 규칙은 같다. 호출자별 계약은 호출자가 소유한다.
 
 ## 10. 런타임 경계 (Claude Code · Codex 공통)
 - 공통 계약: 사용자에게 가는 모든 결과는 Main의 응답 텍스트다.
 - Skill이 통제하는 것: Main이 쓰는 텍스트(진행 신호, 종합, ledger).
 - Skill이 통제하지 못하는 것: 런타임·harness 알림, UI 배지, 완료 알림 훅의 발화 시점과 횟수.
-- 위험: completion-notify의 Stop 훅은 배경 에이전트가 끝날 때마다 열리는 Main 턴마다 발화할 수 있다. 묶음 중 알림이 과다해질 수 있다.
-- **상태: NOT_RUN.** 프로브 계획:
+
+### completion-notify 정적 분석 (저장소 코드 근거, 런타임 실행 아님)
+- 등록 이벤트: Claude는 `hooks.Stop` 배열에만 항목을 추가한다(`scripts/completion-notify.py:247`, `:253-266`, matcher 없음). `SubagentStop`·`Notification` 등록은 저장소에 없다. Codex는 최상위 `notify` 한 항목을 쓴다(`scripts/completion-notify.py:201`).
+- 이벤트 변환: Claude 어댑터는 입력 페이로드의 응답 필드를 버리고 `agent-turn-complete`를 무조건 만든다. 어떤 Stop이 Main 턴 종료인지 서브에이전트 종료인지 구분하지 않는다(`scripts/completion-notify-claude.sh:6-15`).
+- 중복 제거: 디스패처는 `flock(LOCK_EX|LOCK_NB)` 실패 시 큐잉 없이 `exit 0`으로 이벤트를 버린다(`scripts/completion-notify-dispatcher.sh:61-70`). 잠금은 공급자 실행 구간 동안만 유지된다(기본 1초, 상한 5초: `:58`; 종료는 SIGTERM 후 0.15초 뒤 SIGKILL: `:113-135`). 따라서 timeout 창 안에 들어온 이벤트는 합쳐지는 것이 아니라 버려지고, 창 밖의 이벤트는 각각 알림이 된다. 배치 단위 합치기는 없다.
+- 로그 한계: `dispatcher invoked` 로그는 잠금 획득 뒤에만 쓰므로(`:80`) 버려진 이벤트는 로그에도 남지 않는다.
+- 알림: 어댑터는 고정 제목·본문으로 `osascript display notification`을 호출한다(`scripts/completion-notify-macos.sh:22-27`). 이벤트당 1회이며 추가 dedupe는 없다.
+- 결론: 알림 수는 Stop 발화 수에서 잠금 창 중복을 뺀 값이다. N개 배경 에이전트가 끝날 때마다 Main 턴과 Stop이 열리는지는 저장소 코드로 결정되지 않는다(런타임 의존). 열린다면 창 밖 간격의 완료마다 알림이 나올 수 있다. 단, 이 Skill은 알림 발화를 통제하지 못한다.
+
+### 런타임 프로브: NOT_RUN
+- 프로브 계획:
   1. 즉시 종료하는 배경 에이전트 3개를 띄운다.
-  2. 런타임별로 (1) 사용자에게 보인 Main 텍스트 블록 수, (2) Stop 훅과 completion-notify 발화 수, (3) 런타임 UI 알림 수를 센다.
+  2. 런타임별로 (1) 사용자에게 보인 Main 텍스트 블록 수, (2) 로그 `${XDG_STATE_HOME:-$HOME/.local/state}/oh-my-ai/completion-notify.log`의 `dispatcher invoked` 줄 수(잠금 통과분만), (3) 런타임 UI 알림 수를 센다.
   3. 각 항목을 Skill 통제 가능 / 불가로 분류한다.
   4. 결과는 `capabilities/runtime-capabilities.json`에 나중에 기록한다. 이번 변경에서는 수정하지 않는다.
 

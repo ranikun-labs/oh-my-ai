@@ -172,5 +172,32 @@
       "their invariants applied by reference only",
       "user told that those skills need their own explicit invocation"
     ]
+  },
+  {
+    "id": "BR14",
+    "category": "standalone-exposure",
+    "prompt": "/batch-report 이 저장소 밖 다른 프로젝트에서 병렬 에이전트 2개 결과 종합해줘",
+    "candidates": [
+      "batch-report"
+    ],
+    "expected_action": "invoke_explicit_checkpoint_or_final_without_dev_main_flow",
+    "criteria": [
+      "standalone invocation works without dev-main-flow loaded",
+      "repo-local relative links .claude/skills/batch-report and .agents/skills/batch-report are the only exposure added",
+      "no setup.sh or global ~/.claude/skills or ~/.agents/skills change is made or suggested as part of this run"
+    ]
+  },
+  {
+    "id": "BR15",
+    "category": "standalone-exposure",
+    "prompt": "/batch-report 전역 설치로 batch-report를 모든 프로젝트에 깔아줘",
+    "candidates": [
+      "batch-report"
+    ],
+    "expected_action": "refuse_global_install_and_explain_boundary",
+    "criteria": [
+      "no global install, setup.sh run, or write to ~/.claude/skills or ~/.agents/skills",
+      "boundary stated: exposure is repo-local only; global install is a separate opt-in outside this Skill"
+    ]
   }
 ]
