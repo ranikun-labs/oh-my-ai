@@ -9,8 +9,10 @@ import path from "node:path";
 
 export const SCHEMA_VERSION = 1;
 export const CONFIG_ENV = "OH_MY_AI_GIT_IDENTITY_CONFIG";
+export const REMOTE_ENV = "OH_MY_AI_GIT_IDENTITY_REMOTE";
+export const ALLOW_UNVERIFIED_ENV = "OH_MY_AI_GIT_IDENTITY_ALLOW_UNVERIFIED_BINDING";
 
-const TOP_KEYS = new Set(["schema_version", "rules"]);
+const TOP_KEYS = new Set(["schema_version", "rules", "allow_env_overrides"]);
 const RULE_KEYS = new Set([
   "match",
   "author_email",
@@ -34,15 +36,42 @@ export function isZeroSha(sha) {
   return typeof sha === "string" && ZERO_SHA_RE.test(sha);
 }
 
-// Config path: explicit env override, else $XDG_CONFIG_HOME (only when absolute), else ~/.config.
-export function resolveConfigPath(env = process.env) {
-  if (nonEmpty(env[CONFIG_ENV])) {
-    return path.resolve(env[CONFIG_ENV]);
-  }
+// $XDG_CONFIG_HOME (only when absolute), else ~/.config. Ignores env overrides on purpose:
+// see loadEffectiveMapping.
+export function configBase(env = process.env) {
   const home = nonEmpty(env.HOME) ? env.HOME : os.homedir();
   const xdg = env.XDG_CONFIG_HOME;
-  const base = nonEmpty(xdg) && path.isAbsolute(xdg) ? xdg : path.join(home, ".config");
-  return path.join(base, "oh-my-ai", "git-identity.json");
+  return nonEmpty(xdg) && path.isAbsolute(xdg) ? xdg : path.join(home, ".config");
+}
+
+export function defaultConfigPath(env = process.env) {
+  return path.join(configBase(env), "oh-my-ai", "git-identity.json");
+}
+
+// Env overrides (OH_MY_AI_GIT_IDENTITY_CONFIG, OH_MY_AI_GIT_IDENTITY_REMOTE) are a
+// bypass channel for an AI agent that can set env vars. So they are honored only when the
+// mapping file at the default location says "allow_env_overrides": true (default false).
+// Otherwise the env value is ignored and reported as IGNORED.
+// Returns the loadConfig result plus { configPath, envOverride, allowEnvOverrides }.
+export function loadEffectiveMapping(env = process.env) {
+  const defaultPath = defaultConfigPath(env);
+  const base = loadConfig(defaultPath);
+  const allowEnvOverrides = base.ok && base.config.allow_env_overrides === true;
+  const requested = nonEmpty(env[CONFIG_ENV]) ? path.resolve(env[CONFIG_ENV]) : null;
+  if (!requested) {
+    return { ...base, configPath: defaultPath, envOverride: "NONE", allowEnvOverrides };
+  }
+  if (allowEnvOverrides) {
+    return { ...loadConfig(requested), configPath: requested, envOverride: "APPLIED", allowEnvOverrides };
+  }
+  return { ...base, configPath: defaultPath, envOverride: "IGNORED", ignoredPath: requested, allowEnvOverrides };
+}
+
+// Remote name used by pre-commit. The env value counts only when the mapping allows overrides.
+export function effectiveRemoteName(env, mapping) {
+  const requested = nonEmpty(env[REMOTE_ENV]) ? env[REMOTE_ENV].trim() : null;
+  if (requested && mapping.allowEnvOverrides) return requested;
+  return "origin";
 }
 
 function fail(code, detail) {
@@ -77,6 +106,9 @@ export function validateConfig(parsed) {
   }
   if (!Array.isArray(parsed.rules)) {
     return fail("CONFIG_SCHEMA_INVALID", "rules must be an array");
+  }
+  if (parsed.allow_env_overrides !== undefined && typeof parsed.allow_env_overrides !== "boolean") {
+    return fail("CONFIG_SCHEMA_INVALID", "allow_env_overrides must be a boolean");
   }
 
   const rules = [];
@@ -150,7 +182,10 @@ export function validateConfig(parsed) {
     aliasHost.set(rule.ssh_host_alias, rule.host);
   }
 
-  return { ok: true, config: { schema_version: SCHEMA_VERSION, rules } };
+  return {
+    ok: true,
+    config: { schema_version: SCHEMA_VERSION, allow_env_overrides: parsed.allow_env_overrides === true, rules },
+  };
 }
 
 export function loadConfig(configPath) {
@@ -290,4 +325,57 @@ export function evaluateCommit({ author, committer, rule, mode = "commit" }) {
 
 export function sameLogin(a, b) {
   return nonEmpty(a) && nonEmpty(b) && a.trim().toLowerCase() === b.trim().toLowerCase();
+}
+
+// ---------- identity proof parsers (pure; the CLI does the I/O) ----------
+
+// `ssh -T git@<host>` greeting: "Hi <login>! You've successfully authenticated...".
+// Returns the login or null. A bare "Permission denied" line never matches.
+export function parseSshGreeting(text) {
+  const match = /^Hi ([A-Za-z0-9][A-Za-z0-9-]{0,38})! You've successfully authenticated/m.exec(String(text ?? ""));
+  return match ? match[1] : null;
+}
+
+// `git credential fill` output (key=value lines). Returns { username, password } or null.
+// The password is for in-process use only; callers must never print it.
+export function parseCredentialFill(text) {
+  const fields = {};
+  for (const line of String(text ?? "").split("\n")) {
+    const idx = line.indexOf("=");
+    if (idx > 0) fields[line.slice(0, idx)] = line.slice(idx + 1);
+  }
+  if (!nonEmpty(fields.password)) return null;
+  return { username: fields.username ?? null, password: fields.password };
+}
+
+// REST `GET /user` JSON body. Returns the login or null.
+export function parseApiLogin(text) {
+  try {
+    const login = JSON.parse(String(text ?? "")).login;
+    return typeof login === "string" && LOGIN_RE.test(login) ? login : null;
+  } catch {
+    return null;
+  }
+}
+
+// `gh api user --jq .login` prints one login line.
+export function parseGhLogin(text) {
+  const line = String(text ?? "").trim();
+  return LOGIN_RE.test(line) ? line : null;
+}
+
+// REST user endpoint for a git host. github.com has its own API host; other hosts
+// (GitHub Enterprise Server) serve the API under /api/v3.
+export function userApiUrl(host) {
+  if (host === "github.com") return "https://api.github.com/user";
+  return `https://${host}/api/v3/user`;
+}
+
+// PROVEN only when the observed login equals the rule's github_user. A different login is
+// MISMATCH. Missing or unparseable evidence is UNPROVEN.
+export function compareProvenLogin(observed, expected) {
+  if (!nonEmpty(observed)) return { status: "UNPROVEN", reason: "NO_LOGIN_OBSERVED" };
+  return sameLogin(observed, expected)
+    ? { status: "PROVEN", reason: "LOGIN_MATCHES" }
+    : { status: "MISMATCH", reason: "LOGIN_DIFFERS" };
 }

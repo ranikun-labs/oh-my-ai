@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "allow_env_overrides": false,
   "rules": [
     {
       "match": "github.com/<work-org>/*",
