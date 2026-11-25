@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "contract_source": "docs/contracts/runtime-capability-contract.md",
+  "contract_source": "harness-foundation-docs:docs/contracts/runtime-capability-contract.md",
   "scope_note": "V1 P0 scope is the Static Capability declaration only. The full Handoff Requirement Mapping / Compatibility computation engine described in Runtime Capability Contract Part V is V1 Alpha quality, not P0 (see Contract Part I: 'Runtime Projection\uacfc Runtime\ubcc4 \uc815\uc801 \uc0ac\uc6a9 \uc548\ub0b4 \uace0\ub3c4\ud654\ub294 V1 Alpha \ud488\uc9c8 \ubc94\uc704\ub2e4').",
   "runtimes": {
     "claude": {

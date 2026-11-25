@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "policy_version": "policy-version-placeholder",
+  "previous_version": null,
+  "models": [
+    {
+      "provider": "provider-placeholder",
+      "id": "model-id-placeholder",
+      "enabled": false,
+      "efforts": { "low": false, "medium": false, "high": false, "xhigh": false, "max": false },
+      "modes": { "standard": false, "fast": false }
+    }
+  ],
+  "roles": {
+    "role-placeholder": []
+  },
+  "cost_limits": {},
+  "substitutions": [],
+  "evaluation_ref": null
+}
