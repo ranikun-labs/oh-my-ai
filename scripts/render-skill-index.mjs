@@ -5,7 +5,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(__dirname, "..");
+// --root <dir>: render against another tree that contains skills/ (used by tests). Default: this repo.
+const repoRoot = parseRootArg(process.argv.slice(2)) ?? path.resolve(__dirname, "..");
 const skillsDir = path.join(repoRoot, "skills");
 const outputPath = path.join(skillsDir, "skill-index.json");
 
@@ -13,9 +14,7 @@ const VISIBILITY = new Set(["always", "contextual", "optional", "hidden"]);
 const RISK_LEVEL = new Set(["low", "medium", "high"]);
 const TRIGGER_KIND = new Set(["keyword", "intent", "pattern"]);
 
-const skills = fs.readdirSync(skillsDir, { withFileTypes: true })
-  .filter(entry => entry.isDirectory())
-  .map(entry => entry.name)
+const skills = enumerateSkillDirs(skillsDir)
   .sort()
   .map(name => path.join(skillsDir, name, "SKILL.md"))
   .filter(file => fs.existsSync(file))
@@ -31,6 +30,49 @@ const index = {
 
 fs.writeFileSync(outputPath, `${JSON.stringify(index, null, 2)}\n`, "utf8");
 console.log(`Rendered ${path.relative(repoRoot, outputPath)}`);
+
+function parseRootArg(args) {
+  for (let i = 0; i < args.length; i += 1) {
+    if (args[i] === "--root") {
+      if (!args[i + 1]) throw new Error("--root requires a directory");
+      return path.resolve(args[i + 1]);
+    }
+    if (args[i].startsWith("--root=")) return path.resolve(args[i].slice("--root=".length));
+    throw new Error(`unknown argument: ${args[i]}`);
+  }
+  return null;
+}
+
+// Real directories are canonical skills. A symlink is resolved explicitly, because
+// Dirent.isDirectory() is false for symlinks and they would otherwise vanish silently.
+function enumerateSkillDirs(dir) {
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  const names = entries.filter(entry => entry.isDirectory()).map(entry => entry.name);
+  const canonical = new Set(names);
+  const realDir = fs.realpathSync(dir);
+
+  for (const entry of entries) {
+    if (!entry.isSymbolicLink()) continue;
+    const linkPath = path.join(dir, entry.name);
+    let target;
+    try {
+      target = fs.realpathSync(linkPath);
+    } catch {
+      console.error(`warning: ${relativePath(linkPath)} is a dangling symlink; skipped`);
+      continue;
+    }
+    if (!fs.statSync(target).isDirectory()) {
+      console.error(`warning: ${relativePath(linkPath)} does not point to a directory; skipped`);
+      continue;
+    }
+    if (path.dirname(target) === realDir && canonical.has(path.basename(target))) {
+      continue; // alias of a skill already counted as a real directory
+    }
+    console.error(`warning: ${relativePath(linkPath)} points outside skills/ or to a non-skill path; skipped`);
+  }
+
+  return names;
+}
 
 function readSkill(file) {
   const text = fs.readFileSync(file, "utf8");
