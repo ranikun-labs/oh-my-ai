@@ -4,6 +4,8 @@
 //
 //   node scripts/skill-pilot-check.mjs <id> <group> [--verbose] [--keep]
 //
+// 종료 코드: 0 PASS, 1 FAIL, 2 사용법 오류, 3 DEPENDENCY_MISSING(.github/ci/yaml 미설치 → npm ci --prefix .github/ci/yaml --ignore-scripts)
+//
 // 단계:
 //   1 discovery-pre     복사본(이동 전) discovery --check
 //   2 discovery-post    이동 후 discovery --check, --resolve 가 새 위치를 가리키는지
@@ -21,6 +23,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { RESERVED_GROUPS, discoverSkills, resolveSkill } from "./lib/skill-discovery.mjs";
+import { DEPENDENCY_MISSING_EXIT_CODE, missingYamlDependency } from "./lib/yaml-dependency.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const EXPOSURE_DIRS = [".claude/skills", ".agents/skills"];
@@ -42,6 +45,13 @@ if (positional.length !== 2) {
 }
 
 function main(id, group) {
+  // 고정 YAML 파서가 없으면 게이트 단계가 generic FAIL로 흩어지므로 먼저 멈춘다.
+  const dependency = missingYamlDependency(repoRoot);
+  if (dependency) {
+    console.error(`skill-pilot-check: ${dependency}`);
+    process.exitCode = DEPENDENCY_MISSING_EXIT_CODE;
+    return;
+  }
   if (!RESERVED_GROUPS.includes(group)) {
     return usage(`group must be one of: ${RESERVED_GROUPS.join(", ")}`);
   }

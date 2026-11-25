@@ -12,6 +12,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { discoverSkills } from "./lib/skill-discovery.mjs";
 import { checkExposureLinks } from "./check-skill-exposure-links.mjs";
+import { DEPENDENCY_MISSING_EXIT_CODE, missingYamlDependency } from "./lib/yaml-dependency.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const cli = path.join(repoRoot, "scripts", "lib", "skill-discovery.mjs");
@@ -34,6 +35,7 @@ try {
   testExposureLinksPass();
   testExposureLinksFailures();
   testExposureLinksCli();
+  testPilotDependencyMissing();
   console.log("skill-discovery fixtures: PASS");
 } finally {
   fs.rmSync(work, { recursive: true, force: true });
@@ -307,4 +309,27 @@ function testExposureLinksCli() {
   const real = spawnSync(process.execPath, [exposureGate], { encoding: "utf8" });
   assert.equal(real.status, 0, `repository exposure links must pass: ${real.stdout}${real.stderr}`);
   console.log("ok: exposure-link CLI exit codes, and the real repository passes");
+}
+
+// 고정 YAML 파서가 없으면 pilot-check 는 generic step FAIL 이 아니라 DEPENDENCY_MISSING(exit 3)으로 멈춰야 한다.
+function testPilotDependencyMissing() {
+  const hint = /^DEPENDENCY_MISSING: \.github\/ci\/yaml\/node_modules\/yaml not installed; fix: npm ci --prefix \.github\/ci\/yaml --ignore-scripts$/;
+  const bare = newRoot("yaml-dep-missing");
+  assert.match(missingYamlDependency(bare), hint);
+
+  const installed = newRoot("yaml-dep-installed");
+  fs.mkdirSync(path.join(installed, ".github", "ci", "yaml", "node_modules", "yaml"), { recursive: true });
+  fs.writeFileSync(path.join(installed, ".github", "ci", "yaml", "node_modules", "yaml", "package.json"), "{\"name\":\"yaml\"}\n");
+  assert.equal(missingYamlDependency(installed), null);
+
+  // 실제 CLI: scripts/ 만 복사하고 node_modules 없이 실행 → 단계표 없이 DEPENDENCY_MISSING 으로 끝나야 한다.
+  const copy = newRoot("yaml-dep-cli");
+  fs.cpSync(path.join(repoRoot, "scripts"), path.join(copy, "scripts"), { recursive: true });
+  fs.mkdirSync(path.join(copy, ".github", "ci", "yaml"), { recursive: true });
+  fs.copyFileSync(path.join(repoRoot, ".github", "ci", "yaml", "package.json"), path.join(copy, ".github", "ci", "yaml", "package.json"));
+  const run = spawnSync(process.execPath, [path.join(copy, "scripts", "skill-pilot-check.mjs"), "senior", "core"], { encoding: "utf8" });
+  assert.equal(run.status, DEPENDENCY_MISSING_EXIT_CODE, `${run.stdout}${run.stderr}`);
+  assert.match(run.stderr, /skill-pilot-check: DEPENDENCY_MISSING: /);
+  assert.doesNotMatch(`${run.stdout}${run.stderr}`, /STEP|FAIL/, "must not report generic step results");
+  console.log("ok: pilot-check reports DEPENDENCY_MISSING (exit 3) when the pinned YAML parser is absent");
 }

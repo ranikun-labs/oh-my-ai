@@ -12,9 +12,15 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { DEFAULT_REPO_ROOT, discoverSkills } from "./lib/skill-discovery.mjs";
+import { DEPENDENCY_MISSING_EXIT_CODE, missingYamlDependency } from "./lib/yaml-dependency.mjs";
 
+// 고정 YAML 파서는 import 시점이 아니라 검사 시점에 로드한다. 미설치여도 모듈 import 자체는 실패하지 않고 DEPENDENCY_MISSING 으로 보고하기 위함.
 const require = createRequire(import.meta.url);
-const { validateSkillFrontmatter } = require("./lib/skill-frontmatter-validation.cjs");
+let frontmatterValidator = null;
+function validateSkillFrontmatter(frontmatter, name) {
+  frontmatterValidator ??= require("./lib/skill-frontmatter-validation.cjs").validateSkillFrontmatter;
+  return frontmatterValidator(frontmatter, name);
+}
 
 export const EXPOSURE_DIRS = Object.freeze([".claude/skills", ".agents/skills"]);
 
@@ -22,6 +28,9 @@ export function checkExposureLinks(repoRoot = DEFAULT_REPO_ROOT) {
   const root = path.resolve(repoRoot);
   const problems = [];
   const counts = {};
+
+  const dependency = missingYamlDependency(DEFAULT_REPO_ROOT);
+  if (dependency) return { ok: false, problems: [dependency], counts, dependencyMissing: true };
 
   // discovery 오류가 있으면 Source 집합 자체를 믿을 수 없으므로 그대로 실패시킨다.
   const discovery = discoverSkills(root);
@@ -137,6 +146,9 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       const summary = Object.entries(result.counts).map(([dir, n]) => `${dir}=${n}`).join(", ");
       console.log(`skill-exposure-links: OK (${summary})`);
       console.log("This check validates link structure only; it does not prove Native Skill discovery or invocation.");
+    } else if (result.dependencyMissing) {
+      console.error(result.problems[0]);
+      process.exitCode = DEPENDENCY_MISSING_EXIT_CODE;
     } else {
       for (const problem of result.problems) console.error(`FAIL: ${problem}`);
       process.exitCode = 1;
