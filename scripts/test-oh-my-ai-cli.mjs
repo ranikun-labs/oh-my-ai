@@ -9,6 +9,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { buildPreloadBlock } from "./lib/oh-my-ai-context.mjs";
+import { CORE_SKILLS } from "./lib/oh-my-ai-core-skills.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "ohmyai-cli-test-"));
@@ -58,6 +60,16 @@ function cli(sb, args, extraEnv = {}, { cwd } = {}) {
   return spawnSync(process.execPath, [path.join(sb.clone, "scripts", "oh-my-ai.mjs"), ...args], {
     cwd: cwd ?? sb.clone,
     env: envFor(sb, extraEnv),
+    encoding: "utf8",
+  });
+}
+
+// 훅 실행: stdin 을 넘기고 같은 임시 HOME/XDG 환경에서 실제 진입점을 돌린다.
+function hookRun(sb, runtime, event, stdin = "", extraEnv = {}) {
+  return spawnSync(process.execPath, [path.join(sb.clone, "scripts", "oh-my-ai.mjs"), "hook", runtime, event], {
+    cwd: sb.clone,
+    env: envFor(sb, extraEnv),
+    input: stdin,
     encoding: "utf8",
   });
 }
@@ -336,6 +348,163 @@ test("internal subcommands stay compatible (smoke)", () => {
   const unknown = cli(sb, ["no-such-command"]);
   assert.equal(unknown.status, 2);
   assert.match(unknown.stderr, /unknown command: no-such-command/);
+});
+
+
+test("context.inject=off: advisory hints and backlog skipped, Jira-first kept", () => {
+  const sb = makeFixture("inject-off");
+  fs.writeFileSync(path.join(sb.clone, "automation-backlog.md"), "BACKLOG-MARKER\n");
+  const stdin = JSON.stringify({
+    prompt: "이 기능 Jira 티켓 확인하고 구현해줘. 매번 같은 수동 작업이라 자동화하고 싶어",
+    session_id: "s-inject",
+  });
+  const on = hookRun(sb, "claude", "UserPromptSubmit", stdin);
+  assert.equal(on.status, 0, on.stderr);
+  const onCtx = JSON.parse(on.stdout).hookSpecificOutput.additionalContext;
+  assert.match(onCtx, /Toil signal/);
+  assert.match(onCtx, /Skill routing candidates/);
+  assert.match(onCtx, /Jira-first/);
+
+  assert.equal(cli(sb, ["config", "set", "context.inject", "off"]).status, 0);
+  const off = hookRun(sb, "claude", "UserPromptSubmit", stdin);
+  assert.equal(off.status, 0, off.stderr);
+  const offCtx = JSON.parse(off.stdout).hookSpecificOutput.additionalContext;
+  assert.match(offCtx, /Jira-first/, "Jira-first hint must stay on");
+  assert.doesNotMatch(offCtx, /Toil signal|Skill routing candidates|Project context signal/);
+
+  const start = hookRun(sb, "claude", "SessionStart", "{}");
+  assert.equal(start.status, 0);
+  assert.doesNotMatch(start.stdout, /BACKLOG-MARKER/);
+
+  assert.equal(cli(sb, ["config", "set", "context.inject", "on"]).status, 0);
+  assert.match(hookRun(sb, "claude", "SessionStart", "{}").stdout, /BACKLOG-MARKER/);
+});
+
+test("context.preload: summary and path only, within the 2048-byte cap", () => {
+  const sb = makeFixture("preload");
+  const ids = ["work-start", "f1", "senior", "project-context", "handoff-prompt", "git-work-preflight",
+    "execution-recovery", "dev-main-flow", "adaptive-goal-closure", "engineering-communication-ko", "batch-report"];
+  assert.equal(cli(sb, ["config", "set", "context.preload", ids.join(",")]).status, 0);
+  const r = hookRun(sb, "claude", "SessionStart", "{}");
+  assert.equal(r.status, 0, r.stderr);
+  const ctx = JSON.parse(r.stdout).hookSpecificOutput.additionalContext;
+  const start = ctx.indexOf("[HARNESS:preload]");
+  assert.ok(start >= 0, "preload block missing");
+  const block = ctx.slice(start);
+  assert.ok(Buffer.byteLength(block, "utf8") <= 2048, `preload is ${Buffer.byteLength(block, "utf8")} bytes`);
+  assert.match(block, /- work-start: .+ — skills\/work-start\/SKILL\.md/);
+  assert.match(block, /- batch-report: \(missing source; not preloaded\)/);
+  assert.doesNotMatch(block, /^## /m, "full skill body must not be injected");
+  assert.doesNotMatch(block, /^---$/m, "frontmatter must not be injected");
+});
+
+test("context.preload: byte cap truncates and reports omitted entries", () => {
+  const r = buildPreloadBlock(repoRoot, [...CORE_SKILLS], 400);
+  assert.ok(Buffer.byteLength(r.text, "utf8") <= 400, `bytes=${Buffer.byteLength(r.text, "utf8")}`);
+  assert.ok(r.omitted.length > 0);
+  assert.match(r.text, /\+\d+ more not shown/);
+  const full = buildPreloadBlock(repoRoot, [...CORE_SKILLS]);
+  assert.ok(full.bytes <= 2048, `full bytes=${full.bytes}`);
+  assert.deepEqual(full.omitted, []);
+});
+
+test("config read failure: defaults stay on, hook exits 0, SessionStart warns once", () => {
+  const sb = makeFixture("config-broken");
+  fs.mkdirSync(path.join(sb.cfg, "oh-my-ai"), { recursive: true });
+  const file = path.join(sb.cfg, "oh-my-ai", "config.json");
+  fs.writeFileSync(file, "{not json");
+  const up = hookRun(sb, "claude", "UserPromptSubmit", JSON.stringify({ prompt: "이 기능 Jira 티켓 확인하고 구현해줘", session_id: "s-b" }));
+  assert.equal(up.status, 0, up.stderr);
+  assert.match(JSON.parse(up.stdout).hookSpecificOutput.additionalContext, /Jira-first/);
+  const ss = hookRun(sb, "claude", "SessionStart", "{}");
+  assert.equal(ss.status, 0, ss.stderr);
+  assert.match(JSON.parse(ss.stdout).systemMessage, /기본값/);
+  assert.equal(fs.readFileSync(file, "utf8"), "{not json", "broken config must not be overwritten");
+  assert.equal(cli(sb, ["status"]).status, 0);
+});
+
+test("status: update.policy=AUTO shown as stored, auto-run NOT IMPLEMENTED", () => {
+  const sb = makeFixture("status-auto");
+  assert.equal(cli(sb, ["config", "set", "update.policy", "AUTO"]).status, 0);
+  const text = cli(sb, ["status"]).stdout;
+  assert.match(text, /update\.policy\s+AUTO → stored; auto-run NOT IMPLEMENTED \(behaves as CHECK\)/);
+  const j = JSON.parse(cli(sb, ["status", "--json"]).stdout);
+  assert.equal(j.honesty.settings["update.policy"].setting, "AUTO");
+  assert.match(j.honesty.settings["update.policy"].effective, /NOT IMPLEMENTED/);
+  assert.equal(j.honesty.discovery.native_discovery, "NOT_VERIFIED (requires runtime E2E)");
+  assert.equal(j.honesty.guards.git_identity_guard, "not installed");
+});
+
+test("status: context.inject is effective only when the installed hook points to this source", () => {
+  const sb = makeFixture("status-effective");
+  assert.match(cli(sb, ["status"]).stdout, /context\.inject\s+on → not effective: hooks not installed\/other source/);
+
+  // 이 소스를 가리키는 설치: 훅 설정 + 진입점 링크
+  fs.mkdirSync(sb.claude, { recursive: true });
+  fs.copyFileSync(path.join(sb.clone, "claude", "settings.json"), path.join(sb.claude, "settings.json"));
+  fs.mkdirSync(sb.bin, { recursive: true });
+  fs.symlinkSync(path.join(sb.clone, "scripts", "oh-my-ai.mjs"), path.join(sb.bin, "oh-my-ai"));
+  const mine = cli(sb, ["status"]).stdout;
+  assert.match(mine, /context\.inject\s+on → effective: hook reads config \(v1\.0\.0 @ [0-9a-f]+\)/);
+
+  // 다른 소스를 가리키는 설치는 effective로 보지 않는다
+  const other = path.join(sb.base, "other-source");
+  fs.mkdirSync(path.join(other, "scripts"), { recursive: true });
+  fs.writeFileSync(path.join(other, "scripts", "oh-my-ai.mjs"), "// other\n");
+  fs.rmSync(path.join(sb.bin, "oh-my-ai"));
+  fs.symlinkSync(path.join(other, "scripts", "oh-my-ai.mjs"), path.join(sb.bin, "oh-my-ai"));
+  const theirs = cli(sb, ["status"]).stdout;
+  assert.match(theirs, /context\.inject\s+on → not effective: hooks point to other source/);
+  assert.doesNotMatch(theirs, /effective: hook reads config/);
+});
+
+test("update --apply: refuses on a non-default branch unless --ref names it", () => {
+  const sb = makeFixture("update-branch");
+  git(sb.clone, ["checkout", "-q", "-b", "feature/x"]);
+  git(sb.clone, ["push", "-q", "origin", "feature/x"]);
+  const head = git(sb.clone, ["rev-parse", "HEAD"]);
+  const refused = cli(sb, ["update", "--apply"]);
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /non-default branch "feature\/x"/);
+  assert.equal(git(sb.clone, ["rev-parse", "HEAD"]), head);
+  const wrongRef = cli(sb, ["update", "--apply", "--ref", "origin/master"]);
+  assert.equal(wrongRef.status, 1);
+  assert.match(wrongRef.stderr, /non-default branch/);
+  const matched = cli(sb, ["update", "--apply", "--ref", "origin/feature/x"], { CODEX_DIR: sb.codex });
+  assert.equal(matched.status, 0, `${matched.stdout}\n${matched.stderr}`);
+  assert.match(matched.stdout, /nothing to fast-forward/);
+});
+
+test("update --apply: refuses while another worktree has uncommitted changes; --force-worktrees overrides", () => {
+  const sb = makeFixture("update-worktree");
+  pushPeerCommit(sb, "peer-wt.txt", "x\n");
+  const wt = path.join(sb.base, "writer-wt");
+  git(sb.clone, ["worktree", "add", "-q", "-b", "writer", wt]);
+  fs.writeFileSync(path.join(wt, "wip.txt"), "in progress\n");
+  const head = git(sb.clone, ["rev-parse", "HEAD"]);
+
+  const check = cli(sb, ["update"]);
+  assert.equal(check.status, 0, check.stderr);
+  assert.match(check.stdout, /1 other worktree\(s\) have uncommitted changes/);
+
+  const refused = cli(sb, ["update", "--apply"], { CODEX_DIR: sb.codex });
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /uncommitted changes/);
+  assert.match(refused.stderr, /writer-wt/);
+  assert.equal(git(sb.clone, ["rev-parse", "HEAD"]), head);
+
+  const forced = cli(sb, ["update", "--apply", "--force-worktrees"], { CODEX_DIR: sb.codex });
+  assert.equal(forced.status, 0, `${forced.stdout}\n${forced.stderr}`);
+  assert.match(forced.stdout, /warning: --force-worktrees set/);
+  assert.equal(git(sb.clone, ["rev-parse", "HEAD"]), git(sb.clone, ["rev-parse", "origin/master"]));
+});
+
+test("doctor: prints bootstrap hint when ohmyai entrypoints are absent", () => {
+  const sb = makeFixture("doctor-bootstrap");
+  const r = cli(sb, ["doctor"]);
+  assert.match(r.stdout, /=== bootstrap/);
+  assert.match(r.stdout, /\.\/setup\.sh --install-shared --dry-run/);
+  assert.match(r.stdout, /Windows Native/);
 });
 
 // ---------------- report ----------------

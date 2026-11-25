@@ -4,6 +4,7 @@ import crypto from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { matchSkillCandidatesWithStatus } from "./lib/routing-status.mjs";
+import { loadContextConfig } from "./lib/oh-my-ai-context.mjs";
 import { needsJiraFirstDevelopmentPreflight } from "./lib/jira-first-development-intent.mjs";
 import {
   appendAutomationCandidate,
@@ -37,7 +38,9 @@ process.stdin.on("end", () => {
   }
   const runtime = format === "claude-json" ? "claude" : format === "codex-json" ? "codex" : "text";
   const sessionId = String(event.session_id || event.sessionId || "");
-  const payload = buildPromptRoutingPayload(prompt, { runtime, sessionId });
+  // context.inject=off 는 advisory 주입만 끈다. 설정 실패는 기본값(on)으로 돌아간다.
+  const inject = loadContextConfig(process.env).inject !== "off";
+  const payload = buildPromptRoutingPayload(prompt, { runtime, sessionId, inject });
 
   if (format === "routing-json") {
     process.stdout.write(`${JSON.stringify(payload.routing, null, 2)}\n`);
@@ -100,6 +103,10 @@ function buildPromptRoutingPayload(prompt, options = {}) {
   const normalized = prompt.toLowerCase();
   const runtime = options.runtime;
   const sessionId = options.sessionId;
+  // inject=false: 스킬 후보·toil/handoff/project-context 힌트·work-start 제안 같은 advisory 문구만 뺀다.
+  // Jira-first 힌트는 항상 켠다: Jira Create/Update 승인 경계와 중복 이슈 방지를 알리는 안전 문구라서 주입 설정으로 끄지 않는다.
+  // state 쓰기(toil 후보 기록)·실패 진단 문구·라우팅 경고도 계속 남긴다 (telemetry/진단은 설정과 무관).
+  const inject = options.inject !== false;
   const explicitWorkStart = hasExplicitWorkStartInvocation(prompt, runtime);
   const executionStatus = getWorkStartExecutionStatus(process.cwd(), runtime, sessionId, prompt);
   const completedWorkStart = executionStatus.recent;
@@ -130,7 +137,7 @@ function buildPromptRoutingPayload(prompt, options = {}) {
   if (hasToilSignal(prompt, normalized)) {
     const candidateResult = appendAutomationCandidate(harnessRepositoryRoot, prompt, { productCwd: process.cwd() });
     if (candidateResult.persisted) {
-      notes.push("- Toil signal: a prompt digest was stored under the user-local oh-my-ai state root. Promote only user-confirmed items to `automation-backlog.md`; nudge only if the flow is recurring, stable, and worth automating. Do not create automation before user confirmation.");
+      if (inject) notes.push("- Toil signal: a prompt digest was stored under the user-local oh-my-ai state root. Promote only user-confirmed items to `automation-backlog.md`; nudge only if the flow is recurring, stable, and worth automating. Do not create automation before user confirmation.");
     } else {
       const errorCode = candidateResult.errorCode || "state_write_failed";
       const outcomeUncertain = ["state_publish_durability_unknown", "state_lock_release_failed"].includes(errorCode);
@@ -142,8 +149,8 @@ function buildPromptRoutingPayload(prompt, options = {}) {
     }
   }
 
-  const handoff = hasHandoffSignal(prompt, normalized);
-  const pr = hasPrSignal(prompt, normalized);
+  const handoff = inject && hasHandoffSignal(prompt, normalized);
+  const pr = inject && hasPrSignal(prompt, normalized);
   const legacyHandoffNudged = handoff || pr;
   if (legacyHandoffNudged) {
     const prSuffix = pr ? " For PR creation, verify first and also consider whether the `project-context` CONTEXT CHECKPOINT needs updating." : "";
@@ -152,12 +159,13 @@ function buildPromptRoutingPayload(prompt, options = {}) {
     );
   }
 
-  if (hasProjectContextSignal(prompt, normalized)) {
+  if (inject && hasProjectContextSignal(prompt, normalized)) {
     notes.push("- Project context signal: consider `project-context` CREATE/UPDATE before proceeding; a durable context checkpoint must include decision background, not only a task list.");
   }
 
   if (
-    (runtime === "claude" || runtime === "codex")
+    inject
+    && (runtime === "claude" || runtime === "codex")
     && hasWorkStartIntentSignal(prompt, normalized)
   ) {
     workStartSuggestion = buildWorkStartSuggestion(prompt, options.runtime);
@@ -184,7 +192,7 @@ function buildPromptRoutingPayload(prompt, options = {}) {
     }
   }
 
-  if (routedCandidates.candidates.length > 0) {
+  if (inject && routedCandidates.candidates.length > 0) {
     const rendered = routedCandidates.candidates
       .map(candidate => `\`${candidate.name}\` (matched: ${candidate.matched.join(", ")})`)
       .join(", ");

@@ -295,6 +295,133 @@ function executionMode(repoRoot, env) {
   return { value: "patch-with-approval", source: "default" };
 }
 
+const DEFAULT_BRANCH = "master";
+
+function realpathOr(p) {
+  try {
+    return fs.realpathSync(p);
+  } catch {
+    return path.resolve(p);
+  }
+}
+
+// 링크/경로가 가리키는 oh-my-ai 소스 루트(scripts/oh-my-ai.mjs 를 가진 조상)를 찾는다.
+function rootOfTarget(file) {
+  let dir = path.dirname(file);
+  for (let i = 0; i < 8; i += 1) {
+    if (fs.existsSync(path.join(dir, "scripts", "oh-my-ai.mjs"))) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return null;
+}
+
+function headOf(root) {
+  if (!root) return "unknown";
+  const r = spawnSync("git", ["-C", root, "rev-parse", "--short", "HEAD"], { encoding: "utf8" });
+  return r.status === 0 ? r.stdout.trim() : "no-git";
+}
+
+// 설치된 링크의 관계: this(이 소스) | other(다른 소스) | absent | dangling | conflict(사용자 파일)
+function linkRelation(linkPath, repoRoot) {
+  let st;
+  try {
+    st = fs.lstatSync(linkPath);
+  } catch {
+    return { relation: "absent", root: null };
+  }
+  if (!st.isSymbolicLink()) return { relation: "conflict", root: null };
+  if (!fs.existsSync(linkPath)) return { relation: "dangling", root: null };
+  const target = realpathOr(linkPath);
+  const root = rootOfTarget(target);
+  if (root && realpathOr(root) === realpathOr(repoRoot)) return { relation: "this", root };
+  return { relation: "other", root };
+}
+
+function sourceLabel(info, repoRoot, repoHead) {
+  if (info.relation === "this") return `this source @ ${repoHead}`;
+  if (info.relation === "other") return `other source ${info.root ?? "unknown"} @ ${headOf(info.root)}`;
+  return info.relation;
+}
+
+// 정책별 실제 동작을 정직하게 적는다. 저장된 값이 곧 실행된 값이 아니다.
+function settingsHonesty(config, hooks, entrypoints, repoHead, repoRoot, version, localBin) {
+  const policy = config["update.policy"];
+  const inject = config["context.inject"];
+  const preload = config["context.preload"] ?? [];
+  const hookWired = ["claude", "codex"].some(r => hooks[r].configured === "ready" && hooks[r].enabled === "enabled");
+  const entryInfo = linkRelation(path.join(localBin, ALIAS), repoRoot);
+  const entryThisSource = entrypoints[ALIAS] === "ready" && entryInfo.relation === "this";
+
+  let injectEffective;
+  if (hookWired && entryThisSource) {
+    injectEffective = `effective: hook reads config (v${version} @ ${repoHead})`;
+  } else if (hookWired && entryInfo.relation === "other") {
+    injectEffective = `not effective: hooks point to other source (${entryInfo.root ?? "unknown"})`;
+  } else {
+    injectEffective = "not effective: hooks not installed/other source";
+  }
+
+  let policyEffective;
+  if (policy === "AUTO") policyEffective = "stored; auto-run NOT IMPLEMENTED (behaves as CHECK)";
+  else policyEffective = "manual only (no automatic run path exists)";
+
+  let preloadEffective;
+  if (preload.length === 0) preloadEffective = "not injected (empty list)";
+  else if (inject === "off") preloadEffective = "not injected (context.inject=off)";
+  else if (hookWired && entryThisSource) preloadEffective = `injected on SessionStart (summary+path, cap 2048 bytes)`;
+  else preloadEffective = "not injected: hooks not installed/other source";
+
+  return {
+    "update.policy": { setting: policy, effective: policyEffective },
+    "context.inject": { setting: inject, effective: injectEffective },
+    "context.preload": { setting: preload, effective: preloadEffective },
+  };
+}
+
+function pathHasDir(env, dir) {
+  return (env.PATH || "").split(path.delimiter).some(p => p && realpathOr(p) === realpathOr(dir));
+}
+
+// 다른 Writer worktree 중 미커밋 변경이 있는 것. 현재 worktree는 제외한다.
+function otherDirtyWorktrees(repoRoot) {
+  const list = git(repoRoot, ["worktree", "list", "--porcelain"]);
+  if (!list.ok) return [];
+  const self = realpathOr(repoRoot);
+  const entries = [];
+  let cur = null;
+  for (const line of list.out.split("\n")) {
+    if (line.startsWith("worktree ")) {
+      cur = { path: line.slice("worktree ".length) };
+      entries.push(cur);
+    } else if (line.startsWith("branch ") && cur) {
+      cur.branch = line.slice("branch ".length).replace(/^refs\/heads\//, "");
+    }
+  }
+  const dirty = [];
+  for (const wt of entries) {
+    if (realpathOr(wt.path) === self || !isDir(wt.path)) continue;
+    const st = spawnSync("git", ["-C", wt.path, "status", "--porcelain"], { encoding: "utf8" });
+    if (st.status !== 0) continue;
+    const count = (st.stdout || "").split("\n").filter(Boolean).length;
+    if (count > 0) dirty.push({ path: wt.path, branch: wt.branch ?? null, dirtyFiles: count });
+  }
+  return dirty;
+}
+
+function bootstrapHint(localBin) {
+  return [
+    "=== bootstrap (ohmyai 미설치: 진입점 링크가 없습니다) ===",
+    "  git clone <oh-my-ai 저장소 URL> && cd oh-my-ai",
+    "  ./setup.sh --install-shared --dry-run    # 변경 없이 미리 보기",
+    "  ./setup.sh --install-shared              # 적용 (기존 사용자 파일은 보존)",
+    "  ohmyai status                            # 결과 확인",
+    `  PATH: ${localBin} 이 PATH에 있어야 ohmyai를 실행할 수 있습니다 (echo $PATH 로 확인, 없으면 셸 설정에 추가).`,
+    "  Windows Native: install/doctor/update --apply 는 UNSUPPORTED (bash 필요). WSL 안에서 실행하세요.",
+  ].join("\n");
+}
+
 function collectStatus(repoRoot, env) {
   const dirs = dirsFor(env);
   const git = gitState(repoRoot);
@@ -346,6 +473,9 @@ function collectStatus(repoRoot, env) {
 
   if (config.error) add("FAIL", "config", config.error);
   else add("OK", "config", `update.policy=${config.values["update.policy"]} context.inject=${config.values["context.inject"]}`);
+  if (!config.error && config.values["update.policy"] === "AUTO") {
+    add("WARN", "policy", "update.policy=AUTO 는 저장만 됩니다: auto-run NOT IMPLEMENTED (CHECK로 동작)");
+  }
 
   for (const [name, state] of Object.entries(entrypoints)) {
     if (state === "ready") add("OK", "entrypoint", `${name} 링크 정상`);
@@ -377,6 +507,42 @@ function collectStatus(repoRoot, env) {
   const summary = { OK: 0, WARN: 0, FAIL: 0 };
   for (const c of checks) summary[c.level] += 1;
 
+  const repoHead = git.isRepo ? git.head : "no-git";
+  const version = readVersion(repoRoot);
+  const installed = {
+    entrypoints: Object.fromEntries([BIN, ALIAS].map(name => {
+      const info = linkRelation(path.join(dirs.localBin, name), repoRoot);
+      return [name, { state: entrypoints[name], relation: info.relation, label: sourceLabel(info, repoRoot, repoHead) }];
+    })),
+    core_links: Object.fromEntries(["claude", "codex"].map(runtime => {
+      const tally = { this: 0, other: 0, absent: 0, other_state: 0 };
+      for (const item of core[runtime].items) {
+        if (item.state === "missing-source") continue;
+        const info = linkRelation(path.join(roots[runtime], item.id), repoRoot);
+        if (info.relation === "this") tally.this += 1;
+        else if (info.relation === "other") tally.other += 1;
+        else if (info.relation === "absent") tally.absent += 1;
+        else tally.other_state += 1;
+      }
+      return [runtime, tally];
+    })),
+    path_has_local_bin: pathHasDir(env, dirs.localBin),
+  };
+  const sourceSkillFiles = CORE_SKILLS.filter(id => index.sourceOf(id)).length;
+  const honesty = {
+    settings: settingsHonesty(config.values ?? {}, hooks, entrypoints, repoHead, repoRoot, version, dirs.localBin),
+    installed,
+    discovery: {
+      core_skill_files_in_source: `${sourceSkillFiles}/${CORE_SKILLS.length}`,
+      native_discovery: "NOT_VERIFIED (requires runtime E2E)",
+    },
+    guards: {
+      hooks_registered: hooks,
+      // 이 소스에는 git-identity guard가 없다. guard가 생기면 그 자체 doctor로만 ACTIVE를 판정한다.
+      git_identity_guard: "not installed",
+    },
+  };
+
   return {
     version: { version: readVersion(repoRoot), git: git.isRepo ? git.head : null, dirty: git.isRepo ? git.dirty : null },
     source: { path: repoRoot, branch: git.branch ?? null, head: git.head ?? null, dirty: git.dirty ?? null, dirty_files: git.dirtyFiles ?? null },
@@ -387,6 +553,7 @@ function collectStatus(repoRoot, env) {
     hooks,
     entrypoints,
     config: config.error ? { error: config.error } : config.values,
+    honesty,
     checks,
     summary,
   };
@@ -426,6 +593,8 @@ function cmdStatus(repoRoot, env, args, { out }) {
     : `WARN (${s.instructions.state})`;
   const cfg = s.config.error ? `FAIL (${s.config.error})`
     : `update.policy=${s.config["update.policy"]} · context.inject=${s.config["context.inject"]} · preload=${s.config["context.preload"].length}`;
+  const h = s.honesty;
+  const rel = info => info.relation;
   const lines = [
     `${BIN} status`,
     `  version       ${s.version.version} (git ${s.version.git ?? "no-git"}${s.version.dirty ? ", dirty" : ""})`,
@@ -437,6 +606,20 @@ function cmdStatus(repoRoot, env, args, { out }) {
     `  hooks         ${hookLine} (configured/enabled)`,
     `  entrypoints   ${BIN}=${s.entrypoints[BIN]} ${ALIAS}=${s.entrypoints[ALIAS]}`,
     `  config        ${cfg}`,
+    "  -- setting vs effective (저장된 값과 실제 동작은 다를 수 있음) --",
+    `  update.policy    ${h.settings["update.policy"].setting} → ${h.settings["update.policy"].effective}`,
+    `  context.inject   ${h.settings["context.inject"].setting} → ${h.settings["context.inject"].effective}`,
+    `  context.preload  ${JSON.stringify(h.settings["context.preload"].setting)} → ${h.settings["context.preload"].effective}`,
+    "  -- installed vs this source --",
+    `  entrypoint ${BIN}    ${h.installed.entrypoints[BIN].label}`,
+    `  entrypoint ${ALIAS}  ${h.installed.entrypoints[ALIAS].label}`,
+    `  core links    claude this=${h.installed.core_links.claude.this} other=${h.installed.core_links.claude.other} absent=${h.installed.core_links.claude.absent} · codex this=${h.installed.core_links.codex.this} other=${h.installed.core_links.codex.other} absent=${h.installed.core_links.codex.absent}`,
+    `  PATH          ${s.honesty.installed.path_has_local_bin ? "local bin is on PATH" : "local bin NOT on PATH (see bootstrap in docs/harness/cli.md)"}`,
+    "  -- discovery and guards --",
+    `  skill files   ${h.discovery.core_skill_files_in_source} Core present in this source`,
+    `  discovery     ${h.discovery.native_discovery}`,
+    `  hook entries  claude configured=${h.guards.hooks_registered.claude.configured} enabled=${h.guards.hooks_registered.claude.enabled} · codex configured=${h.guards.hooks_registered.codex.configured} enabled=${h.guards.hooks_registered.codex.enabled} (registration is not protection)`,
+    `  git-identity  ${h.guards.git_identity_guard}`,
     `  checks        OK ${s.summary.OK} · WARN ${s.summary.WARN} · FAIL ${s.summary.FAIL}`,
     `  next          ${BIN} doctor  (details and fix hints)`,
   ];
@@ -478,6 +661,12 @@ function cmdDoctor(repoRoot, env, args, { out, err }) {
     out("");
     out("=== how to fix ===");
     for (const h of hints) out(`- ${h}`);
+  }
+  const localBin = dirsFor(env).localBin;
+  if (entrypointState(repoRoot, path.join(localBin, BIN)) === "absent"
+    && entrypointState(repoRoot, path.join(localBin, ALIAS)) === "absent") {
+    out("");
+    out(bootstrapHint(localBin));
   }
   const failed = (first.status !== 0) || (second.status !== 0);
   out("");
@@ -557,15 +746,19 @@ function classify(ahead, behind) {
 
 function cmdUpdate(repoRoot, env, args, { out, err }) {
   let apply = false;
-  let ref = "origin/master";
+  let forceWorktrees = false;
+  let ref = `origin/${DEFAULT_BRANCH}`;
+  let refGiven = false;
   for (let i = 0; i < args.length; i += 1) {
     if (args[i] === "--apply") apply = true;
+    else if (args[i] === "--force-worktrees") forceWorktrees = true; // 사람 전용: 에이전트는 붙이지 않는다
     else if (args[i] === "--ref") {
       ref = args[i + 1] ?? "";
+      refGiven = true;
       i += 1;
     } else {
       err(`unknown argument: ${args[i]}`);
-      out(`usage: ${BIN} update [--ref <ref>] [--apply]`);
+      out(`usage: ${BIN} update [--ref <ref>] [--apply] [--force-worktrees]`);
       return 2;
     }
   }
@@ -595,12 +788,21 @@ function cmdUpdate(repoRoot, env, args, { out, err }) {
   const [ahead, behind] = counts.out.split(/\s+/).map(Number);
   const state = classify(ahead, behind);
   const dirty = g.dirty;
+  // 기본 브랜치가 아니면 --ref 가 그 브랜치를 명시할 때만 갱신한다 (실수로 feature 브랜치를 옮기지 않도록).
+  const refBranch = ref.replace(/^origin\//, "");
+  const nonDefaultBranch = g.branch !== DEFAULT_BRANCH;
+  const branchAllowed = !nonDefaultBranch || (refGiven && refBranch === g.branch);
+  const otherDirty = otherDirtyWorktrees(repoRoot);
 
   out(`${BIN} update check`);
   out(`  local   ${g.branch} @ ${g.head}`);
   out(`  ref     ${ref} (fetched from ${remote})`);
   out(`  ahead ${ahead} · behind ${behind} · dirty ${dirty ? `yes (${g.dirtyFiles} files)` : "no"} → ${state}`);
   out(`  policy  update.policy=${policy} (AUTO is stored only; nothing runs automatically)`);
+  if (nonDefaultBranch) out(`  branch  ${g.branch} is not ${DEFAULT_BRANCH}; --apply needs --ref origin/${g.branch}`);
+  if (otherDirty.length) {
+    out(`  worktrees  ${otherDirty.length} other worktree(s) have uncommitted changes; --apply refuses unless --force-worktrees`);
+  }
 
   if (!apply) {
     if (state === "behind") out(`  next    ${BIN} update --apply  (clean fast-forward only)`);
@@ -614,6 +816,19 @@ function cmdUpdate(repoRoot, env, args, { out, err }) {
   if (dirty) {
     err("refuse: working tree is dirty; commit or stash your changes yourself, then retry");
     return 1;
+  }
+  if (!branchAllowed) {
+    err(`refuse: on non-default branch "${g.branch}"; pass --ref origin/${g.branch} to update it explicitly`);
+    return 1;
+  }
+  if (otherDirty.length > 0) {
+    if (!forceWorktrees) {
+      err("refuse: other worktrees of this repository have uncommitted changes (another Writer may be active):");
+      for (const wt of otherDirty) err(`  - ${wt.path}  branch=${wt.branch ?? "detached"}  changed=${wt.dirtyFiles}`);
+      err("wait for them to finish or commit there; --force-worktrees is for a human operator only");
+      return 1;
+    }
+    out(`warning: --force-worktrees set; proceeding past ${otherDirty.length} dirty worktree(s) (human override)`);
   }
   if (state === "diverged") {
     err("refuse: local and ref have diverged; resolve manually (no merge or rebase is done automatically)");
@@ -786,7 +1001,7 @@ function cmdHelp({ out }) {
   out("  doctor [--strict]            setup.sh --doctor / --doctor-dev-main-flow 위임 + 수정 안내");
   out("  install [--profile N] [--dev-main-flow [--with-handoff] [--with-record-sync] [--with-spec]] [--apply]");
   out("                               기본 dry-run. --apply 해야 변경 (setup.sh 위임, 기존 파일 보존)");
-  out("  update [--ref REF] [--apply] fetch 후 비교 (기본 origin/master). --apply는 clean fast-forward만");
+  out("  update [--ref REF] [--apply] [--force-worktrees]  fetch 후 비교 (기본 origin/master). --apply는 clean fast-forward만");
   out("  config list|get|set         ~/.config/oh-my-ai/config.json (update.policy, context.inject, context.preload)");
   out("  skills [--core|--library|--all] [--json]   Skill 목록, 출처, explicit-only, 노출 상태");
   out("  help                         이 도움말 (--help, -h 동일)");

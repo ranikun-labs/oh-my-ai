@@ -18,6 +18,9 @@ import { formatWorkStateObservationView } from "./lib/work-state-observation-vie
 import { formatWorkTree } from "./lib/work-tree-view.mjs";
 import { jiraObservations } from "./lib/jira-observations.mjs";
 import { FACADE_COMMANDS, runFacade } from "./lib/oh-my-ai-facade.mjs";
+import { buildPreloadBlock, loadContextConfig } from "./lib/oh-my-ai-context.mjs";
+
+const CONFIG_FALLBACK_MESSAGE = "[oh-my-ai] config.json을 읽지 못해 기본값(context.inject=on, preload 없음)으로 동작합니다. `ohmyai config list`로 확인하세요.";
 
 const args = process.argv.slice(2);
 const command = args[0];
@@ -164,12 +167,7 @@ function runHook(args) {
     && ["PostToolUse", "SessionEnd", "SessionStart"].includes(eventName)
   ) {
     const output = handleClaudeCheckpointHook(eventName, input, { env: process.env });
-    if (eventName === "SessionStart") {
-      const backlog = sessionStartBacklog();
-      if (backlog) {
-        output.additionalContext = [output.additionalContext, backlog].filter(Boolean).join("\n\n");
-      }
-    }
+    if (eventName === "SessionStart") applySessionStartContext("claude", output);
     writeClaudeHookOutput(eventName, output);
     process.exit(0);
   }
@@ -181,6 +179,7 @@ function runHook(args) {
   ) {
     codexCheckpointOutput = handleCodexCheckpointHook(eventName, input, { env: process.env });
     if (eventName !== "UserPromptSubmit") {
+      if (eventName === "SessionStart") applySessionStartContext("codex", codexCheckpointOutput);
       writeHookOutput(eventName, codexCheckpointOutput);
       process.exit(0);
     }
@@ -229,6 +228,34 @@ function runHook(args) {
   }
 
   process.exit(0);
+}
+
+// SessionStart 의 advisory 주입(backlog, preload)만 context.inject 로 게이트한다.
+// 설정 실패: 기본값(on)으로 진행하고 경고는 세션당 한 번(SessionStart) 시스템 메시지로만 띄운다.
+function applySessionStartContext(runtime, output) {
+  const cfg = loadContextConfig(process.env);
+  if (!cfg.ok) {
+    logHookFailure({ runtime, eventName: "SessionStart", errorCode: cfg.errorCode });
+    output.systemMessage = [output.systemMessage, CONFIG_FALLBACK_MESSAGE].filter(Boolean).join("\n\n");
+  }
+  if (cfg.inject === "off") return output;
+
+  if (runtime === "claude") {
+    const backlog = sessionStartBacklog();
+    if (backlog) {
+      output.additionalContext = [output.additionalContext, backlog].filter(Boolean).join("\n\n");
+    }
+  }
+  try {
+    const preload = buildPreloadBlock(findRepoRoot(), cfg.preload);
+    if (preload.text) {
+      output.additionalContext = [output.additionalContext, preload.text].filter(Boolean).join("\n\n");
+    }
+  } catch {
+    // preload 실패는 주입을 생략할 뿐 hook 을 실패시키지 않는다.
+    logHookFailure({ runtime, eventName: "SessionStart", errorCode: "hook_preload_failed" });
+  }
+  return output;
 }
 
 function sessionStartBacklog() {
