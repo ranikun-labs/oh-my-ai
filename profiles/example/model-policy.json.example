@@ -2,9 +2,15 @@
   "schema_version": 1,
   "policy_version": "policy-version-placeholder",
   "previous_version": null,
+  "status": "DRAFT",
+  "approved_by": null,
+  "approved_at": null,
+  "allow_path_override": false,
   "models": [
     {
       "provider": "provider-placeholder",
+      "family": "family-placeholder",
+      "version": "version-placeholder",
       "id": "model-id-placeholder",
       "enabled": false,
       "efforts": { "low": false, "medium": false, "high": false, "xhigh": false, "max": false },
@@ -12,7 +18,7 @@
     }
   ],
   "roles": {
-    "role-placeholder": []
+    "role-placeholder": { "allowed": [], "default": [] }
   },
   "cost_limits": {},
   "substitutions": [],

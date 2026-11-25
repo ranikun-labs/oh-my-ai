@@ -1,9 +1,10 @@
 /**
- * Model policy: private, owner-edited permission file + deterministic resolver.
- * Schema: docs/contracts/model-policy.md.
+ * Model policy: owner-approved permission file + deterministic resolver.
+ * Schema and rules: docs/contracts/model-policy.md.
  *
- * Scope boundary: this module validates a policy and decides ALLOW/DENY for one
- * requested {provider, model, effort, mode} selection. It does NOT load evaluation
+ * Scope boundary: this module validates a policy, decides ALLOW/DENY for one requested
+ * {provider, model, effort, mode} selection, picks a role default without any AI call,
+ * and manages the active file (diff / apply / rollback). It does NOT load evaluation
  * data, query runtimes, dispatch agents, or substitute models implicitly.
  * Runtime capability (what a provider/runtime supports) is a separate input and is
  * checked after policy permission. Both must pass.
@@ -15,19 +16,28 @@ import path from "node:path";
 export const SCHEMA_VERSION = 1;
 export const EFFORT_LEVELS = Object.freeze(["low", "medium", "high", "xhigh", "max"]);
 export const MODES = Object.freeze(["standard", "fast"]);
+export const RISK_LEVELS = Object.freeze(["low", "medium", "high"]);
+export const WILDCARD = "*";
 export const DECISION_CODES = Object.freeze([
-  "POLICY_MISSING", "POLICY_INVALID", "UNKNOWN_MODEL", "MODEL_DISABLED", "EFFORT_DISABLED",
-  "MODE_DISABLED", "ROLE_NOT_ALLOWED", "RUNTIME_UNSUPPORTED", "SUBSTITUTION_NOT_APPROVED",
+  "POLICY_MISSING", "POLICY_INVALID", "POLICY_NOT_APPROVED", "UNKNOWN_MODEL", "MODEL_DISABLED",
+  "EFFORT_DISABLED", "MODE_DISABLED", "ROLE_NOT_ALLOWED", "RUNTIME_UNSUPPORTED",
+  "SUBSTITUTION_NOT_APPROVED", "NO_DEFAULT", "DEFAULT_SELECTED", "APPLIED", "ROLLED_BACK",
 ]);
 
-const TOP_KEYS = ["schema_version", "policy_version", "previous_version", "models", "roles", "default", "cost_limits", "substitutions", "evaluation_ref"];
-const REQUIRED_TOP_KEYS = ["schema_version", "policy_version", "previous_version", "models", "roles"];
-const MODEL_KEYS = ["provider", "id", "enabled", "efforts", "modes"];
+const TOP_KEYS = [
+  "schema_version", "policy_version", "previous_version", "status", "approved_by", "approved_at",
+  "allow_path_override", "models", "roles", "cost_limits", "substitutions", "evaluation_ref",
+];
+const REQUIRED_TOP_KEYS = ["schema_version", "policy_version", "previous_version", "status", "models", "roles"];
+const MODEL_KEYS = ["provider", "family", "version", "id", "enabled", "efforts", "modes"];
+const ROLE_KEYS = ["allowed", "default"];
+const DEFAULT_KEYS = ["runtime", "risk", "provider", "model", "effort", "mode"];
 const TUPLE_KEYS = ["provider", "model", "effort", "mode"];
 const VERSION = /^[A-Za-z0-9._-]+$/;
 const hasOwn = (obj, key) => obj !== null && typeof obj === "object" && Object.prototype.hasOwnProperty.call(obj, key);
 const isRecord = value => value !== null && typeof value === "object" && !Array.isArray(value);
 const present = value => typeof value === "string" && value.trim().length > 0;
+const list = value => (Array.isArray(value) ? value : []);
 const decision = (status, code, reasons, extra = {}) => ({ status, code, reasons, ...extra });
 
 function tupleErrors(tuple, where, modelKeys) {
@@ -44,8 +54,32 @@ function tupleErrors(tuple, where, modelKeys) {
   return errors;
 }
 
-/** Structural validation of a parsed policy object. Returns { valid, errors }. */
-export function validateModelPolicy(policy) {
+function statusErrors(policy) {
+  const errors = [];
+  const status = policy.status;
+  if (typeof status !== "string" || (status !== "ACTIVE" && !status.startsWith("DRAFT"))) {
+    return ["status must be ACTIVE or DRAFT*"];
+  }
+  if (status === "ACTIVE") {
+    if (!present(policy.approved_by)) errors.push("ACTIVE policy requires approved_by");
+    if (!present(policy.approved_at) || Number.isNaN(Date.parse(policy.approved_at))) {
+      errors.push("ACTIVE policy requires approved_at (ISO-8601 timestamp)");
+    }
+  } else {
+    for (const key of ["approved_by", "approved_at"]) {
+      if (policy[key] !== undefined && policy[key] !== null) errors.push(`${status} policy must not carry ${key}`);
+    }
+  }
+  return errors;
+}
+
+/**
+ * Structural validation of a parsed policy object. Returns { valid, errors }.
+ * options.runtimeCapabilities (optional, from a trusted adapter): also rejects any model,
+ * effort or mode that the policy enables but the runtime does not declare (POLICY_INVALID).
+ * Resolve-time support is separate: see evaluate() (RUNTIME_UNSUPPORTED).
+ */
+export function validateModelPolicy(policy, options = {}) {
   const errors = [];
   if (!isRecord(policy)) return { valid: false, errors: ["policy must be an object"] };
   for (const key of Object.keys(policy)) if (!TOP_KEYS.includes(key)) errors.push(`${key} is not an allowed top-level key`);
@@ -56,6 +90,10 @@ export function validateModelPolicy(policy) {
     if (!present(policy.previous_version) || !VERSION.test(policy.previous_version)) errors.push("previous_version must be null or [A-Za-z0-9._-]+");
     else if (policy.previous_version === policy.policy_version) errors.push("previous_version equals policy_version");
   }
+  if (hasOwn(policy, "status")) errors.push(...statusErrors(policy));
+  if (hasOwn(policy, "allow_path_override") && typeof policy.allow_path_override !== "boolean") {
+    errors.push("allow_path_override must be boolean");
+  }
 
   const modelKeys = new Set();
   if (!Array.isArray(policy.models)) errors.push("models must be an array");
@@ -65,6 +103,8 @@ export function validateModelPolicy(policy) {
       if (!isRecord(model)) { errors.push(where + " must be an object"); return; }
       for (const key of Object.keys(model)) if (!MODEL_KEYS.includes(key)) errors.push(`${where}.${key} is not allowed`);
       if (!present(model.provider)) errors.push(where + ".provider missing");
+      if (!present(model.family)) errors.push(where + ".family missing");
+      if (!present(model.version)) errors.push(where + ".version missing");
       if (!present(model.id)) errors.push(where + ".id missing");
       if (typeof model.enabled !== "boolean") errors.push(where + ".enabled must be boolean");
       if (present(model.provider) && present(model.id)) {
@@ -90,14 +130,35 @@ export function validateModelPolicy(policy) {
   }
 
   if (!isRecord(policy.roles)) errors.push("roles must be an object");
-  else for (const [role, entries] of Object.entries(policy.roles)) {
-    if (!Array.isArray(entries)) { errors.push(`roles.${role} must be an array`); continue; }
-    entries.forEach((entry, i) => errors.push(...tupleErrors(entry, `roles.${role}[${i}]`, modelKeys)));
+  else for (const [role, entry] of Object.entries(policy.roles)) {
+    const where = `roles.${role}`;
+    if (!isRecord(entry)) { errors.push(`${where} must be an object {allowed, default?}`); continue; }
+    for (const key of Object.keys(entry)) if (!ROLE_KEYS.includes(key)) errors.push(`${where}.${key} is not allowed`);
+    if (!Array.isArray(entry.allowed)) { errors.push(`${where}.allowed must be an array`); continue; }
+    entry.allowed.forEach((tuple, i) => errors.push(...tupleErrors(tuple, `${where}.allowed[${i}]`, modelKeys)));
+    if (entry.default === undefined) continue;
+    if (!Array.isArray(entry.default)) { errors.push(`${where}.default must be an array`); continue; }
+    const seen = new Set();
+    entry.default.forEach((rule, i) => {
+      const at = `${where}.default[${i}]`;
+      if (!isRecord(rule)) { errors.push(at + " must be an object"); return; }
+      for (const key of Object.keys(rule)) if (!DEFAULT_KEYS.includes(key)) errors.push(`${at}.${key} is not allowed`);
+      if (!present(rule.runtime)) errors.push(at + ".runtime missing");
+      if (![...RISK_LEVELS, WILDCARD].includes(rule.risk)) errors.push(`${at}.risk must be low/medium/high/*`);
+      const slot = `${rule.runtime}|${rule.risk}`;
+      if (seen.has(slot)) errors.push(`${at} duplicates runtime/risk ${slot}`);
+      seen.add(slot);
+      const tuple = { provider: rule.provider, model: rule.model, effort: rule.effort, mode: rule.mode };
+      const tErrors = tupleErrors(tuple, at, modelKeys);
+      errors.push(...tErrors);
+      if (tErrors.length === 0) {
+        if (!entry.allowed.some(item => sameTuple(item, tuple))) errors.push(`${at} is not listed in ${where}.allowed`);
+        const model = Array.isArray(policy.models) ? policy.models.find(m => isRecord(m) && m.provider === tuple.provider && m.id === tuple.model) : undefined;
+        if (model && !selectionOn(model, tuple)) errors.push(`${at} selects an option that is OFF`);
+      }
+    });
   }
 
-  if (hasOwn(policy, "default") && policy.default !== undefined) {
-    errors.push(...tupleErrors(policy.default, "default", modelKeys));
-  }
   if (hasOwn(policy, "cost_limits") && policy.cost_limits !== undefined) {
     if (!isRecord(policy.cost_limits)) errors.push("cost_limits must be an object");
     else for (const [task, limit] of Object.entries(policy.cost_limits)) {
@@ -120,11 +181,50 @@ export function validateModelPolicy(policy) {
   if (hasOwn(policy, "evaluation_ref") && policy.evaluation_ref !== null && typeof policy.evaluation_ref !== "string") {
     errors.push("evaluation_ref must be a string or null");
   }
+  if (options.runtimeCapabilities !== undefined && Array.isArray(policy.models)) {
+    errors.push(...runtimeSupportErrors(policy.models, options.runtimeCapabilities));
+  }
   return { valid: errors.length === 0, errors };
+}
+
+/**
+ * Per-model runtime support. Provider-level lists apply to every model of that provider;
+ * an optional runtime.by_model[id] = {efforts, modes} narrows support for one model.
+ */
+function supportFor(runtime, modelId) {
+  const scoped = isRecord(runtime.by_model) && isRecord(runtime.by_model[modelId]) ? runtime.by_model[modelId] : null;
+  const source = scoped ?? runtime;
+  return { efforts: list(source.efforts), modes: list(source.modes) };
+}
+
+function runtimeSupportErrors(models, runtimeCapabilities) {
+  const errors = [];
+  if (!isRecord(runtimeCapabilities)) return ["runtimeCapabilities must be an object"];
+  models.forEach((model, i) => {
+    if (!isRecord(model)) return;
+    const on = obj => (isRecord(obj) ? Object.keys(obj).filter(k => obj[k] === true) : []);
+    const efforts = on(model.efforts);
+    const modes = on(model.modes);
+    if (model.enabled !== true && efforts.length === 0 && modes.length === 0) return;
+    const runtime = hasOwn(runtimeCapabilities, model.provider) && isRecord(runtimeCapabilities[model.provider])
+      ? runtimeCapabilities[model.provider] : null;
+    const where = `models[${i}] ${model.provider}/${model.id}`;
+    if (!runtime) { errors.push(`${where} enabled but runtime declares no capability for provider ${model.provider}`); return; }
+    if (!list(runtime.models).includes(model.id)) errors.push(`${where} not declared by runtime capability`);
+    const support = supportFor(runtime, model.id);
+    for (const level of efforts) if (!support.efforts.includes(level)) errors.push(`${where}.efforts.${level} enabled but not declared by runtime`);
+    for (const mode of modes) if (!support.modes.includes(mode)) errors.push(`${where}.modes.${mode} enabled but not declared by runtime`);
+  });
+  return errors;
 }
 
 function sameTuple(a, b) {
   return isRecord(a) && isRecord(b) && TUPLE_KEYS.every(k => a[k] === b[k]);
+}
+
+function selectionOn(model, tuple) {
+  return model.enabled === true && hasOwn(model.efforts, tuple.effort) && model.efforts[tuple.effort] === true
+    && hasOwn(model.modes, tuple.mode) && model.modes[tuple.mode] === true;
 }
 
 function findModel(policy, provider, id) {
@@ -142,19 +242,19 @@ function evaluate(policy, role, requested, runtimeCapabilities) {
   if (!hasOwn(model.modes, requested.mode) || model.modes[requested.mode] !== true) {
     return decision("DENY", "MODE_DISABLED", [`mode ${requested.mode} is off for this model`]);
   }
-  const allowed = hasOwn(policy.roles, role) ? policy.roles[role] : undefined;
-  if (!Array.isArray(allowed) || !allowed.some(entry => sameTuple(entry, requested))) {
+  const entry = hasOwn(policy.roles, role) ? policy.roles[role] : undefined;
+  if (!isRecord(entry) || !list(entry.allowed).some(item => sameTuple(item, requested))) {
     return decision("DENY", "ROLE_NOT_ALLOWED", [`role ${role} is not allowed this selection`]);
   }
   const runtime = isRecord(runtimeCapabilities) && hasOwn(runtimeCapabilities, requested.provider) ? runtimeCapabilities[requested.provider] : undefined;
   if (!isRecord(runtime)) {
     return decision("DENY", "RUNTIME_UNSUPPORTED", [`no runtime capability supplied for provider ${requested.provider} (fail-closed)`]);
   }
-  const list = value => Array.isArray(value) ? value : [];
+  const support = supportFor(runtime, requested.model);
   const supported = list(runtime.models).includes(requested.model)
-    && list(runtime.efforts).includes(requested.effort)
-    && list(runtime.modes).includes(requested.mode);
-  if (!supported) return decision("DENY", "RUNTIME_UNSUPPORTED", ["runtime does not support the requested model/effort/mode"]);
+    && support.efforts.includes(requested.effort)
+    && support.modes.includes(requested.mode);
+  if (!supported) return decision("DENY", "RUNTIME_UNSUPPORTED", ["runtime does not support the requested model/effort/mode (no conversion)"]);
   return decision("ALLOW", "ALLOW", [], {
     role,
     policy_version: policy.policy_version,
@@ -165,12 +265,13 @@ function evaluate(policy, role, requested, runtimeCapabilities) {
 /**
  * Decide ALLOW/DENY for one selection. No implicit fallback: a substitute is used only
  * when the caller passes `substitute` AND the exact (requested -> substitute) pair is
- * listed in policy.substitutions.
+ * listed in policy.substitutions. Draft policies are denied (POLICY_NOT_APPROVED).
  */
 export function resolveModelSelection({ policy, role, requested, runtimeCapabilities, substitute } = {}) {
   if (policy === undefined || policy === null) return decision("DENY", "POLICY_MISSING", ["no model policy supplied"]);
   const checked = validateModelPolicy(policy);
   if (!checked.valid) return decision("DENY", "POLICY_INVALID", checked.errors);
+  if (policy.status !== "ACTIVE") return decision("DENY", "POLICY_NOT_APPROVED", [`policy status ${policy.status} is not ACTIVE; drafts cannot execute`]);
   const direct = evaluate(policy, role, requested, runtimeCapabilities);
   if (direct.status === "ALLOW" || substitute === undefined) return direct;
   const approved = policy.substitutions.some(pair => sameTuple(pair.from, requested) && sameTuple(pair.to, substitute));
@@ -181,13 +282,67 @@ export function resolveModelSelection({ policy, role, requested, runtimeCapabili
   return { ...alt, substituted_for: requested };
 }
 
-// ---------- file helpers (explicit paths/env; never reads $HOME unless asked) ----------
+/**
+ * Deterministic role default. No AI call. Rules: roles[role].default entries keyed by
+ * runtime and risk ("*" = wildcard). Most specific wins: an exact runtime outranks an
+ * exact risk; no match returns NO_DEFAULT (block, never a fallback). The returned
+ * selection still has to pass resolveModelSelection (runtime support is checked there).
+ */
+export function selectDefault({ policy, role, runtime, risk } = {}) {
+  if (policy === undefined || policy === null) return decision("DENY", "POLICY_MISSING", ["no model policy supplied"]);
+  const checked = validateModelPolicy(policy);
+  if (!checked.valid) return decision("DENY", "POLICY_INVALID", checked.errors);
+  if (policy.status !== "ACTIVE") return decision("DENY", "POLICY_NOT_APPROVED", [`policy status ${policy.status} is not ACTIVE`]);
+  if (!present(runtime) || runtime === WILDCARD || !RISK_LEVELS.includes(risk)) {
+    return decision("DENY", "NO_DEFAULT", ["selection key needs a concrete runtime and risk low|medium|high"]);
+  }
+  const rules = hasOwn(policy.roles, role) && isRecord(policy.roles[role]) ? list(policy.roles[role].default) : [];
+  const matches = rules.filter(rule => (rule.runtime === WILDCARD || rule.runtime === runtime)
+    && (rule.risk === WILDCARD || rule.risk === risk));
+  if (matches.length === 0) return decision("DENY", "NO_DEFAULT", [`no default for role ${role} runtime ${runtime} risk ${risk} (blocked, not substituted)`]);
+  const rank = rule => (rule.runtime === runtime ? 2 : 0) * 10 + (rule.risk === risk ? 1 : 0);
+  const best = [...matches].sort((a, b) => rank(b) - rank(a))[0];
+  return decision("SELECTED", "DEFAULT_SELECTED", [], {
+    role,
+    runtime,
+    risk,
+    policy_version: policy.policy_version,
+    rule: { runtime: best.runtime, risk: best.risk },
+    selection: { provider: best.provider, model: best.model, effort: best.effort, mode: best.mode },
+  });
+}
 
-/** Active policy path: OH_MY_AI_MODEL_POLICY, else ${XDG_CONFIG_HOME:-~/.config}/oh-my-ai/model-policy.json. */
-export function resolvePolicyPath(env = process.env) {
-  if (present(env.OH_MY_AI_MODEL_POLICY)) return path.resolve(env.OH_MY_AI_MODEL_POLICY);
+// ---------- paths ----------
+
+/** Default active location: ${XDG_CONFIG_HOME:-~/.config}/oh-my-ai/model-policy.json. */
+export function resolveDefaultPolicyPath(env = process.env) {
   const configHome = present(env.XDG_CONFIG_HOME) ? env.XDG_CONFIG_HOME : path.join(env.HOME || os.homedir(), ".config");
   return path.join(configHome, "oh-my-ai", "model-policy.json");
+}
+
+function resolveOverridePolicyPath(env) {
+  return present(env.OH_MY_AI_MODEL_POLICY) ? path.resolve(env.OH_MY_AI_MODEL_POLICY) : null;
+}
+
+/** validate / diff / check (dry): OH_MY_AI_MODEL_POLICY if set, else the default location. Never execution. */
+export function resolveDryPolicyPath(env = process.env) {
+  return resolveOverridePolicyPath(env) ?? resolveDefaultPolicyPath(env);
+}
+
+/**
+ * Execution, apply and rollback. The default location is always used, unless the default
+ * file is itself a valid ACTIVE policy that sets allow_path_override: true. A draft at the
+ * override path can therefore never unlock execution.
+ */
+export function resolveExecutionPolicyPath(env = process.env) {
+  const defaultPath = resolveDefaultPolicyPath(env);
+  const override = resolveOverridePolicyPath(env);
+  if (override === null) return { path: defaultPath, via: "default" };
+  const base = readPolicyFile(defaultPath);
+  if (base.status === "VALID" && base.policy.status === "ACTIVE" && base.policy.allow_path_override === true) {
+    return { path: override, via: "override" };
+  }
+  return { path: defaultPath, via: "default", override_ignored: override };
 }
 
 /** Archived copy of a previous version, stored next to the active file. */
@@ -196,8 +351,8 @@ export function previousCopyPath(activePath, previousVersion) {
   return path.join(dir, `model-policy.${previousVersion}.json`);
 }
 
-/** Read and validate a policy file. Never throws; returns a status for the caller. */
-export function readPolicyFile(filePath) {
+/** Read and validate a policy file. Never throws. Drafts are VALID here (validate/diff). */
+export function readPolicyFile(filePath, options = {}) {
   let text;
   try {
     text = fs.readFileSync(filePath, "utf8");
@@ -211,32 +366,108 @@ export function readPolicyFile(filePath) {
   } catch {
     return { status: "POLICY_INVALID", path: filePath, policy: null, errors: ["not valid JSON"] };
   }
-  const checked = validateModelPolicy(policy);
+  const checked = validateModelPolicy(policy, options);
   if (!checked.valid) return { status: "POLICY_INVALID", path: filePath, policy: null, errors: checked.errors };
   return { status: "VALID", path: filePath, policy, errors: [] };
 }
 
-/** Owner-facing summary of the active policy. Pass env explicitly in tests. */
+/**
+ * The policy execution would use. Returns POLICY_NOT_APPROVED for any non-ACTIVE file.
+ * This is the only loader the guard uses when given an env (not an object).
+ */
+export function loadExecutionPolicy(env = process.env) {
+  const target = resolveExecutionPolicyPath(env);
+  const read = readPolicyFile(target.path);
+  const base = { path: target.path, via: target.via, policy: null };
+  if (read.status !== "VALID") return { ...base, status: read.status, errors: read.errors };
+  if (read.policy.status !== "ACTIVE") {
+    return { ...base, status: "POLICY_NOT_APPROVED", errors: [`status ${read.policy.status} is not ACTIVE`] };
+  }
+  return { ...base, status: "VALID", policy: read.policy, errors: [] };
+}
+
+/** Owner-facing summary of the execution policy (what the guard would load). */
 export function describeActivePolicy(env = process.env) {
-  const filePath = resolvePolicyPath(env);
-  const read = readPolicyFile(filePath);
-  const base = { path: filePath, status: read.status, errors: read.errors };
-  if (read.status !== "VALID") return base;
-  const policy = read.policy;
-  const archive = policy.previous_version === null ? null : previousCopyPath(filePath, policy.previous_version);
+  const loaded = loadExecutionPolicy(env);
+  const summary = { path: loaded.path, via: loaded.via, status: loaded.status, errors: loaded.errors, advisory: ["cost_limits"] };
+  if (!loaded.policy) return summary;
+  const policy = loaded.policy;
+  const archive = policy.previous_version === null ? null : previousCopyPath(loaded.path, policy.previous_version);
   return {
-    ...base,
+    ...summary,
     policy_version: policy.policy_version,
     previous_version: policy.previous_version,
     previous_copy_available: archive !== null && fs.existsSync(archive),
     evaluation_ref: policy.evaluation_ref ?? null,
     enabled_models: policy.models.filter(m => m.enabled === true).map(m => ({
       provider: m.provider,
+      family: m.family,
+      version: m.version,
       id: m.id,
       efforts: Object.keys(m.efforts ?? {}).filter(k => m.efforts[k] === true),
       modes: Object.keys(m.modes ?? {}).filter(k => m.modes[k] === true),
     })),
     roles: Object.keys(policy.roles),
+  };
+}
+
+// ---------- change management ----------
+
+const tupleKey = t => `${t.provider}/${t.model}@${t.effort}/${t.mode}`;
+
+function flattenPolicy(policy) {
+  const out = new Map();
+  out.set("status", policy.status);
+  out.set("policy_version", policy.policy_version);
+  for (const m of policy.models) {
+    const base = `models[${m.provider}/${m.id}]`;
+    out.set(`${base}.family`, m.family);
+    out.set(`${base}.version`, m.version);
+    out.set(`${base}.enabled`, m.enabled === true);
+    for (const level of EFFORT_LEVELS) out.set(`${base}.efforts.${level}`, m.efforts?.[level] === true);
+    for (const mode of MODES) out.set(`${base}.modes.${mode}`, m.modes?.[mode] === true);
+  }
+  for (const [role, entry] of Object.entries(policy.roles)) {
+    for (const tuple of entry.allowed) out.set(`roles.${role}.allowed[${tupleKey(tuple)}]`, "ALLOWED");
+    for (const rule of list(entry.default)) out.set(`roles.${role}.default[${rule.runtime}|${rule.risk}]`, tupleKey(rule));
+  }
+  for (const pair of list(policy.substitutions)) out.set(`substitutions[${tupleKey(pair.from)} -> ${tupleKey(pair.to)}]`, "PAIR");
+  for (const [task, limit] of Object.entries(policy.cost_limits ?? {})) out.set(`cost_limits[${task}]`, JSON.stringify(limit));
+  return out;
+}
+
+function changeKind(from, to) {
+  if (typeof to === "boolean" || typeof from === "boolean") {
+    if (to === true && from !== true) return "ON";
+    if (from === true && to !== true) return "OFF";
+  }
+  if (from === undefined) return "ADDED";
+  if (to === undefined) return "REMOVED";
+  return "CHANGED";
+}
+
+/** Compare a validated candidate with the active policy (null = no active). Advisory report only. */
+export function diffPolicies(active, candidate) {
+  const before = active ? flattenPolicy(active) : new Map();
+  const after = flattenPolicy(candidate);
+  const keys = [...new Set([...before.keys(), ...after.keys()])].sort();
+  const changes = [];
+  for (const key of keys) {
+    const from = before.get(key);
+    const to = after.get(key);
+    if (JSON.stringify(from) === JSON.stringify(to)) continue;
+    changes.push({ path: key, change: changeKind(from, to), from: from ?? null, to: to ?? null });
+  }
+  const count = kind => changes.filter(c => c.change === kind).length;
+  return {
+    status: "DIFFED",
+    active_version: active ? active.policy_version : null,
+    candidate_version: candidate.policy_version,
+    changes,
+    summary: {
+      on: count("ON"), off: count("OFF"), added: count("ADDED"), removed: count("REMOVED"), changed: count("CHANGED"),
+      role_default_changes: changes.filter(c => c.path.includes(".default[")).length,
+    },
   };
 }
 
@@ -253,12 +484,59 @@ function writeFileAtomic(target, text) {
 }
 
 /**
+ * apply: only an ACTIVE candidate with approval fields. Its previous_version must equal the
+ * current active policy_version (or be null when none exists). The current active is copied
+ * to model-policy.<version>.json first, then the candidate replaces the active file atomically (0600).
+ * Target = execution location. Manual only (Owner gate); never called by the resolver.
+ */
+export function applyPolicy(env = process.env, candidatePath) {
+  const candidate = readPolicyFile(path.resolve(candidatePath));
+  if (candidate.status !== "VALID") return decision("DENY", "POLICY_INVALID", ["candidate invalid or missing", ...candidate.errors]);
+  if (candidate.policy.status !== "ACTIVE") return decision("DENY", "POLICY_NOT_APPROVED", [`candidate status ${candidate.policy.status} is not ACTIVE`]);
+  const candidateText = fs.readFileSync(path.resolve(candidatePath), "utf8");
+  const target = resolveExecutionPolicyPath(env).path;
+  const activePath = fs.existsSync(target) ? fs.realpathSync(target) : target;
+  let active = null;
+  let activeText = null;
+  if (fs.existsSync(activePath)) {
+    activeText = fs.readFileSync(activePath, "utf8");
+    active = readPolicyFile(activePath);
+    if (active.status !== "VALID") return decision("DENY", "POLICY_INVALID", ["active policy invalid; repair manually before apply", ...active.errors]);
+    if (candidate.policy.policy_version === active.policy.policy_version) return decision("DENY", "POLICY_INVALID", ["candidate policy_version equals active"]);
+    if (candidate.policy.previous_version !== active.policy.policy_version) {
+      return decision("DENY", "POLICY_INVALID", ["candidate previous_version must equal the active policy_version"]);
+    }
+  } else if (candidate.policy.previous_version !== null) {
+    return decision("DENY", "POLICY_INVALID", ["no active policy: candidate previous_version must be null"]);
+  }
+  let archivePath = null;
+  if (active) {
+    archivePath = previousCopyPath(activePath, active.policy.policy_version);
+    if (fs.existsSync(archivePath)) {
+      if (fs.readFileSync(archivePath, "utf8") !== activeText) {
+        return decision("DENY", "POLICY_INVALID", ["archive for the active version exists with different content; resolve manually"]);
+      }
+    } else {
+      writeFileAtomic(archivePath, activeText);
+    }
+  }
+  fs.mkdirSync(path.dirname(activePath), { recursive: true, mode: 0o700 });
+  writeFileAtomic(activePath, candidateText);
+  return decision("ALLOW", "APPLIED", [], {
+    from_version: active ? active.policy.policy_version : null,
+    to_version: candidate.policy.policy_version,
+    archived: archivePath,
+    path: activePath,
+  });
+}
+
+/**
  * Manual rollback: swap the active file with the archived copy named by the active
  * file's previous_version. Refuses (no change) when the copy is missing or invalid.
  * Never called automatically. The replaced active version is archived first.
  */
 export function rollbackPolicy(env = process.env) {
-  const requestedPath = resolvePolicyPath(env);
+  const requestedPath = resolveExecutionPolicyPath(env).path;
   if (!fs.existsSync(requestedPath)) return decision("DENY", "POLICY_MISSING", ["active policy missing; nothing to roll back"]);
   const activePath = fs.realpathSync(requestedPath);
   const activeText = fs.readFileSync(activePath, "utf8");
@@ -270,6 +548,7 @@ export function rollbackPolicy(env = process.env) {
   if (!fs.existsSync(copyPath)) return decision("DENY", "POLICY_MISSING", ["previous_version copy not found; rollback not performed"]);
   const previous = readPolicyFile(copyPath);
   if (previous.status !== "VALID") return decision("DENY", "POLICY_INVALID", ["previous copy invalid", ...previous.errors]);
+  if (previous.policy.status !== "ACTIVE") return decision("DENY", "POLICY_NOT_APPROVED", ["previous copy was not ACTIVE; rollback target must be an approved version"]);
   if (previous.policy.policy_version !== active.policy.previous_version) {
     return decision("DENY", "POLICY_INVALID", ["previous copy policy_version does not match previous_version"]);
   }

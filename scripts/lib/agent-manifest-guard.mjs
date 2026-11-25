@@ -3,7 +3,7 @@
  * This module validates evidence; it does NOT create agents or query runtimes.
  * It cannot attest effective model settings without a trusted runtime verifier.
  */
-import { resolveModelSelection } from "./model-policy.mjs";
+import { loadExecutionPolicy, resolveModelSelection } from "./model-policy.mjs";
 
 const ROLES = new Set(["coordinator", "writer", "reviewer", "research"]);
 const REASONING = new Set(["low", "medium", "high", "max"]);
@@ -51,23 +51,58 @@ export function validateAgentManifest(manifest) {
 }
 
 /**
- * Optional model-policy gate (docs/contracts/model-policy.md). Inactive unless the
- * caller passes options.modelPolicy or options.requireModelPolicy === true.
+ * Optional model-policy gate (docs/contracts/model-policy.md). Inactive unless the caller
+ * passes options.modelPolicy, options.modelPolicyEnv, or options.requireModelPolicy === true.
+ * - modelPolicy: an object the trusted caller already loaded (drafts still fail: POLICY_NOT_APPROVED).
+ * - modelPolicyEnv: an env object; the guard reads ONLY the execution location via
+ *   loadExecutionPolicy (default file; OH_MY_AI_MODEL_POLICY counts only if the active file
+ *   sets allow_path_override: true).
  * options.runtimeModelCapabilities must come from a trusted runtime adapter; without
  * it the policy gate fails closed (RUNTIME_UNSUPPORTED).
  */
 function checkModelPolicy(manifest, options) {
-  const { modelPolicy, requireModelPolicy, runtimeModelCapabilities } = options;
-  if ((modelPolicy === undefined || modelPolicy === null) && requireModelPolicy !== true) return null;
+  const { modelPolicy, modelPolicyEnv, requireModelPolicy, runtimeModelCapabilities } = options;
+  const hasPolicy = modelPolicy !== undefined && modelPolicy !== null;
+  const hasEnv = modelPolicyEnv !== undefined && modelPolicyEnv !== null;
+  if (!hasPolicy && !hasEnv && requireModelPolicy !== true) return null;
+  let policy = hasPolicy ? modelPolicy : undefined;
+  if (!hasPolicy && hasEnv) {
+    const loaded = loadExecutionPolicy(modelPolicyEnv);
+    if (loaded.status !== "VALID") {
+      return result("BLOCKED", loaded.status, loaded.errors.length ? loaded.errors : ["execution policy " + loaded.status]);
+    }
+    policy = loaded.policy;
+  }
   const requested = {
     provider: manifest.requested.provider ?? manifest.runtime.id,
     model: manifest.requested.model,
     effort: manifest.requested.reasoning,
     mode: manifest.requested.fast === true ? "fast" : "standard",
   };
-  const verdict = resolveModelSelection({ policy: modelPolicy, role: manifest.role, requested, runtimeCapabilities: runtimeModelCapabilities });
+  const verdict = resolveModelSelection({ policy, role: manifest.role, requested, runtimeCapabilities: runtimeModelCapabilities });
   if (verdict.status === "ALLOW") return null;
   return result("BLOCKED", verdict.code, verdict.reasons);
+}
+
+/**
+ * Compare requested vs effective {model, effort, mode}. Per field: MATCH when both known and equal,
+ * MISMATCH when both known and different, UNKNOWN when either side is missing/"UNKNOWN".
+ * Overall: any MISMATCH -> MISMATCH; else any UNKNOWN -> UNKNOWN; else MATCH.
+ * UNKNOWN is reported as UNVERIFIED_CONFIG (label) and is never presented as a match or PASS.
+ * Naming follows the PR #220 contract vocabulary; no code is imported from it.
+ */
+export function compareEffective({ requested, effective } = {}) {
+  const known = value => typeof value === "string" && value.trim().length > 0 && value.trim().toUpperCase() !== "UNKNOWN";
+  const fields = {};
+  for (const key of ["model", "effort", "mode"]) {
+    const want = requested?.[key];
+    const got = effective?.[key];
+    fields[key] = known(want) && known(got) ? (want === got ? "MATCH" : "MISMATCH") : "UNKNOWN";
+  }
+  const values = Object.values(fields);
+  const status = values.includes("MISMATCH") ? "MISMATCH" : values.includes("UNKNOWN") ? "UNKNOWN" : "MATCH";
+  const label = status === "UNKNOWN" ? "UNVERIFIED_CONFIG" : status;
+  return { status, label, fields };
 }
 
 /**

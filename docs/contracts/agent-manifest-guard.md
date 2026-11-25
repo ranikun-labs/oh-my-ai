@@ -10,7 +10,8 @@ A parent Writer's requested model, reasoning effort, or Fast mode must not silen
 - `scripts/validate-agent-manifest.mjs`: JSON **shape-only** CLI. Exit 0 means a well-formed manifest, **not approved/supported/dispatched**.
 - `scripts/test-agent-manifest-fixtures.mjs`: 41 synthetic `FX-AGM-*` cases. Positive callback stubs are **not real runtime attestations**.
 - `make test-agent-manifest-fixtures`: run just these fixtures. Existing `FX-CAP-*` checks cover **static** runtime declarations and are intentionally separate.
-- Optional model-policy gate: `preflightDispatch(manifest, capability, { modelPolicy, requireModelPolicy, runtimeModelCapabilities })`. Inactive by default. Details in `docs/contracts/model-policy.md`.
+- Optional model-policy gate: `preflightDispatch(manifest, capability, { modelPolicy, modelPolicyEnv, requireModelPolicy, runtimeModelCapabilities })`. Inactive by default. `modelPolicyEnv` makes the guard read only the execution location (drafts blocked as `POLICY_NOT_APPROVED`). Details in `docs/contracts/model-policy.md`.
+- `compareEffective({ requested, effective })`: MATCH / MISMATCH / UNKNOWN for model, effort, mode. UNKNOWN is reported as `UNVERIFIED_CONFIG`, never as a match.
 
 ## Manifest input (public generic role contract)
 
