@@ -33,16 +33,32 @@ Prefer a short request containing `Workstream / Objective / Primary Jira / Repo 
 4. Mark independent tasks **READY**, tasks waiting for approval/ownership/runner **BLOCKED**, and read-only reviews **REVIEW_ONLY**. Isolate an uncertain lane, not the entire Workstream.
 5. Never start a second Writer for the same Primary Jira or writable worktree; never overwrite unrelated changes. Reuse valid evidence from an unchanged HEAD and run targeted Delta verification when appropriate.
 
+## Mandatory execution-role isolation
+
+These are invariants of every authorized F4 execution, including direct invocation, wrapper composition, resumed work, and Finding closure. They are not model-selection preferences.
+
+- **Main / Lead (when assigned):** decide goals and scope, coordinate and delegate, reconcile custody, check evidence/HEAD/CI identity proportionately, perform fan-in, and select the next approved READY. Do not implement source or take over Writer verification, including through another coordinating actor.
+- **Authorized Writer:** own the approved Slice end to end: implementation, final edits, test authoring, builds, self-tests, failure investigation and fixes, affected regression tests, required CI follow-through and evidence. An intermediate patch or pending required CI is not a completed Writer result. An explicitly authorized integration Writer may perform integration tests under the same custody rules.
+- **Independent Reviewer:** inspect the fixed HEAD or immutable patch and perform risk-proportionate independent verification; return Findings to the Writer. Never fix the reviewed source or represent a Writer self-check as independent review.
+
+**No Main takeover.** Neither Main nor Lead may perform Writer work merely because it is small, only one edit or test remains, a Writer finished early, delegation failed, a budget was exhausted, or the assigned model is unavailable. This applies to work not yet delegated as well as work already delegated. Resume the current Writer after verifying identity, ownership, scope and current evidence. If unavailable, use only an authorized succession or handoff after reconciling prior attempts and custody; otherwise checkpoint the affected Lane as BLOCKED and continue independent approved READY. Never silently promote a coordinating actor to Writer. Only an explicit Owner assignment to change that actor's role for a bounded scope permits Writer execution; record the assignment, verify custody and policy, and preserve any required independent Review and Merge gates. It does not authorize concurrent Writers, self-approval, or an exception for future work.
+
+**No silent model escalation.** Before dispatch, resume or succession, use the approved role-specific model, reasoning and speed/service-tier policy and verified Runtime capability. Do not replace the Writer with a more expensive Main, Reviewer, or alternative model merely to finish. If the policy cannot be satisfied or mandatory settings cannot be attested under the existing policy, stop that Lane and preserve the checkpoint. Keep requested and effective settings separate; mark unobserved values UNKNOWN. An approved role or model change is not proof of effective application.
+
+**Evidence reuse, not duplicate execution.** Main/Lead may read bounded evidence to verify the approved scope, fixed HEAD, CI status, acceptance and approval facts; they must not redo the Writer's full code investigation, build or regression suite as a substitute for valid evidence. If the evidence is stale, incomplete or conflicting, request only the relevant additional work from the Writer or independent verification from the Reviewer. Preserve risk-required verification; this is not a reason to skip required tests on changed code.
+
+**Role-compliance gate.** Check assignment, custody, policy and capability at dispatch, resume, Finding handoff and next READY. At fan-in distinguish actual actors and work performed, requested/effective settings, available usage evidence and unresolved gaps. If unauthorized takeover or escalation is observed, stop that Lane, preserve changes and evidence, reconcile ownership and route the necessary recovery/verification to the authorized actors. Do not promote a violation to a normal completed Slice; report the violation, impact, recovery and remaining gates. Unknown observation coverage is not evidence of compliance. Reuse the existing reporting and policy contracts; do not invent telemetry, a new orchestrator, or tool enforcement. This playbook is an instruction contract, not proof of Runtime-level prevention.
+
 ## Goal Closure loop (bounded)
 
 ```text
 Objective + Gate check
   -> READY selection (critical path first)
-  -> assigned Writer implements within authorized scope
-  -> Native / integration tests and evidence
+  -> assigned Writer implements, fixes, tests and follows through required CI within authorized scope
+  -> Writer returns fixed HEAD / immutable patch and evidence
   -> separate Reviewer on a fixed HEAD or immutable patch
   -> Finding? existing Writer fixes -> targeted retest -> Delta review
-  -> Fan-in (real diff, CI, review, unresolved gates)
+  -> Fan-in (real diff, CI, review, role compliance, unresolved gates)
   -> close this approved Slice -> next READY in the SAME Objective
   -> stop, hand off or checkpoint if no safe READY remains
 ```
@@ -64,7 +80,7 @@ Objective + Gate check
 
 Explain first in Korean for someone not in the session: **what changed → user impact → what works → what is still blocked → next action**. Put technical evidence underneath, not before the user outcome.
 
-Record per Primary Jira: Objective, Repo/PR/Branch, Base & verified HEAD, Writer identity and ownership evidence, actual modified files/commits, Native Test, CI, independent Review, Runtime E2E, effective model settings if available, risks and STOP condition. Keep previous evidence as historical, not a new PASS.
+Record per Primary Jira: Objective, Repo/PR/Branch, Base & verified HEAD, Writer identity and ownership evidence, actual modified files/commits, Native Test, CI, independent Review, Runtime E2E, actual role participation and role compliance/violations, requested/effective model settings, available usage evidence (UNKNOWN when unobserved), risks and STOP condition. Keep previous evidence as historical, not a new PASS.
 
 ### Short task example
 
