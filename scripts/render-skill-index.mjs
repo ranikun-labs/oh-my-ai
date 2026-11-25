@@ -3,6 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { discoverSkills } from "./lib/skill-discovery.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // --root <dir>: render against another tree that contains skills/ (used by tests). Default: this repo.
@@ -14,11 +15,15 @@ const VISIBILITY = new Set(["always", "contextual", "optional", "hidden"]);
 const RISK_LEVEL = new Set(["low", "medium", "high"]);
 const TRIGGER_KIND = new Set(["keyword", "intent", "pattern"]);
 
-const skills = enumerateSkillDirs(skillsDir)
-  .sort()
-  .map(name => path.join(skillsDir, name, "SKILL.md"))
-  .filter(file => fs.existsSync(file))
-  .map(readSkill)
+const discovery = discoverSkills(repoRoot);
+for (const warning of discovery.warnings) console.error(`warning: ${warning}`);
+if (discovery.errors.length > 0) {
+  for (const error of discovery.errors) console.error(`error: ${error}`);
+  process.exit(1);
+}
+
+const skills = discovery.skills
+  .map(entry => readSkill(entry.skillFile))
   .filter(skill => skill.routing)
   .sort((a, b) => a.name.localeCompare(b.name) || a.path.localeCompare(b.path));
 
@@ -41,37 +46,6 @@ function parseRootArg(args) {
     throw new Error(`unknown argument: ${args[i]}`);
   }
   return null;
-}
-
-// Real directories are canonical skills. A symlink is resolved explicitly, because
-// Dirent.isDirectory() is false for symlinks and they would otherwise vanish silently.
-function enumerateSkillDirs(dir) {
-  const entries = fs.readdirSync(dir, { withFileTypes: true });
-  const names = entries.filter(entry => entry.isDirectory()).map(entry => entry.name);
-  const canonical = new Set(names);
-  const realDir = fs.realpathSync(dir);
-
-  for (const entry of entries) {
-    if (!entry.isSymbolicLink()) continue;
-    const linkPath = path.join(dir, entry.name);
-    let target;
-    try {
-      target = fs.realpathSync(linkPath);
-    } catch {
-      console.error(`warning: ${relativePath(linkPath)} is a dangling symlink; skipped`);
-      continue;
-    }
-    if (!fs.statSync(target).isDirectory()) {
-      console.error(`warning: ${relativePath(linkPath)} does not point to a directory; skipped`);
-      continue;
-    }
-    if (path.dirname(target) === realDir && canonical.has(path.basename(target))) {
-      continue; // alias of a skill already counted as a real directory
-    }
-    console.error(`warning: ${relativePath(linkPath)} points outside skills/ or to a non-skill path; skipped`);
-  }
-
-  return names;
 }
 
 function readSkill(file) {

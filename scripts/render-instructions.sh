@@ -50,8 +50,12 @@ frontmatter_value() {
   ' "$file"
 }
 
-for skill_file in "$REPO"/skills/*/SKILL.md; do
-  [ -e "$skill_file" ] || continue
+SKILL_LIST="$TMP_DIR/skill-paths.txt"
+# Skill 탐색은 skill-discovery 모듈이 한다(flat + core/library 그룹). 실패 시 set -e로 중단된다.
+node "$REPO/scripts/lib/skill-discovery.mjs" --list --root "$REPO" --format paths > "$SKILL_LIST"
+
+while IFS= read -r skill_relpath; do
+  skill_file="$REPO/$skill_relpath"
   source="$(frontmatter_value "$skill_file" source)"
   [ "$source" = "born-here" ] || continue
 
@@ -70,11 +74,11 @@ for skill_file in "$REPO"/skills/*/SKILL.md; do
     exit 1
   fi
 
-  printf -- '- `skills/%s/` — %s\n' "$name" "$summary" >> "$MINE_SKILLS"
+  printf -- '- `%s/` — %s\n' "$(dirname "$skill_relpath")" "$summary" >> "$MINE_SKILLS"
   if [ -n "$route" ]; then
     printf '| %s | `%s` 스킬 |\n' "$route" "$name" >> "$ROUTES"
   fi
-done
+done < "$SKILL_LIST"
 
 expand_template() {
   template="$1"

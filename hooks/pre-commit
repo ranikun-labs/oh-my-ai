@@ -1,8 +1,8 @@
 #!/bin/sh
 set -eu
 # harness source 변경 시 make instructions 자동 실행
-# 대상: instruction 원본, 생성 스크립트, skills/*/SKILL.md
-if git diff --cached --name-only | grep -qE '(instructions/harness\.md|instructions/mine\.md|instructions/adapters/|scripts/render-instructions\.sh|skills/[^/]+/SKILL\.md)'; then
+# 대상: instruction 원본, 생성 스크립트, skills/*/SKILL.md, skills/{core,library}/*/SKILL.md
+if git diff --cached --name-only | grep -qE '(instructions/harness\.md|instructions/mine\.md|instructions/adapters/|scripts/render-instructions\.sh|skills/((core|library)/)?[^/]+/SKILL\.md)'; then
   printf 'harness source changed → make instructions\n'
   cd "$(git rev-parse --show-toplevel)" && make instructions
   git add CLAUDE.md claude/CLAUDE.md AGENTS.md MINE.md skills/skill-index.json
