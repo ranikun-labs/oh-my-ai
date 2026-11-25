@@ -30,7 +30,7 @@ metadata:
 
 ## 원칙
 - 검토 기준(트레이드오프와 추천 1개, 실패 모드 우선, 증거 없는 단언 금지, 숨은 비용 명시)은 `instructions/harness.md`의 "품질 기준 — 네카라 시니어 실무급"을 따른다. 이 Skill에 복사하지 않는다.
-- Dev 흐름에서 `/senior`의 위치는 `skills/dev-main-flow/SKILL.md`의 "Apply a proportional `/senior` review" 절을 따른다.
+- 이 Skill의 호출 시점과 위치는 상위 Workflow가 정한다. 이 Skill은 특정 Workflow를 전제하지 않는다.
 - 같은 세션에서 Writer와 Reviewer를 겸하면 독립 Review를 충족하지 않은 것으로 명시한다. `UNKNOWN`은 실제 세션 분리를 확인할 수 없을 때만 쓴다.
 
 ## 출력
