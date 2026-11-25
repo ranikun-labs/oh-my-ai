@@ -194,3 +194,6 @@ update:
 .PHONY: test-cross-runtime-codex-exec
 test-cross-runtime-codex-exec:
 	node ./scripts/test-cross-runtime-codex-exec.mjs
+.PHONY: test-cross-runtime-codex-runner
+test-cross-runtime-codex-runner:
+	node ./scripts/test-cross-runtime-codex-runner.mjs
