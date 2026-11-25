@@ -202,10 +202,19 @@ t("CXP-42 model/effort mismatch is never SUCCESS", () => {
   const e = runMock("success", { effort: "low" });
   assert.equal(e.cls.config.status, "MISMATCH"); assert.equal(e.cls.outcome, "FAILED");
 });
-t("CXP-43 unreported settings => SUCCESS with UNKNOWN config noted", () => {
+t("CXP-43 unreported settings => UNVERIFIED_CONFIG, approval and auto follow-up blocked", () => {
   const { cls } = runMock("no_config");
-  assert.equal(cls.outcome, "SUCCESS"); assert.equal(cls.config.status, "UNKNOWN");
+  assert.equal(cls.outcome, "UNVERIFIED_CONFIG"); assert.equal(cls.config.status, "UNKNOWN");
+  assert.equal(cls.approvalBlocked, true); assert.equal(cls.autoFollowUpAllowed, false);
+  assert.equal(cls.autoRetry, false);
   assert.ok(cls.reasons.some(r => r.includes("UNKNOWN")));
+});
+t("CXP-43b MATCH => SUCCESS allows follow-up; non-success never allows it", () => {
+  const ok = runMock("success").cls;
+  assert.equal(ok.outcome, "SUCCESS"); assert.equal(ok.approvalBlocked, false); assert.equal(ok.autoFollowUpAllowed, true);
+  const bad = runMock("success", { model: "other-model" }).cls;
+  assert.equal(bad.outcome, "FAILED"); assert.equal(bad.autoFollowUpAllowed, false);
+  assert.equal(classifyCodexExecRun(null).autoFollowUpAllowed, false);
 });
 t("CXP-44 failure shapes", () => {
   assert.equal(runMock("turn_failed").cls.outcome, "FAILED");

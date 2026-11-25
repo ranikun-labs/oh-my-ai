@@ -268,7 +268,8 @@ const T_FAIL = new Set(["turn.failed"]);
 const T_CANCEL = new Set(["turn.cancelled", "turn.aborted"]);
 
 /**
- * 종료 결과를 SUCCESS / FAILED / CANCELLED / UNKNOWN으로 분류한다.
+ * 종료 결과를 SUCCESS / UNVERIFIED_CONFIG / FAILED / CANCELLED / UNKNOWN으로 분류한다.
+ * UNVERIFIED_CONFIG: 정상 종료(exit 0 + 완료 이벤트)지만 요청/보고 설정 비교가 UNKNOWN. 승인 불가(approvalBlocked)·자동 후속 실행 금지.
  * SUCCESS 조건: exit 0 + 신호/타임아웃 없음 + 파싱 오류·절단 없음 + 완료 이벤트 존재 + 실패/취소 이벤트 없음
  *   + 요청/보고 설정 MISMATCH 아님. MISMATCH면 SUCCESS 금지(FAILED로 격상).
  * 자동 재시도는 어떤 결과에서도 허용하지 않는다(autoRetry:false). 특히 UNKNOWN은 부작용 여부를
@@ -276,7 +277,7 @@ const T_CANCEL = new Set(["turn.cancelled", "turn.aborted"]);
  * @param {{stdout:string|string[], exitCode:number|null, signal?:string|null, timedOut?:boolean, requested?:object}} run
  */
 export function classifyCodexExecRun(run) {
-  if (!isRecord(run)) return { outcome: "UNKNOWN", reasons: ["run must be an object"], autoRetry: false };
+  if (!isRecord(run)) return { outcome: "UNKNOWN", reasons: ["run must be an object"], autoRetry: false, approvalBlocked: false, autoFollowUpAllowed: false };
   const text = Array.isArray(run.stdout) ? run.stdout.join("") : run.stdout;
   const parsed = parseJsonl(typeof text === "string" ? text : "");
   const types = parsed.events.map(e => e.type);
@@ -306,7 +307,13 @@ export function classifyCodexExecRun(run) {
   if (outcome === "SUCCESS" && config && config.status === "MISMATCH") {
     outcome = "FAILED"; reasons.push("requested/reported model or effort MISMATCH; not accepted");
   } else if (outcome === "SUCCESS" && config && config.status === "UNKNOWN") {
-    reasons.push("reported model/effort UNKNOWN; settings not verified");
+    // 설정 검증 불가 → 승인 근거로 못 쓰므로 SUCCESS가 아닌 별도 outcome으로 분리한다.
+    outcome = "UNVERIFIED_CONFIG"; reasons.push("reported model/effort UNKNOWN; settings not verified");
   }
-  return { ...base, outcome, reasons };
+  // 자동 후속 실행은 SUCCESS(검증 통과 또는 비교 미요청)일 때만 허용. 승인 차단은 UNVERIFIED_CONFIG 전용.
+  return {
+    ...base, outcome, reasons,
+    approvalBlocked: outcome === "UNVERIFIED_CONFIG",
+    autoFollowUpAllowed: outcome === "SUCCESS",
+  };
 }

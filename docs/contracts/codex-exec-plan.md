@@ -8,7 +8,7 @@
 
 - `scripts/lib/codex-exec-plan.mjs` — 프로세스를 띄우지 않는 순수 함수
 - `fixtures/codex-exec/mock-codex-exec.mjs` — JSONL 시나리오를 내는 Mock CLI (실제 codex 아님)
-- `scripts/test-codex-exec-plan.mjs` / `make test-codex-exec-plan` — 24개 회귀
+- `scripts/test-codex-exec-plan.mjs` / `make test-codex-exec-plan` — 25개 회귀
 
 ## 구성 요소
 
@@ -18,7 +18,7 @@
 | `resolveCodexExecutable` | explicit path 또는 PATH에서 신뢰 가능한 `codex` 해석 (fs/env/platform 주입) |
 | `createJsonlParser` / `parseJsonl` | chunk 경계·CRLF 허용, malformed/truncated 표시 |
 | `compareRequestedVsReported` | 요청 vs CLI 보고 model/effort → MATCH / MISMATCH / UNKNOWN |
-| `classifyCodexExecRun` | SUCCESS / FAILED / CANCELLED / UNKNOWN 분류 |
+| `classifyCodexExecRun` | SUCCESS / UNVERIFIED_CONFIG / FAILED / CANCELLED / UNKNOWN 분류 (+ `approvalBlocked`, `autoFollowUpAllowed`) |
 
 ## 불변식
 
@@ -26,8 +26,8 @@
 2. **cwd는 절대 경로, sandbox/approval은 명시.** sandbox는 `read-only|workspace-write`만(`danger-full-access` 거부). cwd는 argv가 아니라 spawn cwd로 전달.
 3. **값 주입 차단.** model/effort/sessionId는 선행 `-`·공백·따옴표 없는 토큰만. 프롬프트는 argv에 넣지 않는다.
 4. **실행 파일 해석은 fail-closed.** 절대 경로, 일반 파일, (POSIX) 실행 비트. 빈/상대 PATH 항목과 cwd(작업공간) 내부 후보 거부. Windows는 PATHEXT∩{`.exe`,`.cmd`}만, 대소문자 무시 `Path`, 따옴표 항목 처리. `.cmd` shim은 `shell:false`로 직접 spawn할 수 없으므로 `allowCmdShim: true`일 때만 허용하며 `cmdShim:true`로 표시(쉘 문자열로 우회 금지).
-5. **MISMATCH는 조용히 수용하지 않는다.** 보고 설정이 요청과 다르면 exit 0이어도 `FAILED`로 격상. 보고가 없으면 `UNKNOWN`으로 표기(성공이어도 `reasons`에 남김).
-6. **SUCCESS는 좁다.** exit 0 + 신호/타임아웃 없음 + malformed/truncated 없음 + `turn.completed` 존재 + 실패/취소/`error` 이벤트 없음 + MISMATCH 아님. 비정상 exit → FAILED, 종료 이벤트 없음/절단/exit 정보 없음/타임아웃 → UNKNOWN.
+5. **MISMATCH는 조용히 수용하지 않는다.** 보고 설정이 요청과 다르면 exit 0이어도 `FAILED`로 격상. 보고가 없어 비교가 `UNKNOWN`이면 exit 0 + 완료 이벤트여도 `SUCCESS`가 아니라 **`UNVERIFIED_CONFIG`** 로 분류한다(`approvalBlocked:true`, `autoFollowUpAllowed:false`). 설정을 검증하지 못한 실행은 승인 근거로 쓰지 않고 자동 후속 실행도 막는다(Owner 결정). 계약은 별도 outcome 방식 하나로 고정(SUCCESS+플래그 방식 아님).
+6. **SUCCESS는 좁다.** exit 0 + 신호/타임아웃 없음 + malformed/truncated 없음 + `turn.completed` 존재 + 실패/취소/`error` 이벤트 없음 + MISMATCH 아님. `requested`가 있고 비교 MATCH일 때만 `autoFollowUpAllowed:true`(`requested` 미전달 시 비교 자체를 안 한 것이므로 SUCCESS 유지). 비정상 exit → FAILED, 종료 이벤트 없음/절단/exit 정보 없음/타임아웃 → UNKNOWN.
 7. **자동 재시도 없음.** 모든 결과에 `autoRetry:false`. UNKNOWN은 부작용 여부를 모르므로 사람/상위 정책 판단 전 재실행 금지.
 
 ## UNVERIFIED 가정 (실제 Codex CLI로 검증하지 않음)
