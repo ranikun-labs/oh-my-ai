@@ -1488,6 +1488,76 @@ check_dev_main_flow_codex_installer() {
 require_file "setup.sh"
 require_file "Makefile"
 
+check_skill_doctor_per_skill() {
+  local fixture="$FIXTURE_ROOT/FX-INS-110-skill-doctor-per-skill"
+  local clone home_dir output dangling_target stale_target
+
+  check_fixture_metadata "$fixture"
+  clone="$(clone_fixture_repo skill-doctor-per-skill)"
+  home_dir="$TEMP_ROOT/skill-doctor-per-skill/home"
+  run_setup "$clone" "$home_dir" --install-shared >/dev/null
+
+  output="$(run_setup "$clone" "$home_dir" --doctor)"
+  require_fixed "Claude skill links ($home_dir/.claude/skills):" "$output"
+  require_fixed "Codex skill links ($home_dir/.agents/skills):" "$output"
+  require_fixed "  work-start: ready" "$output"
+  require_fixed "not installed:" "$output"
+  if printf '%s\n' "$output" | grep -q -F "legacy-dir-link"; then
+    fail "per-skill install reported a legacy directory link"
+  fi
+  [ "$(doctor_strict_status "$clone" "$home_dir")" = "0" ] || fail "healthy per-skill install failed strict doctor"
+
+  # Dangling per-skill link: reported, counted as a strict failure, and left untouched.
+  dangling_target="$clone/skills/no-such-skill"
+  ln -s "$dangling_target" "$home_dir/.claude/skills/postgres"
+  output="$(run_setup "$clone" "$home_dir" --doctor)"
+  require_fixed "  postgres: dangling" "$output"
+  [ "$(readlink "$home_dir/.claude/skills/postgres")" = "$dangling_target" ] || fail "doctor changed a dangling per-skill link"
+  [ "$(doctor_strict_status "$clone" "$home_dir")" = "1" ] || fail "strict doctor accepted a dangling per-skill link"
+  rm -f -- "$home_dir/.claude/skills/postgres"
+
+  # Old flat path after a move: reported as stale-source, counted as a strict failure, and left untouched.
+  stale_target="$clone/skills/postgres"
+  ln -s "$stale_target" "$home_dir/.agents/skills/postgres"
+  mkdir -p "$clone/skills/library"
+  mv "$clone/skills/postgres" "$clone/skills/library/postgres"
+  output="$(run_setup "$clone" "$home_dir" --doctor)"
+  require_fixed "  postgres: stale-source" "$output"
+  [ "$(readlink "$home_dir/.agents/skills/postgres")" = "$stale_target" ] || fail "doctor changed a stale-source link"
+  [ "$(doctor_strict_status "$clone" "$home_dir")" = "1" ] || fail "strict doctor accepted a stale-source link"
+
+  echo "passed: FX-INS-110 skill-doctor-per-skill"
+}
+
+check_legacy_dir_link_warning() {
+  local fixture="$FIXTURE_ROOT/FX-INS-120-legacy-dir-link"
+  local clone home_dir output
+
+  check_fixture_metadata "$fixture"
+  clone="$(clone_fixture_repo legacy-dir-link)"
+  home_dir="$TEMP_ROOT/legacy-dir-link/home"
+  mkdir -p "$home_dir/.claude" "$home_dir/.agents"
+  ln -s "$clone/skills" "$home_dir/.claude/skills"
+  ln -s "$clone/skills" "$home_dir/.agents/skills"
+
+  output="$(run_setup "$clone" "$home_dir" --doctor)"
+  require_fixed "legacy-dir-link: $home_dir/.claude/skills -> $clone/skills" "$output"
+  require_fixed "legacy-dir-link: $home_dir/.agents/skills -> $clone/skills" "$output"
+  require_fixed "grouped dirs core/ and library/ would be exposed as bogus skills" "$output"
+  if printf '%s\n' "$output" | grep -q -F "installed:"; then
+    fail "doctor listed per-skill statuses under a legacy directory link"
+  fi
+  [ "$(readlink "$home_dir/.claude/skills")" = "$clone/skills" ] || fail "doctor changed the Claude legacy directory link"
+  [ "$(readlink "$home_dir/.agents/skills")" = "$clone/skills" ] || fail "doctor changed the Codex legacy directory link"
+  # A bare home is runtime-incomplete, so strict fails there too. The legacy link must add no failure of its own.
+  local bare_home="$TEMP_ROOT/legacy-dir-link/bare-home"
+  mkdir -p "$bare_home"
+  [ "$(doctor_strict_status "$clone" "$home_dir")" = "$(doctor_strict_status "$clone" "$bare_home")" ] \
+    || fail "legacy directory link changed strict doctor status; it must be a warning only"
+
+  echo "passed: FX-INS-120 legacy-dir-link"
+}
+
 if [ "${1:-}" = "--dev-main-flow-only" ]; then
   run_isolated_check check_dev_main_flow_codex_installer
   run_isolated_check check_dev_main_flow_moved_source
@@ -1523,5 +1593,7 @@ run_isolated_check check_work_start_engine_failure_modes
 run_isolated_check check_work_start_source_relocation
 run_isolated_check check_work_start_skill_moved_source
 run_isolated_check check_work_start_consent_boundary
+run_isolated_check check_skill_doctor_per_skill
+run_isolated_check check_legacy_dir_link_warning
 
 echo "all install fixtures passed"

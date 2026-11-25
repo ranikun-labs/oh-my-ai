@@ -475,13 +475,94 @@ install_git_hook() {
   safe_link "$hook_target" "$hook_path" "git pre-commit hook"
 }
 
+# 디렉터리 전체 링크(<root> -> $REPO/skills)인지. 그런 링크는 core/, library/ 그룹 디렉터리를 가짜 Skill로 노출한다.
+# 읽기만 한다. 참이어도 링크를 고치거나 지우지 않는다.
+is_legacy_dir_link() {
+  dir="$1"
+  [ -L "$dir" ] || return 1
+  link="$(readlink "$dir")"
+  if [ "$link" = "$REPO/skills" ]; then
+    return 0
+  fi
+  if real_target="$(cd "$(dirname "$dir")" 2>/dev/null && cd -P "$link" 2>/dev/null && pwd -P)" \
+    && [ "$real_target" = "$(cd -P "$REPO/skills" && pwd -P)" ]; then
+    return 0
+  fi
+  return 1
+}
+
+# 발견된 Skill ID 목록(한 줄에 하나). 실패하면 비정상 종료한다.
+repo_skill_names() {
+  command -v node >/dev/null 2>&1 || return 1
+  node "$REPO/scripts/lib/skill-discovery.mjs" --list --format names --root "$REPO"
+}
+
+# 한 Skill ID의 노출 링크 상태 (read-only). 출력: ready | absent | stale-source | dangling | conflict
+skill_link_state() {
+  dest="$1"
+  skill_id="$2"
+  source="$3"
+  if [ -L "$dest" ]; then
+    if [ -n "$source" ] && [ "$(readlink "$dest")" = "$source" ]; then
+      printf '%s\n' "ready"
+    elif is_stale_source_link "$dest" "$skill_id" "$source"; then
+      printf '%s\n' "stale-source"
+    elif [ ! -e "$dest" ]; then
+      printf '%s\n' "dangling"
+    else
+      printf '%s\n' "conflict"
+    fi
+  elif [ -e "$dest" ]; then
+    printf '%s\n' "conflict"
+  else
+    printf '%s\n' "absent"
+  fi
+}
+
+# Runtime Skill 루트($1 = 라벨, $2 = 루트 경로)의 Skill별 링크 상태를 보고한다.
+# 설치된(absent가 아닌) Skill만 상태를 출력하고, 나머지는 개수만 센다. 실패 상태는 strict 실패로 센다.
+doctor_skill_links() {
+  label="$1"
+  root="$2"
+  say "$label skill links ($root):"
+  if is_legacy_dir_link "$root"; then
+    say "  legacy-dir-link: $root -> $(readlink "$root") (warning: grouped dirs core/ and library/ would be exposed as bogus skills)"
+    say "      per-skill links are not checked under a directory link; remove that link yourself, then re-run install (doctor never changes it)"
+    return 0
+  fi
+  if ! skill_names="$(repo_skill_names 2>/dev/null)"; then
+    say "  discovery: failed (run: node scripts/lib/skill-discovery.mjs --check)"
+    DOCTOR_FAIL_COUNT=$((DOCTOR_FAIL_COUNT + 1))
+    return 0
+  fi
+  absent_count=0
+  installed_count=0
+  while IFS= read -r skill_id; do
+    [ -n "$skill_id" ] || continue
+    source_dir="$(resolve_skill_source "$skill_id" 2>/dev/null)" || source_dir=""
+    state="$(skill_link_state "$root/$skill_id" "$skill_id" "$source_dir")"
+    if [ "$state" = "absent" ]; then
+      absent_count=$((absent_count + 1))
+      continue
+    fi
+    installed_count=$((installed_count + 1))
+    say "  $skill_id: $state"
+    if [ "$state" != "ready" ]; then
+      DOCTOR_FAIL_COUNT=$((DOCTOR_FAIL_COUNT + 1))
+    fi
+  done <<SKILL_NAMES
+$skill_names
+SKILL_NAMES
+  say "  installed: $installed_count, not installed: $absent_count (optional)"
+}
+
 doctor() {
   say "=== oh-my-ai doctor (read-only) ==="
   path_state "$CLAUDE_DIR/CLAUDE.md" "$REPO/claude/CLAUDE.md"
-  path_state "$CLAUDE_DIR/skills" "$REPO/skills"
   path_state "$CLAUDE_DIR/agents" "$REPO/claude/agents"
   path_state "$CODEX_DIR/AGENTS.md" "$REPO/AGENTS.md"
-  path_state "$AGENT_DIR/skills" "$REPO/skills"
+  doctor_skill_links "Claude" "$CLAUDE_DIR/skills"
+  doctor_skill_links "Codex" "$AGENT_DIR/skills"
   path_state "$LOCAL_BIN/oh-my-ai" "$REPO/scripts/oh-my-ai.mjs"
   path_state "$LOCAL_BIN/harness-event" "$REPO/scripts/harness-event.mjs"
   if [ -f "$REPO/scripts/work-start.sh" ] && [ -x "$REPO/scripts/work-start.sh" ]; then

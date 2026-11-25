@@ -3,7 +3,7 @@
 // 소스는 skills/<n>/ (flat) 또는 skills/{core,library}/<n>/ (그룹) 어디에도 둘 수 있고,
 // 소비자는 항상 평평한 목록만 본다. 그룹 디렉터리 자체는 Skill이 아니다.
 //
-//   node scripts/lib/skill-discovery.mjs --list [--root <dir>] [--format paths|json]
+//   node scripts/lib/skill-discovery.mjs --list [--root <dir>] [--format paths|json|names]
 //   node scripts/lib/skill-discovery.mjs --check [--root <dir>]
 //   node scripts/lib/skill-discovery.mjs --resolve <id> [--root <dir>]   (절대 Source 디렉터리 1개 출력)
 
@@ -214,7 +214,7 @@ function parseArgs(argv) {
     }
   }
   if (!opts.mode) throw new Error("usage: skill-discovery.mjs (--list [--format paths|json] | --check | --resolve <id>) [--root <dir>]");
-  if (!["paths", "json"].includes(opts.format)) throw new Error("--format must be paths or json");
+  if (!["paths", "json", "names"].includes(opts.format)) throw new Error("--format must be paths, json or names");
   return opts;
 }
 
@@ -251,6 +251,8 @@ function main(argv) {
   }
   if (opts.format === "json") {
     console.log(JSON.stringify(result.skills, null, 2));
+  } else if (opts.format === "names") {
+    for (const skill of result.skills) console.log(skill.name);
   } else {
     for (const skill of result.skills) console.log(skill.relPath);
   }

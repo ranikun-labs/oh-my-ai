@@ -134,6 +134,10 @@ function testCli() {
   assert.equal(list.status, 0, list.stderr);
   assert.equal(list.stdout, "skills/core/a-skill/SKILL.md\n");
 
+  const names = spawnSync(process.execPath, [cli, "--list", "--root", good, "--format", "names"], { encoding: "utf8" });
+  assert.equal(names.status, 0, names.stderr);
+  assert.equal(names.stdout, "a-skill\n", "names format lists Skill IDs only");
+
   const check = spawnSync(process.execPath, [cli, "--check", "--root", good], { encoding: "utf8" });
   assert.equal(check.status, 0, check.stderr);
   assert.match(check.stdout, /OK \(1 skills\)/);
