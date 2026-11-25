@@ -1,0 +1,18 @@
+#!/bin/sh
+# oh-my-ai git-identity guard (opt-in): pre-push wrapper. Not wired by setup.sh.
+# git passes: $1 = remote name, $2 = remote URL; stdin = pre-push ref lines.
+set -eu
+
+src="$0"
+while [ -h "$src" ]; do
+  dir="$(cd "$(dirname "$src")" && pwd)"
+  link="$(readlink "$src")"
+  case "$link" in
+    /*) src="$link" ;;
+    *) src="$dir/$link" ;;
+  esac
+done
+here="$(cd "$(dirname "$src")" && pwd)"
+repo="$(cd "$here/../.." && pwd)"
+
+exec node "$repo/scripts/git-identity-guard.mjs" pre-push "$@"
