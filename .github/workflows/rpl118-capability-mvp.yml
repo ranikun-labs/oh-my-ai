@@ -5,12 +5,17 @@ on:
     branches:
       - master
       - feat/rpl-120-durable-claim-integration-20261030
+      - feat/rpl-118-cross-runtime-codex-exec
     paths:
       - ".github/workflows/rpl118-capability-mvp.yml"
       - "scripts/lib/rpl-118-capability-preflight-mvp.mjs"
       - "scripts/test-rpl-118-capability-preflight-mvp.mjs"
       - "scripts/lib/cross-runtime-codex-exec.mjs"
       - "scripts/lib/cross-runtime-codex-observe.mjs"
+      - "scripts/lib/cross-runtime-codex-runner.mjs"
+      - "scripts/cross-runtime-codex-run.mjs"
+      - "scripts/test-cross-runtime-codex-runner.mjs"
+      - "skills/cross-runtime-delegate/SKILL.md"
       - "scripts/fake-codex.mjs"
       - "scripts/test-cross-runtime-codex-exec.mjs"
       - "fixtures/cross-runtime/**"
@@ -53,6 +58,15 @@ jobs:
       - name: Run RPL-118 Capability MVP fixtures
         run: node scripts/test-rpl-118-capability-preflight-mvp.mjs
 
+      - name: Check runner syntax
+        run: |
+          node --check scripts/lib/cross-runtime-codex-runner.mjs
+          node --check scripts/cross-runtime-codex-run.mjs
+          node --check scripts/test-cross-runtime-codex-runner.mjs
+
+      - name: Run read-only runner fixtures
+        run: node scripts/test-cross-runtime-codex-runner.mjs
+
       - name: Run cross-runtime Codex fixtures
         run: node scripts/test-cross-runtime-codex-exec.mjs
 
@@ -70,6 +84,15 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
+
+      - name: Check runner syntax
+        run: |
+          node --check scripts/lib/cross-runtime-codex-runner.mjs
+          node --check scripts/cross-runtime-codex-run.mjs
+          node --check scripts/test-cross-runtime-codex-runner.mjs
+
+      - name: Run read-only runner fixtures
+        run: node scripts/test-cross-runtime-codex-runner.mjs
 
       - name: Run cross-runtime Codex fixtures
         run: node scripts/test-cross-runtime-codex-exec.mjs

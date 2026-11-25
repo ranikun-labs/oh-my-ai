@@ -3,6 +3,36 @@
   "source": "skills/*/SKILL.md metadata.routing",
   "skills": [
     {
+      "name": "cross-runtime-delegate",
+      "path": "skills/cross-runtime-delegate/SKILL.md",
+      "description": "Use when an Owner explicitly approves a specific read-only Codex worker delegation from Claude Code, including model and effort.",
+      "summary": "Owner-approved read-only Codex worker delegation for RPL-118",
+      "routing": {
+        "visibility": "contextual",
+        "risk_level": "low",
+        "task_types": [
+          "delegation"
+        ],
+        "triggers": [
+          {
+            "kind": "intent",
+            "values": [
+              "owner_approved_read_only_codex_worker"
+            ]
+          }
+        ],
+        "use_when": [
+          "A Claude Code session has explicit Owner approval for a specific read-only Codex delegation"
+        ],
+        "do_not_use_when": [
+          "The request requires workspace writes or lacks specific Owner approval"
+        ],
+        "requires": [
+          "specific_owner_approval"
+        ]
+      }
+    },
+    {
       "name": "daily-report",
       "path": "skills/daily-report/SKILL.md",
       "description": "Optional workflow skill for Slack-style daily or weekly reports. Use for project-based progress summaries of today or an explicitly supplied date range, optionally using Notion worklogs/Todo pages as input.",
