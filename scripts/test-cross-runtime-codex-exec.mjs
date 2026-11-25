@@ -125,13 +125,16 @@ function fixture(name) {
 }
 const effective = extractEffectiveSettings(fixture("rollout-terra-low.jsonl"));
 const expectedEffective = { sessionId: threadId, turnId: "00000000-0000-0000-0000-000000000002",
-  completedTurnId: "00000000-0000-0000-0000-000000000002", turnContextCount: 1, model: request.model,
+  completedTurnId: "00000000-0000-0000-0000-000000000002", turnContextCount: 1,
+  turnIds: ["00000000-0000-0000-0000-000000000002"],
+  completedTurnIds: ["00000000-0000-0000-0000-000000000002"], model: request.model,
   effort: "low", sandbox: { type: "read-only" },
   cwd: request.cwd, modelProvider: "openai" };
 test("fixture settings", () => assert.deepEqual(effective, expectedEffective));
 test("resume uses last context",
   () => assert.deepEqual(extractEffectiveSettings(fixture("rollout-realistic-resume.jsonl")),
-    { ...expectedEffective, turnContextCount: 2 }));
+    { ...expectedEffective, turnContextCount: 2,
+      turnIds: ["00000000-0000-0000-0000-000000000003", expectedEffective.turnId] }));
 test("null effort", () => assert.deepEqual(extractEffectiveSettings(fixture("rollout-null-effort.jsonl")),
   { ...expectedEffective, effort: "UNKNOWN" }));
 test("normalize sandbox", () => {
@@ -151,6 +154,20 @@ function expectIndeterminate(result, code) {
   assert.deepEqual(result, { status: "INDETERMINATE", code, retryAllowed: false });
 }
 test("successful outcome", () => assert.deepEqual(outcome(), { status: "SUCCEEDED" }));
+const resumeRequested = { ...requested, mode: "RESUME" };
+const resumed = extractEffectiveSettings(fixture("rollout-realistic-resume.jsonl"));
+const baseline = { turnIds: [resumed.turnIds[0]] };
+test("resume crashed with stale turn", () => expectIndeterminate(outcome({ requested: resumeRequested,
+  effective: extractEffectiveSettings(fixture("rollout-resume-crashed.jsonl")),
+  baseline: { turnIds: [effective.turnId] } }), "STALE_TURN"));
+for (const missing of [undefined, {}, { turnIds: null }]) {
+  test("resume missing baseline", () => expectIndeterminate(outcome({ requested: resumeRequested,
+    effective: resumed, baseline: missing }), "BASELINE_MISSING"));
+}
+test("resume with two new turns", () => expectIndeterminate(outcome({ requested: resumeRequested,
+  effective: { ...resumed, turnIds: [...resumed.turnIds, "another"] }, baseline }), "TURN_COUNT_UNEXPECTED"));
+test("resume succeeds with baseline", () => assert.deepEqual(outcome({ requested: resumeRequested,
+  effective: resumed, baseline }), { status: "SUCCEEDED" }));
 for (const [field, value, code] of [["model", "other", "MODEL_MISMATCH"], ["effort", "high",
   "EFFORT_MISMATCH"], ["sandbox", "workspace-write", "SANDBOX_MISMATCH"], ["cwd", "/other", "CWD_MISMATCH"],
   ["modelProvider", "other", "MODEL_PROVIDER_MISMATCH"], ["effort", "UNKNOWN", "EFFECTIVE_SETTINGS_UNKNOWN"]]) {
@@ -229,7 +246,8 @@ test("runner preconditions", () => {
   assert.deepEqual(RUNNER_PRECONDITIONS, [
     "realpath_executable_outside_worktree", "reject_reparse_points_junction_symlink", "resolve_8dot3_short_names",
     "revalidate_executable_identity_at_spawn_toctou", "writer_lease_acquired_and_dispatched_recorded",
-    "clean_worktree_and_head_revalidated", "spawn_without_shell_with_argv_array", "prompt_via_stdin_then_eof",
+    "clean_worktree_and_head_revalidated", "capture_rollout_turn_baseline_before_resume",
+    "output_last_message_path_absent_before_spawn", "spawn_without_shell_with_argv_array", "prompt_via_stdin_then_eof",
     "process_tree_exit_confirmed_before_release",
   ]);
 });

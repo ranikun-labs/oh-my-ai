@@ -11,6 +11,8 @@ export const RUNNER_PRECONDITIONS = Object.freeze([
   "revalidate_executable_identity_at_spawn_toctou",
   "writer_lease_acquired_and_dispatched_recorded",
   "clean_worktree_and_head_revalidated",
+  "capture_rollout_turn_baseline_before_resume",
+  "output_last_message_path_absent_before_spawn",
   "spawn_without_shell_with_argv_array",
   "prompt_via_stdin_then_eof",
   "process_tree_exit_confirmed_before_release",

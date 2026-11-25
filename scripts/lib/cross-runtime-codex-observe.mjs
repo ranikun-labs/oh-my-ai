@@ -68,6 +68,8 @@ export function extractEffectiveSettings(rolloutJsonlText) {
   let meta = {};
   let completedTurnId;
   let turnContextCount = 0;
+  const turnIds = [];
+  const completedTurnIds = [];
   for (const line of rolloutJsonlText.split(/\r?\n/)) {
     if (!line.trim()) continue;
     try {
@@ -75,9 +77,11 @@ export function extractEffectiveSettings(rolloutJsonlText) {
       if (event.type === "turn_context") {
         context = event.payload ?? {};
         turnContextCount++;
+        turnIds.push(context.turn_id);
       }
       if (event.type === "event_msg" && event.payload?.type === "task_complete") {
         completedTurnId = event.payload.turn_id ?? event.payload.turn_attribution?.turn_id;
+        completedTurnIds.push(completedTurnId);
       }
       if (event.type === "session_meta") meta = event.payload ?? {};
     } catch {
@@ -89,6 +93,8 @@ export function extractEffectiveSettings(rolloutJsonlText) {
     turnId: context.turn_id,
     completedTurnId,
     turnContextCount,
+    turnIds,
+    completedTurnIds,
     model: context.model ?? "UNKNOWN",
     effort: context.effort ?? context.reasoning_effort ?? "UNKNOWN",
     sandbox: context.sandbox_policy ?? context.sandbox ?? "UNKNOWN",
@@ -110,7 +116,8 @@ function normalizePath(value, platform) {
   return platform === "win32" ? normalized.toLowerCase() : normalized;
 }
 
-export function evaluateExecOutcome({ requested, exitCode, timedOut, events, effective, platform = process.platform }) {
+export function evaluateExecOutcome({ requested, exitCode, timedOut, events, effective, baseline,
+  platform = process.platform }) {
   const indeterminate = code => ({ status: "INDETERMINATE", code, retryAllowed: false });
   if (timedOut) return indeterminate("TIMEOUT");
   if (events?.malformed) return indeterminate("MALFORMED_OUTPUT");
@@ -118,6 +125,15 @@ export function evaluateExecOutcome({ requested, exitCode, timedOut, events, eff
   if (typeof events.threadId !== "string" || !events.threadId ||
       typeof effective?.sessionId !== "string" || !effective.sessionId) return indeterminate("THREAD_BINDING_UNKNOWN");
   if (events.threadId !== effective.sessionId) return indeterminate("THREAD_BINDING_MISMATCH");
+  if (requested.mode === "RESUME" && !Array.isArray(baseline?.turnIds)) {
+    return indeterminate("BASELINE_MISSING");
+  }
+  const baselineTurnIds = Array.isArray(baseline?.turnIds) ? baseline.turnIds : [];
+  if (baselineTurnIds.includes(effective.turnId)) return indeterminate("STALE_TURN");
+  if (requested.mode === "RESUME" &&
+      (!Array.isArray(effective.turnIds) || effective.turnIds.length !== baselineTurnIds.length + 1)) {
+    return indeterminate("TURN_COUNT_UNEXPECTED");
+  }
   if (typeof effective.turnId !== "string" || !effective.turnId ||
       typeof effective.completedTurnId !== "string" || !effective.completedTurnId) {
     return indeterminate("TURN_BINDING_UNKNOWN");
