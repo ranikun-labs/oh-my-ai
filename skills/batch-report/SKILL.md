@@ -44,6 +44,7 @@ SHA, 수치, trade-off, 위험, unknown은 요약하면서 줄이거나 다른 �
 
 ## 4. 집계 규칙 (이 Skill만 소유한다)
 a. **보존**: 입력 N개는 설명 N개가 된다. 병합·누락·삭제를 하지 않는다. 빠진 입력은 `입력 없음`으로 드러낸다.
+   단, 동일한 `agent`·`task`·`claim`·`evidence`가 여러 번 도착한 중복 수신은 입력 1건으로 세고 중복 횟수를 함께 적는다. 내용이 다른 재보고는 별도 입력으로 보존한다.
 b. **악화만**: 묶음 상태는 작업 상태 중 최악이다. 순서는 `FAIL > BLOCKED > UNKNOWN > NOT_RUN > PASS`.
    주장만으로는 `PASS`가 되지 않는다. `PASS`에는 실행 명령, CI 링크, 고정 SHA 같은 evidence ref가 있어야 한다.
    작업별 상태는 묶음 상태와 분리한다. Objective 판정은 Main 또는 호출자가 내며, 이 Skill은 Objective `PASS`를 만들지 않는다.

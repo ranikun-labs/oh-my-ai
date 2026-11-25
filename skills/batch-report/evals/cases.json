@@ -242,5 +242,19 @@
       "a 정정 line states the confirmed cause with its basis as Main 직접 확인",
       "the corrected value does not overwrite the original claim in the consolidated output"
     ]
+  },
+  {
+    "id": "BR19",
+    "category": "duplicate-arrival",
+    "prompt": "/batch-report 워커 E의 동일한 완료 보고(같은 SHA, 같은 테스트 118 passed)가 같은 묶음에 3번 도착. 내용은 세 번 모두 같음",
+    "candidates": [
+      "batch-report"
+    ],
+    "expected_action": "counted_once_with_duplicate_count",
+    "criteria": [
+      "the identical arrivals are counted as one input with the duplicate count recorded",
+      "the input count in the consolidated output is 1 for worker E, not 3",
+      "a report with different content from the same worker would be kept as a separate input"
+    ]
   }
 ]
