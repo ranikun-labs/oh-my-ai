@@ -11,7 +11,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { coreIdsOf, discoverSkills } from "./lib/skill-discovery.mjs";
-import { captureExposureBaseline, checkExposureLinks } from "./check-skill-exposure-links.mjs";
+import { captureExposureBaseline, checkExposureLinks, loadBaseline } from "./check-skill-exposure-links.mjs";
 import { DEPENDENCY_MISSING_EXIT_CODE, missingYamlDependency } from "./lib/yaml-dependency.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -38,6 +38,8 @@ try {
   testPilotDependencyMissing();
   testExposureBaselineLoss();
   testExposureBaselineCli();
+  testExposureBaselineNonAscii();
+  testExposureBaselineRealTree();
   testPilotGates();
   testTierPrecedence();
   console.log("skill-discovery fixtures: PASS");
@@ -474,6 +476,45 @@ function testPilotGates() {
   assert.match(corruptRun.stdout, /^skill-index\s+FAIL\s+render-skill-index failed: .*exit 1/m, corruptRun.stdout);
   assert.match(corruptRun.stdout, /^instructions\s+FAIL/m, corruptRun.stdout);
   console.log("ok: pilot-check PASSes 7/7 normally, FAILs with exit 9 when a renderer is injected to fail, and does not pass on stale outputs when a renderer rejects the tree");
+}
+
+// 비ASCII 노출 ID(예: 한글화): git ls-tree 기본 출력은 "\355\225\234..." 로 따옴표 이스케이프된다. -z 파싱 회귀 방지.
+function testExposureBaselineNonAscii() {
+  const root = exposureRoot("exposure-baseline-nonascii");
+  const id = "한글화";
+  writeSkill(path.join(root, "skills", id), id);
+  relLink(root, ".claude/skills", id, path.join(root, "skills", id));
+  relLink(root, ".agents/skills", id, path.join(root, "skills", id));
+  const git = ["-C", root, "-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid"];
+  assert.equal(spawnSync("git", [...git, "init", "-q"], { encoding: "utf8" }).status, 0);
+  assert.equal(spawnSync("git", [...git, "add", "-A"], { encoding: "utf8" }).status, 0);
+  assert.equal(spawnSync("git", [...git, "commit", "-q", "-m", "baseline"], { encoding: "utf8" }).status, 0);
+
+  const keys = loadBaseline("HEAD", root);
+  assert.ok(keys.includes(`.claude/skills/${id}`), `non-ASCII id must parse from git ref: ${keys.join(", ")}`);
+  const passed = spawnSync(process.execPath, [exposureGate, "--root", root, "--baseline", "HEAD"], { encoding: "utf8" });
+  assert.equal(passed.status, 0, `${passed.stdout}${passed.stderr}`);
+
+  fs.unlinkSync(path.join(root, ".claude", "skills", id));
+  const failed = spawnSync(process.execPath, [exposureGate, "--root", root, "--baseline", "HEAD"], { encoding: "utf8" });
+  assert.equal(failed.status, 1, `${failed.stdout}${failed.stderr}`);
+  assert.match(failed.stderr, /FAIL: baseline exposure link\(s\) missing \(1\): \.claude\/skills\/한글화/);
+  console.log("ok: exposure baseline with a non-ASCII id (git ref, -z): passes when complete, FAILs by name when the link is deleted");
+}
+
+// 실제 트리: HEAD 기준선이 비ASCII 노출 링크를 포함해 파싱되고 CLI가 exit 0 이어야 한다. git 저장소가 아니면 SKIP 사유를 찍는다.
+function testExposureBaselineRealTree() {
+  const inGit = spawnSync("git", ["-C", repoRoot, "rev-parse", "--verify", "-q", "HEAD^{commit}"], { encoding: "utf8" }).status === 0;
+  if (!inGit) {
+    console.log("SKIP: real-tree exposure baseline (repository has no git HEAD; run from a git checkout)");
+    return;
+  }
+  const keys = loadBaseline("HEAD", repoRoot);
+  assert.ok(keys.some(key => /[^\x00-\x7f]/.test(key)), `real tree HEAD must list a non-ASCII exposure id (fixture drift?): ${keys.join(", ")}`);
+  const real = spawnSync(process.execPath, [exposureGate, "--baseline", "HEAD"], { encoding: "utf8" });
+  assert.equal(real.status, 0, `real tree must pass against HEAD baseline: ${real.stdout}${real.stderr}`);
+  assert.match(real.stdout, /baseline=\d+ id\(s\) present/);
+  console.log(`ok: real tree exposure links pass against git HEAD baseline (${keys.length} ids, incl. non-ASCII)`);
 }
 
 function exposureBaselineRoot(label) {

@@ -50,19 +50,20 @@ export function captureExposureBaseline(repoRoot = DEFAULT_REPO_ROOT) {
 export function loadBaseline(spec, repoRoot = DEFAULT_REPO_ROOT) {
   const file = path.resolve(spec);
   if (fs.statSync(file, { throwIfNoEntry: false })?.isFile()) {
-    return parseBaselineLines(fs.readFileSync(file, "utf8").split(/\r?\n/), spec);
+    return parseBaselineLines(fs.readFileSync(file, "utf8").split(/\r?\n/), spec, { trim: true });
   }
-  const listed = spawnSync("git", ["-C", path.resolve(repoRoot), "ls-tree", "-r", "--name-only", spec, "--", ...EXPOSURE_DIRS], { encoding: "utf8" });
+  // -z: 경로를 NUL 구분 원문으로 받는다. 없으면 한글 등 비ASCII 이름이 "\355\225\234..." 로 따옴표 이스케이프돼 파싱이 실패한다.
+  const listed = spawnSync("git", ["-C", path.resolve(repoRoot), "ls-tree", "-r", "-z", "--name-only", spec, "--", ...EXPOSURE_DIRS], { encoding: "utf8" });
   if (listed.status !== 0) {
     throw new Error(`--baseline: "${spec}" is neither a file nor a git ref (${listed.stderr.trim() || "git ls-tree failed"})`);
   }
-  return parseBaselineLines(listed.stdout.split("\n"), spec);
+  return parseBaselineLines(listed.stdout.split("\0"), spec, { trim: false });
 }
 
-function parseBaselineLines(lines, spec) {
+function parseBaselineLines(lines, spec, { trim }) {
   const keys = new Set();
   for (const raw of lines) {
-    const line = raw.trim();
+    const line = trim ? raw.trim() : raw;
     if (line === "" || line.startsWith("#")) continue;
     const match = EXPOSURE_KEY.exec(line);
     if (!match) throw new Error(`--baseline "${spec}": not an exposure link path: ${line}`);
