@@ -1,0 +1,5 @@
+{"timestamp":"2026-01-01T00:00:00Z","type":"session_meta","payload":{"model_provider":"openai","id":"00000000-0000-0000-0000-000000000001","session_id":"00000000-0000-0000-0000-000000000001"}}
+{"timestamp":"2026-01-01T00:00:00Z","type":"turn_context","payload":{"model":"gpt-6.2-sol","effort":"low","sandbox_policy":{"type":"read-only"},"cwd":"/synthetic/worktree","turn_id":"00000000-0000-0000-0000-000000000003"}}
+{"timestamp":"2026-01-01T00:00:00Z","type":"session_meta","payload":{"model_provider":"openai","id":"00000000-0000-0000-0000-000000000001","session_id":"00000000-0000-0000-0000-000000000001"}}
+{"timestamp":"2026-01-01T00:00:00Z","type":"turn_context","payload":{"model":"gpt-6.1-terra","effort":"low","sandbox_policy":{"type":"read-only"},"cwd":"/synthetic/worktree","turn_id":"00000000-0000-0000-0000-000000000002"}}
+{"type":"event_msg","payload":{"type":"task_complete","turn_id":"00000000-0000-0000-0000-000000000002"}}

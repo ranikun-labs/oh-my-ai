@@ -191,3 +191,6 @@ install-profile:
 update:
 	git pull
 	$(MAKE) install-shared
+.PHONY: test-cross-runtime-codex-exec
+test-cross-runtime-codex-exec:
+	node ./scripts/test-cross-runtime-codex-exec.mjs
