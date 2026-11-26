@@ -22,6 +22,7 @@ export const DECISION_CODES = Object.freeze([
   "POLICY_MISSING", "POLICY_INVALID", "POLICY_NOT_APPROVED", "UNKNOWN_MODEL", "MODEL_DISABLED",
   "EFFORT_DISABLED", "MODE_DISABLED", "ROLE_NOT_ALLOWED", "RUNTIME_UNSUPPORTED",
   "SUBSTITUTION_NOT_APPROVED", "NO_DEFAULT", "DEFAULT_SELECTED", "APPLIED", "ROLLED_BACK",
+  "APPLY_REQUIRES_TTY", "APPLY_NOT_CONFIRMED",
 ]);
 
 const TOP_KEYS = [
@@ -274,7 +275,8 @@ export function resolveModelSelection({ policy, role, requested, runtimeCapabili
   if (policy.status !== "ACTIVE") return decision("DENY", "POLICY_NOT_APPROVED", [`policy status ${policy.status} is not ACTIVE; drafts cannot execute`]);
   const direct = evaluate(policy, role, requested, runtimeCapabilities);
   if (direct.status === "ALLOW" || substitute === undefined) return direct;
-  const approved = policy.substitutions.some(pair => sameTuple(pair.from, requested) && sameTuple(pair.to, substitute));
+  // `substitutions` is optional: a policy without the key approves no pair (DENY, never a TypeError).
+  const approved = list(policy.substitutions).some(pair => sameTuple(pair.from, requested) && sameTuple(pair.to, substitute));
   if (!approved) {
     return decision("DENY", "SUBSTITUTION_NOT_APPROVED", ["requested->substitute pair is not listed in substitutions"]);
   }
@@ -314,19 +316,45 @@ export function selectDefault({ policy, role, runtime, risk } = {}) {
 
 // ---------- paths ----------
 
-/** Default active location: ${XDG_CONFIG_HOME:-~/.config}/oh-my-ai/model-policy.json. */
+/**
+ * Default active location: ${XDG_CONFIG_HOME}/oh-my-ai/model-policy.json when XDG_CONFIG_HOME is an
+ * ABSOLUTE path, else ~/.config/oh-my-ai/model-policy.json. A relative XDG_CONFIG_HOME is ignored
+ * (it would resolve against the caller's cwd). `via` is "xdg" when the XDG base moved the location
+ * away from $HOME/.config, otherwise "default". Trust assumption: whoever controls the environment
+ * controls this location, so env write access is policy authority (see docs/contracts/model-policy.md).
+ */
+export function resolveDefaultLocation(env = process.env) {
+  const home = env.HOME || os.homedir();
+  const defaultBase = path.join(home, ".config");
+  const xdg = present(env.XDG_CONFIG_HOME) && path.isAbsolute(env.XDG_CONFIG_HOME) ? path.normalize(env.XDG_CONFIG_HOME) : null;
+  const configHome = xdg ?? defaultBase;
+  const via = xdg !== null && configHome !== path.normalize(defaultBase) ? "xdg" : "default";
+  return { path: path.join(configHome, "oh-my-ai", "model-policy.json"), via };
+}
+
+/** Default active location path only (see resolveDefaultLocation). */
 export function resolveDefaultPolicyPath(env = process.env) {
-  const configHome = present(env.XDG_CONFIG_HOME) ? env.XDG_CONFIG_HOME : path.join(env.HOME || os.homedir(), ".config");
-  return path.join(configHome, "oh-my-ai", "model-policy.json");
+  return resolveDefaultLocation(env).path;
 }
 
 function resolveOverridePolicyPath(env) {
   return present(env.OH_MY_AI_MODEL_POLICY) ? path.resolve(env.OH_MY_AI_MODEL_POLICY) : null;
 }
 
-/** validate / diff / check (dry): OH_MY_AI_MODEL_POLICY if set, else the default location. Never execution. */
+/**
+ * validate / diff / check (dry): OH_MY_AI_MODEL_POLICY if set (via "override"), else the default
+ * location (via "default" | "xdg"). Never execution: the result says where it came from, and
+ * an override result is never execution approval.
+ */
+export function resolveDryPolicy(env = process.env) {
+  const override = resolveOverridePolicyPath(env);
+  if (override !== null) return { path: override, via: "override" };
+  return resolveDefaultLocation(env);
+}
+
+/** Path-only form of resolveDryPolicy. */
 export function resolveDryPolicyPath(env = process.env) {
-  return resolveOverridePolicyPath(env) ?? resolveDefaultPolicyPath(env);
+  return resolveDryPolicy(env).path;
 }
 
 /**
@@ -335,14 +363,14 @@ export function resolveDryPolicyPath(env = process.env) {
  * override path can therefore never unlock execution.
  */
 export function resolveExecutionPolicyPath(env = process.env) {
-  const defaultPath = resolveDefaultPolicyPath(env);
+  const base0 = resolveDefaultLocation(env);
   const override = resolveOverridePolicyPath(env);
-  if (override === null) return { path: defaultPath, via: "default" };
-  const base = readPolicyFile(defaultPath);
+  if (override === null) return { path: base0.path, via: base0.via };
+  const base = readPolicyFile(base0.path);
   if (base.status === "VALID" && base.policy.status === "ACTIVE" && base.policy.allow_path_override === true) {
     return { path: override, via: "override" };
   }
-  return { path: defaultPath, via: "default", override_ignored: override };
+  return { path: base0.path, via: base0.via, override_ignored: override };
 }
 
 /** Archived copy of a previous version, stored next to the active file. */
@@ -507,8 +535,17 @@ function writeFileAtomic(target, text) {
  * current active policy_version (or be null when none exists). The current active is copied
  * to model-policy.<version>.json first, then the candidate replaces the active file atomically (0600).
  * Target = execution location. Manual only (Owner gate); never called by the resolver.
+ *
+ * Human confirmation (mistake-guard, NOT a security boundary): options.isTTY must be true and
+ * options.confirm(summary) must return true, else DENY. The CLI passes isTTY = stdin is a TTY and
+ * a prompt that asks the operator to type the new policy_version. Whoever can write the candidate
+ * and the active file can also call this with a scripted confirm; approved_by is only a declaration.
+ * The gate runs before any file is read or written.
  */
-export function applyPolicy(env = process.env, candidatePath) {
+export function applyPolicy(env = process.env, candidatePath, options = {}) {
+  if (options.isTTY !== true || typeof options.confirm !== "function") {
+    return decision("DENY", "APPLY_REQUIRES_TTY", ["apply needs an interactive terminal confirmation (stdin is not a TTY)"]);
+  }
   const candidate = readPolicyFile(path.resolve(candidatePath));
   if (candidate.status !== "VALID") return decision("DENY", "POLICY_INVALID", ["candidate invalid or missing", ...candidate.errors]);
   if (candidate.policy.status !== "ACTIVE") return decision("DENY", "POLICY_NOT_APPROVED", [`candidate status ${candidate.policy.status} is not ACTIVE`]);
@@ -531,14 +568,20 @@ export function applyPolicy(env = process.env, candidatePath) {
   let archivePath = null;
   if (active) {
     archivePath = previousCopyPath(activePath, active.policy.policy_version);
-    if (fs.existsSync(archivePath)) {
-      if (fs.readFileSync(archivePath, "utf8") !== activeText) {
-        return decision("DENY", "POLICY_INVALID", ["archive for the active version exists with different content; resolve manually"]);
-      }
-    } else {
-      writeFileAtomic(archivePath, activeText);
+    if (fs.existsSync(archivePath) && fs.readFileSync(archivePath, "utf8") !== activeText) {
+      return decision("DENY", "POLICY_INVALID", ["archive for the active version exists with different content; resolve manually"]);
     }
   }
+  const summary = {
+    from_version: active ? active.policy.policy_version : null,
+    to_version: candidate.policy.policy_version,
+    path: activePath,
+    approved_by: candidate.policy.approved_by,
+  };
+  if (options.confirm(summary) !== true) {
+    return decision("DENY", "APPLY_NOT_CONFIRMED", ["operator did not confirm; nothing was written"], summary);
+  }
+  if (active && !fs.existsSync(archivePath)) writeFileAtomic(archivePath, activeText);
   fs.mkdirSync(path.dirname(activePath), { recursive: true, mode: 0o700 });
   writeFileAtomic(activePath, candidateText);
   return decision("ALLOW", "APPLIED", [], {

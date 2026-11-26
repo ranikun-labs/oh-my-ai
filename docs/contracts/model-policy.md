@@ -31,9 +31,23 @@ Two lookups, chosen by purpose:
 | Purpose | Path used |
 | --- | --- |
 | `validate`, `diff`, `check` (dry) | `OH_MY_AI_MODEL_POLICY` if set, else the default location. Dry only. |
-| Execution (guard via `modelPolicyEnv` or `loadExecutionPolicy`), `status`, `apply`, `rollback` | The **default location** `${XDG_CONFIG_HOME:-~/.config}/oh-my-ai/model-policy.json`. The override is honored **only** if that default file is a valid `status: ACTIVE` policy that sets `"allow_path_override": true` (the same opt-in idea as the git-identity approach; that reference is not in this repository, so the rule is implemented as written here). |
+| Execution (guard via `modelPolicyEnv` or `loadExecutionPolicy`), `status`, `apply`, `rollback` | The **default location** `${XDG_CONFIG_HOME}/oh-my-ai/model-policy.json` when `XDG_CONFIG_HOME` is an absolute path, else `~/.config/oh-my-ai/model-policy.json`. The override is honored **only** if that default file is a valid `status: ACTIVE` policy that sets `"allow_path_override": true` (the same opt-in idea as the git-identity approach; that reference is not in this repository, so the rule is implemented as written here). |
 
 Consequence: pointing `OH_MY_AI_MODEL_POLICY` at a draft cannot unlock execution. Pointing it at an ACTIVE file also does nothing unless the default active file opts in (FX-MP-017, FX-MP-018).
+
+**`via` label.** Every location-aware output (`status`, `check`, guard loader) reports where the file came from:
+
+| `via` | Meaning |
+| --- | --- |
+| `default` | `$HOME/.config/oh-my-ai/model-policy.json` (or an XDG value equal to `$HOME/.config`). |
+| `xdg` | `XDG_CONFIG_HOME` is absolute and moves the location away from `$HOME/.config`. |
+| `override` | `OH_MY_AI_MODEL_POLICY` (dry paths only, or execution after the opt-in above). |
+
+A **relative** `XDG_CONFIG_HOME` is ignored (it would resolve against the caller's cwd) and the default `$HOME/.config` is used (FX-MP-028).
+
+**Trust assumption.** Whoever controls the process environment controls the policy location: setting `XDG_CONFIG_HOME` or `OH_MY_AI_MODEL_POLICY` (with the opt-in) can redirect execution. Env write access is therefore policy authority. The `via` label makes a redirect visible in output; it does not prevent one.
+
+**Dry results are never execution approval.** `check` is always a dry resolve. When the dry path comes from `OH_MY_AI_MODEL_POLICY`, its output carries `"via": "override"` and `"dry_run": true`, and `policy_path` names the file read. An agent-written ACTIVE file at that path can produce `ALLOW` in `check`, but `status` and the guard still read only the execution location (FX-MP-026). Only the guard's execution path (`loadExecutionPolicy` / `modelPolicyEnv`) gates a dispatch.
 
 The file may be a symlink, for example into `profiles/local/` (gitignored). Apply and rollback write through the resolved target so the symlink survives. Archived copies (`model-policy.<version>.json`) sit next to the resolved active file.
 
@@ -162,7 +176,7 @@ Nothing is substituted automatically. A denied request stays denied. A substitut
 | `validate [FILE] [--runtime-capabilities F]` | Structural validation of FILE (or the dry path). Drafts are VALID. With F, enforces the runtime rule. |
 | `check --role R --model M --effort E --mode X [--provider P] [--runtime-capabilities F]` | Dry resolve against the dry path. Drafts give `POLICY_NOT_APPROVED`. |
 | `diff CANDIDATE` | Reads the dry-path active file and reports changes: `ON`/`OFF` for model enablement, effort and mode flags; `ADDED`/`REMOVED`/`CHANGED` for allowed tuples, role defaults, substitutions, cost_limits. Works for drafts. |
-| `apply CANDIDATE` | Only a candidate with `status: ACTIVE` and approval fields. Its `previous_version` must equal the current active `policy_version` (or be `null` if none). Steps: copy the current active to `model-policy.<active version>.json` (refused if that archive differs), then replace the active file atomically with mode `0600`. Manual only. |
+| `apply CANDIDATE` | Only a candidate with `status: ACTIVE` and approval fields. Its `previous_version` must equal the current active `policy_version` (or be `null` if none). **Requires an interactive TTY on stdin**: otherwise `DENY APPLY_REQUIRES_TTY` before anything is read or written. The operator then types the candidate's `policy_version` to confirm (anything else: `DENY APPLY_NOT_CONFIRMED`, nothing written). Steps after confirmation: copy the current active to `model-policy.<active version>.json` (refused if that archive differs), then replace the active file atomically with mode `0600`. Manual only. |
 | `rollback` | Manual only. Swaps the active file with the archived copy named by `previous_version`; the copy must be ACTIVE. Refuses with no change if anything is missing or invalid. |
 
 The resolver never reads evaluation data, and nothing calls `apply` or `rollback` automatically.
@@ -202,8 +216,16 @@ Run these in order. Each step has an owner check; do not skip ahead.
 4. **업무 검증**: run the chosen selection on representative real work in a sandbox. Record the outcome as evaluation data.
 5. **변경안**: write a candidate file with `status: DRAFT`, the new model entry (`family`, `version`, `id`, exact effort/mode ON/OFF), updated `roles[role].allowed` and `default`, and `previous_version` set to the current active `policy_version`.
 6. **검증·diff**: `model-policy.mjs validate CANDIDATE --runtime-capabilities RUNTIME.json` must pass, and `model-policy.mjs diff CANDIDATE` must show only the intended ON/OFF and default changes.
-7. **Owner 승인**: the Owner reviews the diff and sets `status: ACTIVE`, `approved_by`, `approved_at` on the candidate. No agent may set these fields.
-8. **apply**: `model-policy.mjs apply CANDIDATE`. The previous version is archived and the active file is replaced at mode `0600`.
+7. **Owner 승인**: the Owner reviews the diff and sets `status: ACTIVE`, `approved_by`, `approved_at` on the candidate. No agent may set these fields. This is a convention enforced by review, not by code: see "Approval trust model" below.
+8. **apply**: `model-policy.mjs apply CANDIDATE` in an interactive terminal. The operator types the new `policy_version` to confirm. The previous version is archived and the active file is replaced at mode `0600`.
+
+### Approval trust model (what the checks do and do not prove)
+
+- `approved_by` and `approved_at` are a **declaration**. The code checks that they are present and that `approved_at` parses. It does not verify who the approver is.
+- **File write access to the execution location equals approval authority.** Anyone who can write the active file, or both the candidate and the active file, can make a policy ACTIVE by writing its fields directly, with no `apply` at all. `apply` does not add a security boundary over that.
+- The **TTY check on `apply` is a mistake-guard, not a security boundary.** It stops a scripted or non-interactive run (for example a closed stdin with an arbitrary `approved_by`) from applying by accident. A process that can allocate a pseudo-terminal, or call `applyPolicy` directly with its own `isTTY`/`confirm` options, bypasses it. The library seam (`options.isTTY`, `options.confirm`) is for tests and programmatic callers; the environment cannot set it.
+- `rollback` is not behind the TTY gate. It is the same class of write and carries the same authority assumption.
+- Where a stronger boundary is needed, it must come from outside this code, for example filesystem ownership of the execution directory, or a signed approval. Neither is implemented here.
 9. **Runtime 회귀**: run the guard path with a real runtime adapter for the new selection. The runtime must report the effective model, effort and mode. Compare them with `compareEffective`. A `MISMATCH` or `UNKNOWN` result (reported as `UNVERIFIED_CONFIG`) blocks the change from being treated as verified. Roll back with `model-policy.mjs rollback` if regression fails.
 
 ## Effective settings comparison
@@ -228,4 +250,4 @@ The guard keeps its generic reasoning allowlist (`low|medium|high|max`) as a cap
 
 ## Verification
 
-`make test-model-policy` runs `scripts/test-model-policy.mjs` (25 fixtures: draft rejection, env path cannot unlock execution, unsupported option -> `POLICY_INVALID` at validate and `RUNTIME_UNSUPPORTED` at resolve, xhigh default OFF, fast independent, default specificity and `NO_DEFAULT`, diff, apply, rollback, compareEffective, cost_limits advisory). Every test passes explicit temp `HOME` and `XDG_CONFIG_HOME`; none reads the real $HOME or XDG config. `profiles/example/model-policy.json.example` is a `DRAFT` placeholder template that must validate and must not execute.
+`make test-model-policy` runs `scripts/test-model-policy.mjs` (30 fixtures: draft rejection, env path cannot unlock execution, unsupported option -> `POLICY_INVALID` at validate and `RUNTIME_UNSUPPORTED` at resolve, xhigh default OFF, fast independent, default specificity and `NO_DEFAULT`, diff, apply, rollback, compareEffective, cost_limits advisory, check provenance (FX-MP-026), apply TTY gate (FX-MP-027), XDG `via` labels (FX-MP-028), `substitutions`-less policy DENY (FX-MP-029)). The apply tests pass an explicit in-process confirm seam; no test relies on a real terminal. Every test passes explicit temp `HOME` and `XDG_CONFIG_HOME`; none reads the real $HOME or XDG config. `profiles/example/model-policy.json.example` is a `DRAFT` placeholder template that must validate and must not execute.

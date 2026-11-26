@@ -14,7 +14,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import {
-  applyPolicy, describeActivePolicy, diffPolicies, readPolicyFile, resolveDryPolicyPath,
+  applyPolicy, describeActivePolicy, diffPolicies, readPolicyFile, resolveDryPolicy, resolveDryPolicyPath,
   resolveModelSelection, rollbackPolicy,
 } from "./lib/model-policy.mjs";
 
@@ -63,11 +63,23 @@ function runValidate(positional, flags, env) {
   return read.status === "VALID" ? 0 : 1;
 }
 
+// Interactive confirmation for apply. The operator must type the candidate's policy_version.
+// Reads one line from stdin (a TTY here: applyPolicy denies earlier when it is not).
+function ttyConfirm(summary) {
+  process.stderr.write(`apply ${summary.from_version ?? "(none)"} -> ${summary.to_version} at ${summary.path}\n`
+    + `declared approved_by: ${summary.approved_by}\nType ${summary.to_version} to confirm: `);
+  const buf = Buffer.alloc(256);
+  let n;
+  try { n = fs.readSync(0, buf, 0, buf.length, null); } catch { return false; }
+  return buf.toString("utf8", 0, n).trim() === summary.to_version;
+}
+
 function runCheck(flags, env) {
   for (const name of ["role", "model", "effort", "mode"]) {
     if (!flags[name]) { process.stderr.write(USAGE + "\n"); return 2; }
   }
-  const read = readPolicyFile(resolveDryPolicyPath(env));
+  const dry = resolveDryPolicy(env);
+  const read = readPolicyFile(dry.path);
   let provider = flags.provider;
   if (!provider && read.policy) {
     const matches = read.policy.models.filter(m => m.id === flags.model);
@@ -82,7 +94,10 @@ function runCheck(flags, env) {
     runtimeCapabilities: runtime.value,
   });
   if (verdict.status !== "ALLOW" && read.status !== "VALID") verdict.reasons = [...read.errors, ...verdict.reasons];
-  print(verdict);
+  // Provenance: a dry check is never execution approval. dry_run marks an override result explicitly.
+  const out = { ...verdict, policy_path: dry.path, via: dry.via };
+  if (dry.via === "override") out.dry_run = true;
+  print(out);
   return verdict.status === "ALLOW" ? 0 : 1;
 }
 
@@ -116,7 +131,7 @@ function main(argv, env = process.env) {
   if (command === "diff") return runDiff(positional, env);
   if (command === "apply") {
     if (!positional[0]) { process.stderr.write(USAGE + "\n"); return 2; }
-    const outcome = applyPolicy(env, positional[0]);
+    const outcome = applyPolicy(env, positional[0], { isTTY: process.stdin.isTTY === true, confirm: ttyConfirm });
     print(outcome);
     return outcome.code === "APPLIED" ? 0 : 1;
   }

@@ -8,8 +8,9 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
-  applyPolicy, describeActivePolicy, diffPolicies, loadExecutionPolicy, readPolicyFile, resolveModelSelection,
-  resolveDryPolicyPath, resolveExecutionPolicyPath, rollbackPolicy, selectDefault, validateModelPolicy,
+  applyPolicy, describeActivePolicy, diffPolicies, loadExecutionPolicy, readPolicyFile, resolveDefaultLocation,
+  resolveDryPolicyPath, resolveExecutionPolicyPath, resolveModelSelection, rollbackPolicy, selectDefault,
+  validateModelPolicy,
 } from "./lib/model-policy.mjs";
 import { compareEffective, preflightDispatch } from "./lib/agent-manifest-guard.mjs";
 
@@ -410,7 +411,8 @@ check("FX-MP-017 draft: allowed for validate/diff, rejected for execution, env o
   writeJson(iso.defaultFile, basePolicy());
   const ignored = loadExecutionPolicy({ ...iso.env, OH_MY_AI_MODEL_POLICY: draftFile });
   assert.equal(ignored.status, "VALID");
-  assert.equal(ignored.via, "default");
+  // The sandbox XDG_CONFIG_HOME moves the default location away from $HOME/.config, so the label is xdg.
+  assert.equal(ignored.via, "xdg");
   // A DRAFT default can never execute, whatever the env says.
   writeJson(iso.defaultFile, draft);
   assert.equal(loadExecutionPolicy(iso.env).status, "POLICY_NOT_APPROVED");
@@ -507,6 +509,10 @@ check("FX-MP-021 diff reports ON/OFF and role default changes vs active", () => 
   assert.equal(diffPolicies(active, structuredClone(active)).changes.length, 0);
 });
 
+// Test-only seam: an in-process confirmation that stands in for an operator at a TTY.
+// Production paths: the CLI passes isTTY = stdin is a TTY and a typed-version prompt. Env vars cannot set this.
+const SCRIPTED_TTY = { isTTY: true, confirm: () => true };
+
 check("FX-MP-022 apply: ACTIVE candidate, chained previous_version, archive first, 0600, drafts refused", () => {
   const iso = isolatedEnv("apply");
   const v1 = basePolicy({ policy_version: "v1", previous_version: null });
@@ -514,7 +520,7 @@ check("FX-MP-022 apply: ACTIVE candidate, chained previous_version, archive firs
   const v2 = basePolicy({ policy_version: "v2", previous_version: "v1" });
   const candidate = path.join(iso.dir, "candidate-v2.json");
   writeJson(candidate, v2);
-  const outcome = applyPolicy(iso.env, candidate);
+  const outcome = applyPolicy(iso.env, candidate, SCRIPTED_TTY);
   assert.equal(outcome.code, "APPLIED", outcome.reasons.join("; "));
   assert.equal(JSON.parse(fs.readFileSync(iso.defaultFile, "utf8")).policy_version, "v2");
   assert.equal(JSON.parse(fs.readFileSync(path.join(iso.dir, "model-policy.v1.json"), "utf8")).policy_version, "v1");
@@ -526,17 +532,17 @@ check("FX-MP-022 apply: ACTIVE candidate, chained previous_version, archive firs
   delete draft.approved_at;
   writeJson(draftCandidate, draft);
   const before = fs.readFileSync(iso.defaultFile, "utf8");
-  assert.equal(applyPolicy(iso.env, draftCandidate).code, "POLICY_NOT_APPROVED");
+  assert.equal(applyPolicy(iso.env, draftCandidate, SCRIPTED_TTY).code, "POLICY_NOT_APPROVED");
   assert.equal(fs.readFileSync(iso.defaultFile, "utf8"), before);
   // Broken chain (previous_version does not match active) is refused.
   const broken = path.join(iso.dir, "candidate-broken.json");
   writeJson(broken, basePolicy({ policy_version: "v4", previous_version: "v1" }));
-  assert.equal(applyPolicy(iso.env, broken).code, "POLICY_INVALID");
+  assert.equal(applyPolicy(iso.env, broken, SCRIPTED_TTY).code, "POLICY_INVALID");
   assert.equal(fs.readFileSync(iso.defaultFile, "utf8"), before);
   // No active file: candidate with non-null previous_version is refused.
   const fresh = isolatedEnv("apply-fresh");
-  assert.equal(applyPolicy(fresh.env, candidate).code, "POLICY_INVALID");
-  assert.equal(applyPolicy(fresh.env, path.join(iso.dir, "candidate-v2.json")).code, "POLICY_INVALID");
+  assert.equal(applyPolicy(fresh.env, candidate, SCRIPTED_TTY).code, "POLICY_INVALID");
+  assert.equal(applyPolicy(fresh.env, path.join(iso.dir, "candidate-v2.json"), SCRIPTED_TTY).code, "POLICY_INVALID");
 });
 
 check("FX-MP-023 rollback swaps to archived copy, 0600, refuses without copy and never auto-runs", () => {
@@ -584,6 +590,109 @@ check("FX-MP-025 compareEffective: MATCH / MISMATCH / UNKNOWN, mismatch beats un
   assert.equal(compareEffective({ requested, effective: {} }).status, "UNKNOWN");
   assert.equal(compareEffective({ requested, effective: { model: "example-small", effort: "medium", mode: "fast" } }).status, "MISMATCH");
   assert.equal(compareEffective({ requested, effective: { model: "other", effort: "UNKNOWN", mode: "standard" } }).status, "MISMATCH");
+});
+
+const cliRun = (args, env) => spawnSync(process.execPath, [CLI, ...args], { encoding: "utf8", env: { PATH: process.env.PATH, ...env } });
+
+check("FX-MP-026 check provenance: agent-written override is dry_run and never reads as execution approval", () => {
+  const iso = isolatedEnv("check-override");
+  const runtimeFile = path.join(iso.dir, "runtime.json");
+  writeJson(runtimeFile, RUNTIME);
+  // Agent-written ACTIVE file at an override path, default location absent.
+  const agentFile = path.join(sandbox, "check-override", "agent-written.json");
+  writeJson(agentFile, basePolicy({ policy_version: "v9", previous_version: null }));
+  const checkArgs = ["check", "--role", "writer", "--model", "example-small", "--effort", "high", "--mode", "standard", "--runtime-capabilities", runtimeFile];
+  const overridden = cliRun(checkArgs, { ...iso.env, OH_MY_AI_MODEL_POLICY: agentFile });
+  const out = JSON.parse(overridden.stdout);
+  assert.equal(out.code, "ALLOW");
+  assert.equal(out.via, "override");
+  assert.equal(out.dry_run, true);
+  assert.equal(out.policy_path, path.resolve(agentFile));
+  // Execution still reads the default location only: no default file here, so status is MISSING.
+  const status = cliRun(["status"], { ...iso.env, OH_MY_AI_MODEL_POLICY: agentFile });
+  assert.equal(status.status, 1);
+  assert.equal(JSON.parse(status.stdout).status, "POLICY_MISSING");
+  assert.equal(guardStatus({ ...iso.env, OH_MY_AI_MODEL_POLICY: agentFile }), "POLICY_MISSING");
+  // Without an override the same check reports the default location and no dry_run marker.
+  writeJson(iso.defaultFile, basePolicy());
+  const plain = JSON.parse(cliRun(checkArgs, iso.env).stdout);
+  assert.equal(plain.code, "ALLOW");
+  assert.equal(plain.via, "xdg");
+  assert.equal(plain.policy_path, iso.defaultFile);
+  assert.equal("dry_run" in plain, false);
+});
+
+check("FX-MP-027 apply needs a TTY: non-TTY denied before any read or write; declined confirm writes nothing", () => {
+  const iso = isolatedEnv("apply-tty");
+  writeJson(iso.defaultFile, basePolicy({ policy_version: "v1", previous_version: null }));
+  const candidate = path.join(iso.dir, "candidate-v2.json");
+  writeJson(candidate, basePolicy({ policy_version: "v2", previous_version: "v1", approved_by: "anyone" }));
+  const before = fs.readFileSync(iso.defaultFile, "utf8");
+  // CLI with piped (non-TTY) stdin: closed/pipe stdin + arbitrary approved_by must not APPLY.
+  const cli = spawnSync(process.execPath, [CLI, "apply", candidate], { encoding: "utf8", input: "v2\n", env: { PATH: process.env.PATH, ...iso.env } });
+  assert.equal(cli.status, 1);
+  assert.equal(JSON.parse(cli.stdout).code, "APPLY_REQUIRES_TTY");
+  assert.equal(fs.readFileSync(iso.defaultFile, "utf8"), before);
+  assert.equal(fs.existsSync(path.join(iso.dir, "model-policy.v1.json")), false, "no archive when denied");
+  // Library: missing isTTY or confirm fails closed.
+  assert.equal(applyPolicy(iso.env, candidate).code, "APPLY_REQUIRES_TTY");
+  assert.equal(applyPolicy(iso.env, candidate, { isTTY: true }).code, "APPLY_REQUIRES_TTY");
+  assert.equal(applyPolicy(iso.env, candidate, { confirm: () => true }).code, "APPLY_REQUIRES_TTY");
+  assert.equal(fs.readFileSync(iso.defaultFile, "utf8"), before);
+  // Operator declines at the prompt: nothing archived, nothing replaced. The summary shows the declared approver.
+  let seen = null;
+  const declined = applyPolicy(iso.env, candidate, { isTTY: true, confirm: summary => { seen = summary; return false; } });
+  assert.equal(declined.code, "APPLY_NOT_CONFIRMED");
+  assert.equal(seen.to_version, "v2");
+  assert.equal(seen.from_version, "v1");
+  assert.equal(seen.approved_by, "anyone");
+  assert.equal(fs.readFileSync(iso.defaultFile, "utf8"), before);
+  assert.equal(fs.existsSync(path.join(iso.dir, "model-policy.v1.json")), false);
+});
+
+check("FX-MP-028 XDG_CONFIG_HOME: relative ignored, absolute moves location and is labelled xdg, equal-to-default is default", () => {
+  const home = path.join(sandbox, "xdg-home");
+  const homeDefault = path.join(home, ".config", "oh-my-ai", "model-policy.json");
+  writeJson(homeDefault, basePolicy());
+  // Relative value: ignored (not resolved against cwd), falls back to $HOME/.config with via=default.
+  const relative = { HOME: home, XDG_CONFIG_HOME: "relative/cfg" };
+  assert.deepEqual(resolveDefaultLocation(relative), { path: homeDefault, via: "default" });
+  const relLoaded = loadExecutionPolicy(relative);
+  assert.equal(relLoaded.status, "VALID");
+  assert.equal(relLoaded.via, "default");
+  assert.equal(relLoaded.path, homeDefault);
+  // Absolute, different from $HOME/.config: moves the location and is labelled xdg in status and loader.
+  const xdgBase = path.join(sandbox, "xdg-home", "custom");
+  const xdgFile = path.join(xdgBase, "oh-my-ai", "model-policy.json");
+  writeJson(xdgFile, basePolicy({ policy_version: "v5" }));
+  const absolute = { HOME: home, XDG_CONFIG_HOME: xdgBase };
+  assert.deepEqual(resolveDefaultLocation(absolute), { path: xdgFile, via: "xdg" });
+  const loaded = loadExecutionPolicy(absolute);
+  assert.equal(loaded.via, "xdg");
+  assert.equal(loaded.policy.policy_version, "v5");
+  const cliStatus = JSON.parse(cliRun(["status"], absolute).stdout);
+  assert.equal(cliStatus.via, "xdg");
+  assert.equal(cliStatus.path, xdgFile);
+  // Absolute but equal to $HOME/.config: same location, labelled default.
+  const same = { HOME: home, XDG_CONFIG_HOME: path.join(home, ".config") };
+  assert.deepEqual(resolveDefaultLocation(same), { path: homeDefault, via: "default" });
+  // Unset: default.
+  assert.equal(resolveDefaultLocation({ HOME: home }).via, "default");
+});
+
+check("FX-MP-029 substitute without a substitutions key is DENY SUBSTITUTION_NOT_APPROVED, not a TypeError", () => {
+  const policy = basePolicy();
+  delete policy.substitutions;
+  assert.equal(validateModelPolicy(policy).valid, true, "substitutions is optional");
+  const verdict = resolveModelSelection({
+    policy,
+    role: "writer",
+    requested: req("example-large", "xhigh", "standard"), // not allowed for writer -> goes to substitution path
+    runtimeCapabilities: RUNTIME,
+    substitute: req("example-small", "high", "standard"),
+  });
+  assert.equal(verdict.status, "DENY");
+  assert.equal(verdict.code, "SUBSTITUTION_NOT_APPROVED");
 });
 
 let passed = 0;
