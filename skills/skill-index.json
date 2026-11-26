@@ -510,6 +510,44 @@
       }
     },
     {
+      "name": "research",
+      "path": "skills/research/SKILL.md",
+      "description": "Evidence-based research, comparison, critical analysis, refinement, and a concrete recommendation. Use for /research, $research, or a request to investigate official documentation, source code, relevant skills and alternatives before recommending or improving a technical design. Do not use for ordinary explanations, quoted commands, or prohibited research.",
+      "summary": "공식 근거 기반 기술 조사·비교·검토·보완·추천",
+      "routing": {
+        "visibility": "optional",
+        "risk_level": "low",
+        "task_types": [
+          "technical_research"
+        ],
+        "triggers": [
+          {
+            "kind": "keyword",
+            "values": [
+              "/research",
+              "$research",
+              "공식 근거 기반 조사",
+              "공식문서나 관련 스킬",
+              "공식문서나 스킬",
+              "공식 문서나 관련 스킬"
+            ]
+          },
+          {
+            "kind": "intent",
+            "values": [
+              "research_and_recommend"
+            ]
+          }
+        ],
+        "use_when": [
+          "공식 근거를 조사하고 대안 또는 기존 설계를 검토해 추천하는 요청"
+        ],
+        "do_not_use_when": [
+          "단순 설명·번역·인용·실행 금지·원격 쓰기 요청"
+        ]
+      }
+    },
+    {
       "name": "spec-to-implementation",
       "path": "skills/spec-to-implementation/SKILL.md",
       "description": "Use when explicitly selected for substantial feature requests or architecture changes that need explicit requirements, acceptance criteria, repository source-of-truth review, Owner decisions, approved implementation, independent review, and a PR gate. Do not impose this workflow on small fixes or simple questions. A Work-start Candidate is never an approved specification.",
