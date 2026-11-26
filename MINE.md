@@ -10,6 +10,7 @@
 
 ### born-here (처음부터 이 레포에서 만든 것)
 - `skills/adaptive-goal-closure/` — 승인된 목표를 READY→실행→검증→독립 검수→재개까지 이어가는 F4 명시 호출 플레이북
+- `skills/cloud-local-session-bridge/` — 클라우드 세션과 로컬(Mac·Windows) 세션 사이 연결이 막힐 때 막힌 방향을 진단하고 필요한 승인만 받아 인계하는 플레이북
 - `skills/completion-notify/` — Codex·Claude Turn 완료 알림을 opt-in으로 안전하게 설치·점검·제거하는 로컬 통합
 - `skills/daily-report/` — Optional Slack/Notion 일일보고 workflow
 - `skills/dev-main-flow/` — 기존 개발 기능·승인·실행·범용 인계·서비스별 보고를 연결하는 임시 진입 안내
