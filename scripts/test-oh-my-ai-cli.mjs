@@ -647,6 +647,34 @@ test("install --apply: explicit-only Skill without a policy file is skipped for 
   assertLinkedTo(path.join(sb.agents, "skills", gap.name), gap.dir);
 });
 
+test("install --apply: existing Codex link without explicit policy is preserved and reported as PARTIAL", () => {
+  const sb = makeFixture("install-existing-policy-gap");
+  const dir = path.join(sb.clone, "skills", "codex-existing-gap");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "SKILL.md"), "---\nname: codex-existing-gap\ndescription: fixture\ndisable-model-invocation: true\nmetadata:\n  source: born-here\n  summary: fixture\n  tier: core\n---\n\n# fixture\n");
+  const link = path.join(sb.agents, "skills", "codex-existing-gap");
+  fs.mkdirSync(path.dirname(link), { recursive: true });
+  fs.symlinkSync(dir, link, "dir");
+  const r = cli(sb, ["install", "--apply"]);
+  assert.equal(r.status, 1, `${r.stdout}\n${r.stderr}`);
+  assert.match(r.stderr, /PARTIAL/);
+  assert.match(r.stderr, /Codex codex-existing-gap.*explicit-only policy/);
+  assertLinkedTo(link, dir);
+});
+
+test("install --apply: unknown dangling shared link is preserved and reported as PARTIAL", () => {
+  const sb = makeFixture("install-dangling-user-link");
+  const link = path.join(sb.bin, "ohmyai");
+  const target = path.join(sb.base, "missing-user-program");
+  fs.mkdirSync(sb.bin, { recursive: true });
+  fs.symlinkSync(target, link);
+  const r = cli(sb, ["install", "--apply"]);
+  assert.equal(r.status, 1, `${r.stdout}\n${r.stderr}`);
+  assert.match(r.stderr, /PARTIAL/);
+  assert.match(r.stderr, /ohmyai has a dangling link/);
+  assert.equal(fs.readlinkSync(link), target);
+});
+
 test("install --apply: a legacy directory link or a non-directory skills root is FAIL, PARTIAL, exit 1 (other runtime still linked)", () => {
   const legacy = makeFixture("install-legacy-root");
   fs.mkdirSync(legacy.claude, { recursive: true });

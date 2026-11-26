@@ -333,7 +333,7 @@ path_state() {
       # If the source is gone it skips, so recommending it would leave the user
       # stuck in strict failure with no way out. Branch on source existence.
       if [ -n "$target" ] && [ -e "$target" ]; then
-        say "dangling: $path -> $link (missing) — source exists; run: make install-shared to relink"
+        say "dangling: $path -> $link (missing) — link preserved; resolve the conflict yourself before running make install-shared"
       elif [ -n "$target" ]; then
         say "dangling: $path -> $link (missing) — source $target is also missing; install-shared will skip this path"
         say "      to clear it: rm '$path'   (then restore $target and run make install-shared to re-create the link)"
@@ -434,12 +434,10 @@ safe_link() {
     say "ok: $label already managed"
     return 0
   fi
-  # stale symlink: points somewhere that no longer exists → replace automatically
+  # A missing target does not establish who owns a link. Preserve it.
   if [ -L "$dest" ] && [ ! -e "$dest" ]; then
-    say "stale: $label was $(readlink "$dest") (missing) — relinking to $src"
-    run rm -f "$dest"
-    run ln -s "$src" "$dest"
-    say "linked: $label -> $src"
+    say "FAIL: $label has a dangling link at $dest -> $(readlink "$dest") (preserved; resolve the conflict yourself)"
+    INSTALL_FAILURE=1
     return 0
   fi
   if [ -e "$dest" ] || [ -L "$dest" ]; then
@@ -643,7 +641,8 @@ install_shared() {
   if [ "$DRY_RUN" -eq 1 ]; then
     say "Claude: dry-run"
     say "Codex: dry-run"
-    return 0
+    [ "$INSTALL_FAILURE" -eq 0 ]
+    return
   fi
 
   say "=== Runtime installation summary ==="
@@ -722,7 +721,9 @@ core_link_one() {
       say "skip: Codex $skill_id not linked (disable-model-invocation: true without agents/openai.yaml allow_implicit_invocation: false; Codex would invoke it implicitly)"
       return 0
     fi
-    say "warn: Codex $skill_id is linked ($state) without an explicit-only policy file; remove that link yourself if implicit Codex use is not wanted"
+    CORE_FAIL=$((CORE_FAIL + 1))
+    say "FAIL: Codex $skill_id has $state at $dest without an explicit-only policy file (preserved; add agents/openai.yaml allow_implicit_invocation: false or resolve the link yourself)"
+    return 0
   fi
   case "$state" in
     ready)
