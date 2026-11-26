@@ -24,7 +24,7 @@
 - `skills/local-search/` — rg/find와 Jikji의 역할을 분리하는 로컬 파일·문서 탐색 플레이북
 - `skills/project-context/` — 세션 간 설계 배경과 작업 상태를 이어주는 컨텍스트 관리
 - `skills/release-note/` — Optional Jira/Confluence 릴리즈 노트 workflow
-- `skills/senior/` — 시니어 수준 설계·계약·위험을 Preflight·독립 Review·Delta Closure 3모드로 검토
+- `skills/senior/` — 시니어 수준 설계·계약·위험을 Preflight·독립 Review·Delta Closure 3모드와 작업 프롬프트 1회 사전 보정(Prompt Preflight)으로 검토
 - `skills/spec-to-implementation/` — 큰 변경을 승인 가능한 명세부터 독립 검수와 PR Gate까지 이끄는 구현 절차
 - `skills/work-record-sync/` — 기존 Jira·Confluence 기록을 승인·동시성 확인·범위 읽기 후 제한적으로 갱신
 - `skills/work-start/` — 작업 시작 시 외부 맥락 회수 → repo 컨텍스트 수집 → 중간 점검 → 컨펌의 conversation-native 플레이북
