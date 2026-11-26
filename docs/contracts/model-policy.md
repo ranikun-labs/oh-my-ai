@@ -158,7 +158,7 @@ Nothing is substituted automatically. A denied request stays denied. A substitut
 
 | Command | Behavior |
 | --- | --- |
-| `status` | Shows the execution policy (path, via, status, enabled models with family/version, roles). |
+| `status` | Shows the execution policy (path, via, status, approval fields, enabled models with family/version, roles). Output fields below. |
 | `validate [FILE] [--runtime-capabilities F]` | Structural validation of FILE (or the dry path). Drafts are VALID. With F, enforces the runtime rule. |
 | `check --role R --model M --effort E --mode X [--provider P] [--runtime-capabilities F]` | Dry resolve against the dry path. Drafts give `POLICY_NOT_APPROVED`. |
 | `diff CANDIDATE` | Reads the dry-path active file and reports changes: `ON`/`OFF` for model enablement, effort and mode flags; `ADDED`/`REMOVED`/`CHANGED` for allowed tuples, role defaults, substitutions, cost_limits. Works for drafts. |
@@ -166,6 +166,22 @@ Nothing is substituted automatically. A denied request stays denied. A substitut
 | `rollback` | Manual only. Swaps the active file with the archived copy named by `previous_version`; the copy must be ACTIVE. Refuses with no change if anything is missing or invalid. |
 
 The resolver never reads evaluation data, and nothing calls `apply` or `rollback` automatically.
+
+### `status` output
+
+`describeActivePolicy()` returns the same object as `model-policy.mjs status` (JSON). Consumers read approval state from these fields and must not infer it:
+
+| Field | Meaning |
+| --- | --- |
+| `status` | Validation / execution result, unchanged: `VALID`, `POLICY_NOT_APPROVED`, `POLICY_MISSING`, `POLICY_INVALID`. |
+| `policy_status` | The file's own `status`: `ACTIVE`, or `DRAFT*`. Present when the file is readable and valid. |
+| `approved_by` | Owner identity string from the file, or `null` when absent (always `null` for drafts). |
+| `approved_at` | ISO-8601 approval timestamp from the file, or `null` when absent. |
+
+- `ACTIVE` file: `status: VALID`, `policy_status: ACTIVE`, approval fields filled, plus the policy summary (`policy_version`, `enabled_models`, `roles`, ...).
+- `DRAFT*` file: `status: POLICY_NOT_APPROVED`, `policy_status: DRAFT*`, both approval fields `null`. No policy body (models, roles, `evaluation_ref`) is printed.
+- Missing or invalid file: the fields above are not added. Output is unchanged from before.
+- No secret values are exposed. The output never includes the file's cost_limits contents, substitutions, or evaluation data beyond the existing summary.
 
 ## Rollback
 

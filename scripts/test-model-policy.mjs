@@ -282,6 +282,48 @@ check("FX-MP-013 describeActivePolicy summarizes the execution location; advisor
   assert.equal(absent.status, "POLICY_MISSING");
 });
 
+check("FX-MP-013b describeActivePolicy exposes approval state: ACTIVE fields, DRAFT policy_status, missing unchanged", () => {
+  const active = isolatedEnv("describe-approval-active");
+  writeJson(active.defaultFile, basePolicy({ previous_version: "v1" }));
+  const activeSummary = describeActivePolicy(active.env);
+  assert.equal(activeSummary.status, "VALID");
+  assert.equal(activeSummary.policy_status, "ACTIVE");
+  assert.equal(activeSummary.approved_by, "owner-fixture");
+  assert.equal(activeSummary.approved_at, "2026-11-25T00:00:00Z");
+  assert.equal(activeSummary.policy_version, "v2");
+
+  const draft = isolatedEnv("describe-approval-draft");
+  const draftPolicy = basePolicy({ status: "DRAFT", policy_version: "v3", previous_version: "v2" });
+  delete draftPolicy.approved_by;
+  delete draftPolicy.approved_at;
+  writeJson(draft.defaultFile, draftPolicy);
+  const draftSummary = describeActivePolicy(draft.env);
+  assert.equal(draftSummary.status, "POLICY_NOT_APPROVED");
+  assert.equal(draftSummary.policy_status, "DRAFT");
+  assert.equal(draftSummary.approved_by, null);
+  assert.equal(draftSummary.approved_at, null);
+  assert.equal(draftSummary.policy_version, undefined);
+  assert.deepEqual(draftSummary.advisory, ["cost_limits"]);
+
+  const missing = describeActivePolicy(isolatedEnv("describe-approval-missing").env);
+  assert.equal(missing.status, "POLICY_MISSING");
+  assert.equal("policy_status" in missing, false);
+  assert.equal("approved_by" in missing, false);
+  assert.equal("approved_at" in missing, false);
+
+  const cliEnv = isolatedEnv("describe-approval-cli");
+  writeJson(cliEnv.defaultFile, draftPolicy);
+  const cli = spawnSync(process.execPath, [CLI, "status"], { encoding: "utf8", env: { PATH: process.env.PATH, ...cliEnv.env } });
+  const cliOut = JSON.parse(cli.stdout);
+  assert.equal(cliOut.status, "POLICY_NOT_APPROVED");
+  assert.equal(cliOut.policy_status, "DRAFT");
+  assert.equal(cliOut.approved_by, null);
+  assert.equal(cliOut.approved_at, null);
+  assert.equal(cli.status, 1);
+  // Draft summaries stay minimal: no policy body (models, roles, evaluation_ref) leaks into status output.
+  for (const key of ["models", "roles", "evaluation_ref", "enabled_models", "policy_version"]) assert.equal(key in cliOut, false, key);
+});
+
 check("FX-MP-014 example template validates as a DRAFT placeholder and never executes", () => {
   const file = path.join(root, "profiles/example/model-policy.json.example");
   const read = readPolicyFile(file);

@@ -386,15 +386,24 @@ export function loadExecutionPolicy(env = process.env) {
   return { ...base, status: "VALID", policy: read.policy, errors: [] };
 }
 
-/** Owner-facing summary of the execution policy (what the guard would load). */
+/**
+ * Owner-facing summary of the execution policy (what the guard would load).
+ * `status` is the validation/execution result (unchanged). The approval state of the file is
+ * exposed separately: policy_status (ACTIVE / DRAFT*), approved_by, approved_at (null when absent).
+ * Present whenever the file is readable and valid, including drafts; absent for missing/invalid files.
+ */
 export function describeActivePolicy(env = process.env) {
   const loaded = loadExecutionPolicy(env);
   const summary = { path: loaded.path, via: loaded.via, status: loaded.status, errors: loaded.errors, advisory: ["cost_limits"] };
-  if (!loaded.policy) return summary;
+  const file = loaded.policy ?? (loaded.status === "POLICY_NOT_APPROVED" ? readPolicyFile(loaded.path).policy : null);
+  if (!file) return summary;
+  const approval = { policy_status: file.status, approved_by: file.approved_by ?? null, approved_at: file.approved_at ?? null };
+  if (!loaded.policy) return { ...summary, ...approval };
   const policy = loaded.policy;
   const archive = policy.previous_version === null ? null : previousCopyPath(loaded.path, policy.previous_version);
   return {
     ...summary,
+    ...approval,
     policy_version: policy.policy_version,
     previous_version: policy.previous_version,
     previous_copy_available: archive !== null && fs.existsSync(archive),
