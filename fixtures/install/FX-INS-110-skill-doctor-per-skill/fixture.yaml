@@ -1,0 +1,3 @@
+id: FX-INS-110
+name: skill doctor per-skill statuses
+purpose: Doctor reports per-skill link state (ready, dangling, stale-source) read-only, not a whole-directory link.

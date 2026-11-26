@@ -30,5 +30,7 @@ jobs:
         run: node --check scripts/lib/jira-first-development-intent.mjs && node --check scripts/prompt-routing-hook.mjs && node --check scripts/test-jira-first-development-intent.mjs
       - name: Run Jira-first intent cases
         run: node scripts/test-jira-first-development-intent.mjs
+      - name: Install the pinned YAML parser for Skill metadata
+        run: npm ci --prefix .github/ci/yaml --ignore-scripts --no-audit --no-fund
       - name: Run existing routing fixtures
         run: make test-routing-fixtures

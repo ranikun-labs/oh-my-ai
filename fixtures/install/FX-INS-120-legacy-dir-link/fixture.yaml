@@ -1,0 +1,3 @@
+id: FX-INS-120
+name: legacy directory link
+purpose: A whole-directory skills link is warned as legacy-dir-link and never modified or counted as a strict failure.

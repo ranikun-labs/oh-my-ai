@@ -3,9 +3,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { discoverSkills } from "./lib/skill-discovery.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(__dirname, "..");
+// --root <dir>: render against another tree that contains skills/ (used by tests). Default: this repo.
+const repoRoot = parseRootArg(process.argv.slice(2)) ?? path.resolve(__dirname, "..");
 const skillsDir = path.join(repoRoot, "skills");
 const outputPath = path.join(skillsDir, "skill-index.json");
 
@@ -13,13 +15,15 @@ const VISIBILITY = new Set(["always", "contextual", "optional", "hidden"]);
 const RISK_LEVEL = new Set(["low", "medium", "high"]);
 const TRIGGER_KIND = new Set(["keyword", "intent", "pattern"]);
 
-const skills = fs.readdirSync(skillsDir, { withFileTypes: true })
-  .filter(entry => entry.isDirectory())
-  .map(entry => entry.name)
-  .sort()
-  .map(name => path.join(skillsDir, name, "SKILL.md"))
-  .filter(file => fs.existsSync(file))
-  .map(readSkill)
+const discovery = discoverSkills(repoRoot);
+for (const warning of discovery.warnings) console.error(`warning: ${warning}`);
+if (discovery.errors.length > 0) {
+  for (const error of discovery.errors) console.error(`error: ${error}`);
+  process.exit(1);
+}
+
+const skills = discovery.skills
+  .map(entry => readSkill(entry.skillFile))
   .filter(skill => skill.routing)
   .sort((a, b) => a.name.localeCompare(b.name) || a.path.localeCompare(b.path));
 
@@ -31,6 +35,18 @@ const index = {
 
 fs.writeFileSync(outputPath, `${JSON.stringify(index, null, 2)}\n`, "utf8");
 console.log(`Rendered ${path.relative(repoRoot, outputPath)}`);
+
+function parseRootArg(args) {
+  for (let i = 0; i < args.length; i += 1) {
+    if (args[i] === "--root") {
+      if (!args[i + 1]) throw new Error("--root requires a directory");
+      return path.resolve(args[i + 1]);
+    }
+    if (args[i].startsWith("--root=")) return path.resolve(args[i].slice("--root=".length));
+    throw new Error(`unknown argument: ${args[i]}`);
+  }
+  return null;
+}
 
 function readSkill(file) {
   const text = fs.readFileSync(file, "utf8");

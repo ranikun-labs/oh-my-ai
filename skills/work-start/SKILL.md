@@ -411,7 +411,7 @@ metadata가 추가된 스킬은 자동으로 더 정확한 매칭을 얻는다.
 
 ### Candidate 스캔 순서
 
-1. `ls skills/*/SKILL.md` — 현재 repo에 실제 존재하는 스킬만 대상
+1. `node scripts/lib/skill-discovery.mjs --list` — 현재 repo에 실제 존재하는 스킬만 대상 (flat `skills/<n>/` 과 `skills/{core,library}/<n>/` 모두 포함)
 2. `profiles/local/` 아래 스킬은 스캔하지 않고 manual reference로만 표시
 3. 각 스킬을 아래 기준으로 scoring 후 tier 분류
 
