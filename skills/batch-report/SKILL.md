@@ -24,6 +24,7 @@ metadata:
 호출자는 아래 필드를 채운다. 특정 상위 workflow의 용어나 필드명을 호출자에게 요구하지 않는다.
 - `agent`: 에이전트 ID와 역할
 - `task`: 작업 참조(ID 또는 제목)
+- `attempt_id`: 시도 식별자. 호출자가 넣는다. 없으면 `agent+task+evidence HEAD`로 파생하고 출처에 `attempt_id: derived`를 적는다.
 - `claim`: 에이전트가 주장한 결과 (원문 유지)
 - `evidence`: SHA, PR, 테스트 수, CI 링크와 결과
 - `task_status`: `PASS` | `FAIL` | `NOT_RUN` | `UNKNOWN` | `BLOCKED`
@@ -44,10 +45,12 @@ SHA, 수치, trade-off, 위험, unknown은 요약하면서 줄이거나 다른 �
 
 ## 4. 집계 규칙 (이 Skill만 소유한다)
 a. **보존**: 입력 N개는 설명 N개가 된다. 병합·누락·삭제를 하지 않는다. 빠진 입력은 `입력 없음`으로 드러낸다.
-   **중복 판정**: 중복은 의미 필드가 전부 동일할 때만 성립한다. 비교 대상은 `agent`·`task`·`claim`·`evidence`·`task_status`·`findings`·`blockers`·`owner_requests`·`objective_ref`/`ac_ref`·`approved_scope_ref`와 정정 기록(§4f)이다. 같은 SHA·테스트 수라도 한 필드라도 다르면 중복이 아니다.
+   **입력 식별**: 식별 키는 `agent`+`task`+`attempt_id`다. 같은 `task`라도 `attempt_id`가 다르면 새 시도다. 새 입력으로 세고 둘 다 보존한다. 최신 시도에 `최신 시도`를, 이전 시도에 `대체됨`을 표시하며 이전 시도를 지우지 않는다.
+   **중복 판정**: 같은 `attempt_id`이고 의미 필드가 전부 동일할 때만 중복이다. 비교 대상은 `attempt_id`·`agent`·`task`·`claim`·`evidence`·`task_status`·`findings`·`blockers`·`owner_requests`·`objective_ref`/`ac_ref`·`approved_scope_ref`와 정정 기록(§4f)이다. 같은 SHA·테스트 수라도 한 필드라도 다르면 중복이 아니다.
    - 전부 동일한 재수신: 입력 1건으로 세고 `중복 N회 수신, 내용 동일`을 적는다.
-   - 한 필드라도 다른 재보고(예: 같은 SHA·테스트인데 `task_status` PASS→FAIL, 새 Finding, 다른 `owner_requests`): 둘 다 보존한다. 나중 도착분은 `갱신` 또는 `정정`으로 표시하고, 달라진 필드를 나란히 드러낸다(§4d). 임의로 버리거나 합치지 않는다.
-   - 차이 여부가 애매하면 중복으로 접지 않는다. 보존 쪽으로 판단한다.
+   - 같은 `attempt_id`에서 한 필드라도 다른 재보고(재시도·재개 후 정정, 예: 같은 SHA·테스트인데 `task_status` PASS→FAIL, 새 Finding, 다른 `owner_requests`): 갱신 또는 정정이다. 둘 다 보존하고 나중 도착분에 `갱신` 또는 `정정`을 표시한 뒤 달라진 필드를 나란히 드러낸다(§4d). 임의로 버리거나 합치지 않는다.
+   - `attempt_id: derived` 입력은 같은 HEAD의 실제 새 시도를 구분하지 못한다. 내용이 전부 같으면 중복으로 접히는 한계가 있으므로 출처에 파생 사실을 적는다.
+   - 차이 여부가 애매하면 중복으로 접지 않는다. 보존 쪽으로 판단한다. 비교할 필드가 §7 ledger에 복구되지 않으면 중복 판정 대신 §7 규칙을 따른다.
 b. **악화만**: 묶음 상태는 작업 상태 중 최악이다. 순서는 `FAIL > BLOCKED > UNKNOWN > NOT_RUN > PASS`.
    주장만으로는 `PASS`가 되지 않는다. `PASS`에는 실행 명령, CI 링크, 고정 SHA 같은 evidence ref가 있어야 한다.
    작업별 상태는 묶음 상태와 분리한다. Objective 판정은 Main 또는 호출자가 내며, 이 Skill은 Objective `PASS`를 만들지 않는다.
@@ -81,14 +84,21 @@ f. **정정 기록**: 에이전트 보고를 그대로 믿지 않는다. 주장�
 - 합성 fixture, 코드 리뷰, 공식 CI, 실제 Runtime E2E는 서로 대신하지 않는다.
 
 ## 7. 컨텍스트 압축 안전
-checkpoint마다 대화 안에 ledger 블록을 남긴다(파일이 아니다).
+checkpoint마다 대화 안에 ledger 블록을 남긴다(파일이 아니다). ledger는 입력 1건당 envelope 전체 필드를 원문으로 담는다. 요약하면 비교에 필요한 값이 사라지므로 축약하지 않는다. 한 줄에 다 안 들어가면 들여쓰기로 이어 쓴다.
 
 ```text
-[ledger] batch=<묶음 참조> 관측 범위=<complete|partial|unknown>
-- <task id> | <agent> | <task_status> | <evidence refs>
+[ledger] batch=<묶음 참조> 관측 범위=<complete|partial|unknown> 입력=<수신 입력 수>
+- in=<번호> | agent=<..> | task=<..> | attempt_id=<값|derived> | claim=<원문> | evidence=<원문 refs> | task_status=<..> | findings=<원문|없음> | blockers=<원문|없음> | owner_requests=<원문|없음> | objective_ref=<..|입력 없음> | ac_ref=<..|입력 없음> | approved_scope_ref=<..|입력 없음> | corrections=<원문|없음> | dup=<수신 횟수>
 ```
 
-압축 후 재개했을 때 ledger에 없는 항목은 `UNKNOWN`으로 보고한다. 조용히 버리지 않는다. Main이 재확인하거나 호출자가 결과를 다시 넘겨야 한다.
+- 빈 필드는 확인된 빈 값일 때만 `없음`으로 쓴다. 기록 자체가 빠진 필드를 `없음`으로 채우지 않는다.
+
+압축 후 재개 규칙 (입력마다 적용):
+- ledger에 envelope 전체가 있으면 §4a로 비교한다.
+- ledger 항목이 없거나 필드가 빠졌으면 그 항목과 비교하지 않는다. 같다고 가정하지 않는다. 복구 불가 필드를 `UNKNOWN(복구 불가 필드: <목록>)`으로 표시하고 도착분을 새 입력으로 보존한다. 도착분을 ledger 항목과 합치지 않는다.
+- ledger에 없는 항목은 `UNKNOWN`으로 보고한다. 조용히 버리지 않는다. Main이 재확인하거나 호출자가 결과를 다시 넘겨야 한다.
+
+영속화는 이 Skill 밖이다. ledger를 남기고 재개 상태를 보존하는 일은 호출자가 체크포인트 계약(RPL-120)의 store를 통해 맡고, 저장 위치는 user-local-state(RPL-95)가 정한다. batch-report는 저장하지 않는다(§8).
 
 ## 8. 저장하지 않는다
 - 파일, 상태 디렉터리, DB를 만들지 않는다. 이전 버전의 `~/.local/state/batches/` 방식은 폐기한다.
