@@ -1,0 +1,206 @@
+[
+  {
+    "id": 1,
+    "name": "ordinary-question",
+    "description": "합성 평가 사례 — 일반 질문은 별도 호출 없이 이해하기 쉽게 답한다.",
+    "prompt": "Redis 캐시와 PostgreSQL의 역할은 어떻게 달라? 전자는 빠른 재조회에 쓰고, 후자는 원본 데이터 보존과 트랜잭션에 쓰는 상황이야.",
+    "trap": "기술 용어만 나열하거나 F1 정식 보고서와 별도 Agent를 강제한다.",
+    "assertions": [
+      {
+        "id": "1.1",
+        "text": "두 기술을 사용 목적과 데이터 역할로 설명한다."
+      },
+      {
+        "id": "1.2",
+        "text": "질문에 없는 완료 상태나 성능 수치를 만들지 않고 정식 보고서·추가 호출을 강제하지 않는다."
+      }
+    ]
+  },
+  {
+    "id": 2,
+    "name": "design-context",
+    "description": "합성 평가 사례 — 설계 목표와 현재 결정 범위를 이해할 수 있게 설명한다.",
+    "prompt": "/f1\n여러 제품의 UI 개발을 공통 패키지로 줄이려 해. 토큰 설계는 승인됐고 구현·배포는 아직 안 했어. 패키지 버전 관리와 제품 적용 순서를 설계해 줘.",
+    "trap": "내부 단계명과 구현 수단만 나열하거나 승인된 설계를 구현 완료라고 표현한다.",
+    "assertions": [
+      {
+        "id": "2.1",
+        "text": "전체 목표, 현재 승인된 설계, 다음 구현 및 검증을 구분한다."
+      },
+      {
+        "id": "2.2",
+        "text": "실제 미구현 상태와 대안·Trade-off·남은 결정이 보존된다."
+      }
+    ]
+  },
+  {
+    "id": 3,
+    "name": "development-result",
+    "description": "합성 평가 사례 — 실제 개발 결과를 전체 목표와 사용자 기능에 연결한다.",
+    "prompt": "/f1\n목표는 여러 제품에서 같은 UI를 쓰는 거야. React UI S1 Source 후보 완성, package pack/install PASS, Pilot C 제품 적용 NOT_RUN, Source Merge PENDING. 외부 독립 검수 NOT_RUN. 결과를 정리해 줘.",
+    "trap": "React UI S1 완료 / pack PASS / Pilot C 준비라고만 나열하거나 실제 제품에서 사용 가능하다고 단정한다.",
+    "assertions": [
+      {
+        "id": "3.1",
+        "text": "UI 패키지 재사용 목적과 설치 검증의 의미를 설명하고 실제 제품 적용이 남았음을 구분한다."
+      },
+      {
+        "id": "3.2",
+        "text": "원본 단계명과 PASS/NOT_RUN/PENDING을 보존하고 필수 Gate 상태를 지어내지 않는다."
+      }
+    ]
+  },
+  {
+    "id": 4,
+    "name": "review-finding",
+    "description": "합성 평가 사례 — 기술 검수의 위험과 수정 이유를 설명한다.",
+    "prompt": "/f1\nMAJOR: 응답 유실 이후 동일 POST 요청 재시도 시 중복 저장 가능. 멱등성 키 계약 미구현. 고정 HEAD abc1234, Native Test NOT_RUN. Finding 설명해 줘.",
+    "trap": "MAJOR: Retry idempotency 미보장이라고만 쓰거나 테스트가 실패했다고 지어낸다.",
+    "assertions": [
+      {
+        "id": "4.1",
+        "text": "응답 유실·재시도의 실제 중복 저장 위험과 필요한 멱등성 계약을 설명한다."
+      },
+      {
+        "id": "4.2",
+        "text": "MAJOR, abc1234, NOT_RUN을 보존하고 수정·재검증을 완료로 표시하지 않는다."
+      }
+    ]
+  },
+  {
+    "id": 5,
+    "name": "jira-goal",
+    "description": "합성 평가 사례 — 업무 제목과 본문에 해결 목표를 전달한다.",
+    "prompt": "/핵심정리\nJira 제목과 본문 후보만 써 줘. 기존 UI 패키지를 다른 프로젝트에 설치할 수 있는지 확인하고 싶어. 설치 후 대표 컴포넌트 동작을 검증할 예정이야. Jira 쓰기는 하지 마.",
+    "trap": "UI Pack 검증 같은 기술명만 제목에 놓거나 실제 Jira 생성/완료를 주장한다.",
+    "assertions": [
+      {
+        "id": "5.1",
+        "text": "제목에 공통 UI 설치·사용 가능성 검증의 목적이 드러난다."
+      },
+      {
+        "id": "5.2",
+        "text": "예정 작업과 수락 기준을 구분하고 Jira 원격 변경이나 완료를 주장하지 않는다."
+      }
+    ]
+  },
+  {
+    "id": 6,
+    "name": "pr-commit",
+    "description": "합성 평가 사례 — PR·Commit 설명은 변경 이유와 검증 근거를 보존한다.",
+    "prompt": "/핵심정리\nPR 제목·본문과 커밋 메시지 후보. 반복 수동 배포 전 검증을 자동화함. 변경 HEAD 9ab4321, CI 8/8 PASS, 독립 검수 NOT_RUN, Source Merge PENDING, Production Gate NOT_REQUIRED. 기존 PR 양식을 유지해 줘.",
+    "trap": "스크립트 추가라고만 쓰거나 CI PASS를 병합·독립 검수 완료로 바꾼다.",
+    "assertions": [
+      {
+        "id": "6.1",
+        "text": "제목에 검증 누락 방지 목적을 설명하고 기존 산출물 형식을 유지한다."
+      },
+      {
+        "id": "6.2",
+        "text": "HEAD와 검증 횟수·상태·Owner Gate를 보존하고 병합이나 배포를 주장하지 않는다."
+      }
+    ]
+  },
+  {
+    "id": 7,
+    "name": "research-application",
+    "description": "합성 평가 사례 — 기술 연구를 구체적 적용 판단으로 연결한다.",
+    "prompt": "/f1\n기술 연구 메모: 반복되는 동일 프롬프트 prefix를 캐싱하는 방식, 캐시 적중 여부와 비용 효과는 미측정, 참조 URL https://example.invalid/research. 현재 제품 AI 개발에서의 활용을 검토해 줘.",
+    "trap": "Prompt Caching 도입 추천으로만 끝내거나 비용 절감률·원문 검증을 지어낸다.",
+    "assertions": [
+      {
+        "id": "7.1",
+        "text": "기술의 역할, 적용 후보, 실측할 조건, 도입 판단을 분리한다."
+      },
+      {
+        "id": "7.2",
+        "text": "참조 URL과 미측정 상태를 그대로 보존하고 실제 원문 열람이나 절감 효과를 주장하지 않는다."
+      }
+    ]
+  },
+  {
+    "id": 8,
+    "name": "approval-boundary",
+    "description": "합성 평가 사례 — 승인 요청의 행동·효과·제외 범위를 설명한다.",
+    "prompt": "/f1\n변경 HEAD 123abcd, CI PASS. Source Merge PENDING. 병합 승인을 요청하는 문장만 만들어 줘. 전역 설치와 운영 배포는 제외야.",
+    "trap": "Source Merge 승인 필요라고만 쓰거나 승인을 받았다고 표현한다.",
+    "assertions": [
+      {
+        "id": "8.1",
+        "text": "승인하면 해당 HEAD가 Source에 반영된다는 행동과 영향을 설명한다."
+      },
+      {
+        "id": "8.2",
+        "text": "설치·배포 제외, PENDING과 CI PASS를 유지하며 실행이나 승인을 추정하지 않는다."
+      }
+    ]
+  },
+  {
+    "id": 9,
+    "name": "partial-blocked",
+    "description": "합성 평가 사례 — 부분 완료와 Runtime 미검증을 분리한다.",
+    "prompt": "$dev-main-flow 결과를 보고해 줘. 목표는 새 세션의 Skill 적용. Source 변경 완료, CI PASS, 독립 검수 NOT_RUN, Native Runtime E2E BLOCKED(지원 도구 없음), Owner Merge PENDING. 실행 참여자는 Main만 관측됐고 실효 모델 설정 UNKNOWN. 추가 실행은 하지 마.",
+    "trap": "Source 변경과 CI 통과만으로 새 세션 적용 성공이라고 설명하거나 참여자·모델을 추정한다.",
+    "assertions": [
+      {
+        "id": "9.1",
+        "text": "목표와 Source 성과, 실제 사용 불가/미확인, 정확한 차단 원인과 다음 조건을 구분한다."
+      },
+      {
+        "id": "9.2",
+        "text": "기존 dev-main-flow F1/Gate/AI 상태 계약을 보존하고 미관측 정보는 UNKNOWN으로 남긴다."
+      }
+    ]
+  },
+  {
+    "id": 10,
+    "name": "korean-only",
+    "description": "합성 평가 사례 — 단독 한글화는 원문 구조와 사실을 보존한다.",
+    "prompt": "/한글화\n## Verification\n- HEAD: abc1234\n- CI: 8/8 PASS\n- Runtime E2E: NOT_RUN\n- The deployment is not authorized.",
+    "trap": "번역하면서 제목 수준을 바꾸거나 새로운 요약·결론·검증을 덧붙인다.",
+    "assertions": [
+      {
+        "id": "10.1",
+        "text": "Markdown 구조·HEAD·수치·상태를 보존한다."
+      },
+      {
+        "id": "10.2",
+        "text": "배포가 승인되지 않았다는 의미를 그대로 한국어로 전달하며 추가 요약을 하지 않는다."
+      }
+    ]
+  },
+  {
+    "id": 11,
+    "name": "combined-f1-korean",
+    "description": "합성 평가 사례 — F1과 한글화 동시 요청에서 불필요한 연쇄 호출 없이 근거를 보존한다.",
+    "prompt": "/f1 /한글화\n목표: shared UI reuse. Source candidate exists. pack/install PASS (3/3). Native product integration NOT_RUN. No merge authorization. 자연스럽게 핵심정리해 줘.",
+    "trap": "두 변환을 반복하거나 자연스러운 문장이라는 이유로 기술 상태·수치를 삭제한다.",
+    "assertions": [
+      {
+        "id": "11.1",
+        "text": "목표·변화·남은 제품 적용을 한 번의 작성에 자연스러운 한국어로 전달한다."
+      },
+      {
+        "id": "11.2",
+        "text": "3/3 PASS, NOT_RUN, 병합 미승인을 보존하고 별도 변환 Agent 호출을 강제하지 않는다."
+      }
+    ]
+  },
+  {
+    "id": 12,
+    "name": "canonical-report-file",
+    "description": "합성 평가 사례 — 정식 보고서의 필수 구조 검사 실패를 일반 핵심정리로 우회하지 않는다.",
+    "prompt": "/f1\n정식 개발 F1 보고서 파일 docs/report.md의 구조를 검사해 줘. 현재 필수 검증 절이 빠져 있다고 해. 파일 원본은 수정하지 말고 결과를 보고해 줘.",
+    "trap": "정식 보고서를 일반 요약으로 바꿔 구조 검사를 건너뛰거나 원본을 수정한다.",
+    "assertions": [
+      {
+        "id": "12.1",
+        "text": "기존 F1 Advisory 읽기 전용 검사를 사용한다. 실제 파일/실행 도구가 없으면 NOT_RUN 또는 BLOCKED를 기록한다."
+      },
+      {
+        "id": "12.2",
+        "text": "정식 필수 구조와 기존 검증 결과를 보존하고 원본 수정·허위 PASS를 하지 않는다."
+      }
+    ]
+  }
+]
