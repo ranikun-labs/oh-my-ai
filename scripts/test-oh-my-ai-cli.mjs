@@ -605,10 +605,30 @@ function codexPolicyGapOf(skillDir) {
   return !/^[ \t]+allow_implicit_invocation:[ \t]*false[ \t]*(#.*)?$/m.test(yaml);
 }
 
-test("install --apply: explicit-only Skill gets a Codex link only when the policy file says allow_implicit_invocation: false", () => {
+test("install --apply: explicit-only Core skills reach Codex through their policy file (f1, senior, 한글화)", () => {
+  const sb = makeFixture("install-codex-explicit");
+  for (const id of ["f1", "senior", "한글화"]) {
+    const dir = path.join(sb.clone, "skills", id);
+    assert.equal(codexPolicyGapOf(dir), false, `${id} must carry agents/openai.yaml allow_implicit_invocation: false`);
+  }
+  const r = cli(sb, ["install", "--apply"]);
+  assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
+  assert.doesNotMatch(r.stdout, /skip: Codex /);
+  for (const id of ["f1", "senior", "한글화"]) {
+    assertLinkedTo(path.join(sb.agents, "skills", id), path.join(sb.clone, "skills", id));
+    assertLinkedTo(path.join(sb.claude, "skills", id), path.join(sb.clone, "skills", id));
+  }
+});
+
+test("install --apply: explicit-only Skill without a policy file is skipped for Codex, then linked once the policy file exists", () => {
   const sb = makeFixture("install-codex-policy");
-  const gap = coreOf(sb.clone).find(s => codexPolicyGapOf(s.dir));
-  assert.ok(gap, "fixture needs an explicit-only Core skill without a policy file");
+  // 정책 파일이 없는 명시 전용 Core fixture (작업 트리에만 둔다. install 은 작업 트리를 읽는다).
+  const gapDir = path.join(sb.clone, "skills", "codex-gap-fixture");
+  fs.mkdirSync(gapDir, { recursive: true });
+  fs.writeFileSync(path.join(gapDir, "SKILL.md"), "---\nname: codex-gap-fixture\ndescription: \"fixture explicit-only core skill\"\ndisable-model-invocation: true\nmetadata:\n  source: born-here\n  summary: fixture explicit-only core skill\n  tier: core\n---\n\n# fixture\n");
+  const gap = coreOf(sb.clone).find(s => s.name === "codex-gap-fixture");
+  assert.ok(gap, "fixture must be discovered as a Core skill");
+  assert.equal(codexPolicyGapOf(gap.dir), true);
   const r = cli(sb, ["install", "--apply"]);
   assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
   assert.match(r.stdout, /skip: Codex /);
