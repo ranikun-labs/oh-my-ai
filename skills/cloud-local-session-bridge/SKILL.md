@@ -50,9 +50,23 @@ metadata:
 |---|---|---|
 | A. 폴더 연결 (클라우드에서 로컬 파일·명령 실행) | `list_computer_folders` → `request_computer_folder` | 폴더가 `cannot_be_used: not_available`. 홈 바로 아래 숨김 폴더나 `~/Library` 안에 있거나, 그 컴퓨터의 Claude 앱이 오래됨 |
 | B. 로컬 → 클라우드 메시지 | 로컬 세션의 `ListAgents`·`list_sessions` → `SendMessage` | 클라우드 세션 이름은 로컬 목록에 안 보일 수 있다. **세션 ID**(`session_...`)로 찾는다 |
-| C. 클라우드 → 로컬 메시지 | 클라우드의 `mcp__claude-code-remote__send_message`(session_id) | 클라우드의 `ListAgents`에는 로컬 세션이 안 보인다. `SendMessage`로 보내면 401. remote `send_message`는 `elevated_session_untrusted_device`로 거절된다 |
+| C. 클라우드 → 로컬 메시지 (기존 세션) | 클라우드의 `mcp__claude-code-remote__send_message`(session_id) | 클라우드의 `ListAgents`에는 로컬 세션이 안 보인다. `SendMessage`로 보내면 401. remote `send_message`는 `elevated_session_untrusted_device`로 거절된다 |
 
 카페인·tmux는 Mac을 깨워 두고 프로세스를 유지할 뿐이다. A·C의 권한 문제는 해결하지 않는다.
+
+## 가장 확실한 길: 로컬 기기에 새 세션을 만든다 (create_session)
+
+기존 로컬 세션에 메시지를 보내면, 받는 쪽은 그 메시지를 동료 세션의 데이터로만 취급한다. 그래서 사용자가 그 세션에서 다시 승인해야 한다.
+`create_session`으로 그 기기에 **새 세션**을 만들면 사정이 다르다. 넘긴 prompt가 그 세션의 첫 작업으로 바로 실행되고, 결과는 `send_message`로 부모 세션에 돌아온다.
+
+1. `list_sessions`에서 `environment_kind: "bridge"`인 로컬 세션을 찾고, `get_session`으로 그 세션의 `environment_id`(예: Mac mini bridge 환경)를 얻는다.
+2. 처음 한 번은 `confirm_repository_trust`로 신뢰 승인을 받는다(아래 3절과 같은 절차).
+3. `create_session(environment_id=<bridge 환경>, model, title, prompt=<할 일 전체와 회신 방법>)`을 호출한다. 생성된 세션은 `parent_session_id`로 부모에 묶인다.
+4. 그 기기에서 Claude 앱이나 `claude remote-control`이 켜져 있어야 한다. 꺼져 있으면 세션이 "연결 대기"로 남는다.
+5. 폴더 직접 연결(`request_computer_folder`, 폴더가 `not_available`)과는 다른 경로다. 폴더가 막혀 있어도 bridge 환경으로 세션 생성과 메시지는 동작한다.
+6. 키 입력, 실제 모델 호출, 배포처럼 사람이 확인할 단계는 prompt 안에 "그 시점에 사용자를 불러라"로 명시한다.
+
+이미 진행 중인 로컬 세션(작업트리, 대기 상태 보유)이 있으면 새로 만들지 말고 그 세션을 이어 쓴다. 중복 세션은 같은 작업을 두 번 실행할 위험이 있다.
 
 ## 절차
 
