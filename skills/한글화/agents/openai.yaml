@@ -1,0 +1,7 @@
+interface:
+  display_name: "한글화"
+  short_description: "Explicit Korean localization of text and documents"
+  default_prompt: "Use $한글화 explicitly to localize the given text or document into Korean. It adds no execution, delegation, or remote-write authority."
+
+policy:
+  allow_implicit_invocation: false

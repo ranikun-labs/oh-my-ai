@@ -10,7 +10,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { discoverSkills } from "./lib/skill-discovery.mjs";
+import { coreIdsOf, discoverSkills } from "./lib/skill-discovery.mjs";
 import { captureExposureBaseline, checkExposureLinks, loadBaseline } from "./check-skill-exposure-links.mjs";
 import { DEPENDENCY_MISSING_EXIT_CODE, missingYamlDependency } from "./lib/yaml-dependency.mjs";
 
@@ -20,7 +20,8 @@ const renderer = path.join(repoRoot, "scripts", "render-skill-index.mjs");
 const gate = path.join(repoRoot, "scripts", "check-skill-source-boundary.mjs");
 const exposureGate = path.join(repoRoot, "scripts", "check-skill-exposure-links.mjs");
 
-const work = fs.mkdtempSync(path.join(os.tmpdir(), "skill-discovery-"));
+// realpath 로 고정: 심링크 tmp(macOS /var → /private/var)에서도 CLI 진입점·경로 비교가 같은 문자열을 쓰게 한다.
+const work = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "skill-discovery-")));
 let counter = 0;
 
 try {
@@ -41,9 +42,62 @@ try {
   testExposureBaselineNonAscii();
   testExposureBaselineRealTree();
   testPilotGates();
+  testTierPrecedence();
   console.log("skill-discovery fixtures: PASS");
 } finally {
   fs.rmSync(work, { recursive: true, force: true });
+}
+
+// Tier 우선순위: 물리 그룹 > metadata.tier > TRANSITIONAL_CORE_IDS > library 기본.
+function testTierPrecedence() {
+  const root = newRoot("tier");
+  writeSkill(path.join(root, "skills", "core", "grouped-core"), "grouped-core");
+  writeSkill(path.join(root, "skills", "library", "senior"), "senior"); // 과도기 목록에 있어도 물리 그룹이 이긴다
+  writeTiered(path.join(root, "skills", "meta-core"), "meta-core", "core");
+  writeTiered(path.join(root, "skills", "meta-lib"), "meta-lib", "library");
+  writeSkill(path.join(root, "skills", "plain"), "plain");
+  writeSkill(path.join(root, "skills", "library", "meta-in-group"), "meta-in-group");
+  writeTiered(path.join(root, "skills", "core", "meta-in-group-x"), "meta-in-group-x", "library");
+  const result = discoverSkills(root);
+  const byName = Object.fromEntries(result.skills.map(s => [s.name, s]));
+  assert.deepEqual([byName["grouped-core"].tier, byName["grouped-core"].tierSource], ["core", "group"]);
+  assert.deepEqual([byName["meta-core"].tier, byName["meta-core"].tierSource], ["core", "metadata"]);
+  assert.deepEqual([byName["meta-lib"].tier, byName["meta-lib"].tierSource], ["library", "metadata"]);
+  assert.deepEqual([byName.plain.tier, byName.plain.tierSource], ["library", "default"]);
+  assert.deepEqual([byName.senior.tier, byName.senior.tierSource], ["library", "group"]);
+  assert.equal(byName["meta-in-group-x"].tier, "core");
+  assert.equal(byName["meta-in-group-x"].tierSource, "group");
+  assert.ok(result.warnings.some(w => /meta-in-group-x.*ignored; physical group "core" wins/.test(w)));
+  // 과도기 목록: 같은 이름이 flat 으로 있을 때만 manifest 경로 검증은 별도 root 로 한다
+  const manifestRoot = newRoot("tier-manifest");
+  writeSkill(path.join(manifestRoot, "skills", "senior"), "senior");
+  const m = discoverSkills(manifestRoot).skills[0];
+  assert.deepEqual([m.tier, m.tierSource], ["core", "manifest"]);
+  // coreIdsOf: 과도기 ID가 library 그룹에 있으면 core 가 아니고 missing 도 아니다
+  const coreIds = coreIdsOf(result).map(e => e.id);
+  assert.ok(!coreIds.includes("senior"), "senior under library/ must not be core");
+  // 잘못된 metadata.tier 값은 오류 (소비자 실패)
+  const badRoot = newRoot("tier-bad");
+  writeTiered(path.join(badRoot, "skills", "bad"), "bad", "gold");
+  const bad = discoverSkills(badRoot);
+  assert.ok(bad.errors.some(e => /metadata\.tier "gold" must be one of core\|library/.test(e)));
+  console.log("ok: tier precedence (group > metadata > manifest > default) and invalid metadata.tier");
+}
+
+function writeTiered(dir, name, tier) {
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "SKILL.md"), [
+    "---",
+    `name: ${name}`,
+    `description: ${name} fixture skill`,
+    "metadata:",
+    "  source: born-here",
+    `  tier: ${tier}`,
+    "---",
+    "",
+    `# ${name}`,
+    "",
+  ].join("\n"));
 }
 
 function newRoot(label) {
@@ -286,7 +340,9 @@ function testExposureLinksFailures() {
   expect("id-mismatch", root => relLink(root, ".agents/skills", "wrong-id", path.join(root, "skills", "flat-a")), /wrong-id\] id mismatch: exposed as "wrong-id" but the target Skill is "flat-a"/);
   expect("real-copy", root => writeSkill(path.join(root, ".claude", "skills", "copied"), "copied"), /copied\] is a real directory copy/);
   expect("regular-file", root => fs.writeFileSync(path.join(root, ".claude", "skills", "plain"), "x\n"), /plain\] is a regular file/);
-  expect("empty-dir", root => fs.rmSync(path.join(root, ".claude", "skills", "flat-a")), /\.claude\/skills: no exposure links to check/);
+  // 대상은 심볼릭 링크다. rmSync(path) 는 일부 플랫폼(macOS Node 24.3)에서 링크 대상 디렉터리로 해석해 EISDIR 을 낸다.
+  // 링크만 지우는 unlinkSync 를 쓴다 (대상 Skill 디렉터리는 건드리지 않는다).
+  expect("empty-dir", root => fs.unlinkSync(path.join(root, ".claude", "skills", "flat-a")), /\.claude\/skills: no exposure links to check/);
   expect("missing-dir", root => fs.rmSync(path.join(root, ".agents", "skills"), { recursive: true, force: true }), /\.agents\/skills: cannot read directory/);
   expect("discovery-error", root => fs.mkdirSync(path.join(root, "skills", "orphan")), /skills\/orphan\/: directory has no SKILL\.md/);
   expect("duplicate-normalized", root => {

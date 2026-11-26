@@ -75,7 +75,8 @@ function main(id, group) {
     return usage(`"${id}" must be exactly one flat Skill at skills/${id}/ in the real tree (found ${real.map(s => s.relPath).join(", ") || "none"})`);
   }
 
-  const work = fs.mkdtempSync(path.join(os.tmpdir(), `skill-pilot-${id}-`));
+  // realpath 로 고정: setup.sh 는 REPO 를 realpath 로 쓰므로, 심링크 tmp(macOS /var)에서 논리 경로와 섞이면 stale-source 가 난다.
+  const work = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), `skill-pilot-${id}-`)));
   const results = [];
   const record = (step, ok, detail) => results.push({ step, ok, detail });
   try {

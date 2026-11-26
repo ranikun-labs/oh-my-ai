@@ -8,7 +8,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { DEFAULT_REPO_ROOT, discoverSkills } from "./lib/skill-discovery.mjs";
+import { DEFAULT_REPO_ROOT, discoverSkills, isEntrypoint } from "./lib/skill-discovery.mjs";
 
 export function checkSkillSourceBoundary(repoRoot = DEFAULT_REPO_ROOT) {
   const root = path.resolve(repoRoot);
@@ -62,7 +62,7 @@ function parseRoot(argv) {
   return path.resolve(argv[index + 1]);
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isEntrypoint(process.argv[1], import.meta.url)) {
   let result;
   try {
     result = checkSkillSourceBoundary(parseRoot(process.argv.slice(2)));

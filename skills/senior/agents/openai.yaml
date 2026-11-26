@@ -1,0 +1,7 @@
+interface:
+  display_name: "Senior"
+  short_description: "Explicit senior design, contract, and risk review"
+  default_prompt: "Use $senior explicitly to review this design or change in Preflight, independent Review, or Delta Closure mode. It adds no execution, delegation, or remote-write authority."
+
+policy:
+  allow_implicit_invocation: false

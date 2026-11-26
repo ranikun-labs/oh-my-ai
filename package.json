@@ -1,5 +1,9 @@
 {
   "private": true,
+  "bin": {
+    "ohmyai": "scripts/oh-my-ai.mjs",
+    "oh-my-ai": "scripts/oh-my-ai.mjs"
+  },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.3.232"
   }

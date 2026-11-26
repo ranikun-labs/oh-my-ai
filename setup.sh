@@ -15,6 +15,12 @@ INSTALL_FAILURE=0
 DEV_MAIN_WITH_HANDOFF=0
 DEV_MAIN_WITH_RECORD_SYNC=0
 DEV_MAIN_WITH_SPEC=0
+WITH_IDS=""
+CORE_FAIL=0
+CORE_LINKED=0
+CORE_READY=0
+CORE_PLANNED=0
+CORE_SKIPPED=0
 
 usage() {
   cat <<'EOF'
@@ -22,6 +28,7 @@ usage:
   setup.sh --doctor [--strict]
   setup.sh --doctor-dev-main-flow
   setup.sh --install-shared [--dry-run]
+  setup.sh --install-core [--with <skill-id>]... [--dry-run]
   setup.sh --install-dev-main-flow [--with-handoff] [--with-record-sync] [--with-spec] [--dry-run]
   setup.sh --init-profile --profile <name> [--dry-run]
   setup.sh --install-profile --profile <name> [--dry-run]
@@ -47,6 +54,13 @@ while [ "$#" -gt 0 ]; do
     --doctor) MODE="doctor" ;;
     --doctor-dev-main-flow) MODE="doctor-dev-main-flow" ;;
     --install-shared) MODE="install-shared" ;;
+    --install-core) MODE="install-core" ;;
+    --with)
+      shift
+      if [ -z "${1:-}" ]; then echo "--with requires a skill id" >&2; exit 2; fi
+      WITH_IDS="$WITH_IDS$1
+"
+      ;;
     --install-dev-main-flow) MODE="install-dev-main-flow" ;;
     --with-handoff) DEV_MAIN_WITH_HANDOFF=1 ;;
     --with-record-sync) DEV_MAIN_WITH_RECORD_SYNC=1 ;;
@@ -64,6 +78,10 @@ done
 
 if { [ "$DEV_MAIN_WITH_HANDOFF" -eq 1 ] || [ "$DEV_MAIN_WITH_RECORD_SYNC" -eq 1 ] || [ "$DEV_MAIN_WITH_SPEC" -eq 1 ]; } && [ "$MODE" != "install-dev-main-flow" ]; then
   echo "--with-handoff, --with-record-sync and --with-spec require --install-dev-main-flow" >&2
+  exit 2
+fi
+if [ -n "$WITH_IDS" ] && [ "$MODE" != "install-core" ]; then
+  echo "--with requires --install-core" >&2
   exit 2
 fi
 
@@ -564,6 +582,7 @@ doctor() {
   doctor_skill_links "Claude" "$CLAUDE_DIR/skills"
   doctor_skill_links "Codex" "$AGENT_DIR/skills"
   path_state "$LOCAL_BIN/oh-my-ai" "$REPO/scripts/oh-my-ai.mjs"
+  path_state "$LOCAL_BIN/ohmyai" "$REPO/scripts/oh-my-ai.mjs"
   path_state "$LOCAL_BIN/harness-event" "$REPO/scripts/harness-event.mjs"
   if [ -f "$REPO/scripts/work-start.sh" ] && [ -x "$REPO/scripts/work-start.sh" ]; then
     say "work-start engine: $REPO/scripts/work-start.sh (executable)"
@@ -612,6 +631,7 @@ install_shared() {
   safe_link "$REPO/claude/CLAUDE.md" "$CLAUDE_DIR/CLAUDE.md" "Claude instruction"
   safe_link "$REPO/AGENTS.md" "$CODEX_DIR/AGENTS.md" "Codex instruction"
   safe_link "$REPO/scripts/oh-my-ai.mjs" "$LOCAL_BIN/oh-my-ai" "oh-my-ai"
+  safe_link "$REPO/scripts/oh-my-ai.mjs" "$LOCAL_BIN/ohmyai" "ohmyai"
   safe_link "$REPO/scripts/harness-event.mjs" "$LOCAL_BIN/harness-event" "harness-event"
   install_runtime_hooks claude "$REPO/claude/settings.json" "$CLAUDE_DIR/settings.json" "Claude managed hooks"
   install_runtime_hooks codex "$REPO/codex/hooks.json" "$CODEX_DIR/hooks.json" "Codex managed hooks"
@@ -646,6 +666,120 @@ install_shared() {
   fi
   say "=== done: Runtime hook definitions are configured and work-start was installed without replacing existing directories ==="
   say "Codex trust: unverified — review the installed hook in Codex /hooks before relying on execution."
+}
+
+# Core Skill 노출 링크 (install --apply 의 2단계). Tier 목록은 skill-discovery 가 준다. 이 파일에는 목록이 없다.
+# 규칙: absent 만 새로 링크한다. ready 는 그대로 둔다. 그 밖(사용자 디렉터리·파일, 옛 링크, 깨진 링크)은
+#       FAIL 로 보고만 하고 건드리지 않는다. 실패가 하나라도 있으면 exit 1.
+# 출력: FAIL: 줄 = 실패 목록 (ohmyai 가 PARTIAL 요약에 모은다), 마지막 줄 CORE-LINKS: 요약.
+core_root_check() {
+  label="$1"
+  root="$2"
+  # 루트가 막히면 그 런타임의 Core 링크는 전부 건너뛰므로, 실패 1건으로 집계해 exit 1 이 되게 한다.
+  if is_legacy_dir_link "$root"; then
+    say "FAIL: $label skills root is a legacy directory link ($root -> $(readlink "$root")); remove that link yourself, then re-run install"
+    CORE_FAIL=$((CORE_FAIL + 1))
+    return 1
+  fi
+  if [ -e "$root" ] && [ ! -d "$root" ]; then
+    say "FAIL: $label skills root is not a directory ($root)"
+    CORE_FAIL=$((CORE_FAIL + 1))
+    return 1
+  fi
+  return 0
+}
+
+# Codex 는 명시 전용(disable-model-invocation: true) Skill 을 암묵 호출할 수 있다.
+# 그래서 Skill 디렉터리에 agents/openai.yaml 의 allow_implicit_invocation: false 가 없으면 Codex 루트 링크를 건너뛴다.
+# 반환 0 = 정책 공백. 읽기만 한다. (scripts/lib/oh-my-ai-facade.mjs codexPolicyGap 과 같은 규칙)
+codex_policy_gap() {
+  skill_dir="$1"
+  if ! awk 'NR>1 && /^---[ \t]*$/ {exit} NR>1 && /^disable-model-invocation:[ \t]*true[ \t]*$/ {found=1} END {exit found ? 0 : 1}' "$skill_dir/SKILL.md" 2>/dev/null; then
+    return 1
+  fi
+  if [ -f "$skill_dir/agents/openai.yaml" ] \
+    && grep -Eq '^[[:space:]]+allow_implicit_invocation:[[:space:]]*false[[:space:]]*(#.*)?$' "$skill_dir/agents/openai.yaml"; then
+    return 1
+  fi
+  return 0
+}
+
+core_link_one() {
+  runtime="$1"
+  root="$2"
+  skill_id="$3"
+  dest="$root/$skill_id"
+  source_dir="$(resolve_skill_source "$skill_id" 2>/dev/null)" || source_dir=""
+  if [ -z "$source_dir" ]; then
+    say "FAIL: $runtime $skill_id source is not resolvable (run: node scripts/lib/skill-discovery.mjs --check)"
+    CORE_FAIL=$((CORE_FAIL + 1))
+    return 0
+  fi
+  state="$(skill_link_state "$dest" "$skill_id" "$source_dir")"
+  if [ "$runtime" = "Codex" ] && codex_policy_gap "$source_dir"; then
+    if [ "$state" = "absent" ]; then
+      CORE_SKIPPED=$((CORE_SKIPPED + 1))
+      say "skip: Codex $skill_id not linked (disable-model-invocation: true without agents/openai.yaml allow_implicit_invocation: false; Codex would invoke it implicitly)"
+      return 0
+    fi
+    say "warn: Codex $skill_id is linked ($state) without an explicit-only policy file; remove that link yourself if implicit Codex use is not wanted"
+  fi
+  case "$state" in
+    ready)
+      CORE_READY=$((CORE_READY + 1))
+      say "ok: $runtime $skill_id already linked"
+      ;;
+    absent)
+      if [ "$DRY_RUN" -eq 1 ]; then
+        CORE_PLANNED=$((CORE_PLANNED + 1))
+        say "plan: $runtime $skill_id  $dest -> $source_dir"
+      elif mkdir -p "$root" && ln -s "$source_dir" "$dest"; then
+        CORE_LINKED=$((CORE_LINKED + 1))
+        say "linked: $runtime $skill_id -> $source_dir"
+      else
+        CORE_FAIL=$((CORE_FAIL + 1))
+        say "FAIL: $runtime $skill_id link could not be created ($dest)"
+      fi
+      ;;
+    *)
+      CORE_FAIL=$((CORE_FAIL + 1))
+      say "FAIL: $runtime $skill_id $state at $dest (not overwritten; move or remove it yourself, then re-run install)"
+      ;;
+  esac
+  return 0
+}
+
+install_core_skills() {
+  say "=== oh-my-ai install-core (links only; existing user files are never overwritten) ==="
+  if ! command -v node >/dev/null 2>&1; then
+    say "FAIL: node is required to read the Core tier from skill-discovery"
+    return 1
+  fi
+  if ! core_names="$(node "$REPO/scripts/lib/skill-discovery.mjs" --list --tier core --format names --root "$REPO" 2>/dev/null)"; then
+    say "FAIL: skill discovery failed (run: node scripts/lib/skill-discovery.mjs --check)"
+    return 1
+  fi
+  ids="$(printf '%s\n%s\n' "$core_names" "$WITH_IDS" | sed '/^$/d' | sort -u)"
+  claude_root="$CLAUDE_DIR/skills"
+  codex_root="$AGENT_DIR/skills"
+  claude_blocked=0
+  codex_blocked=0
+  core_root_check Claude "$claude_root" || claude_blocked=1
+  core_root_check Codex "$codex_root" || codex_blocked=1
+  count=0
+  while IFS= read -r skill_id; do
+    [ -n "$skill_id" ] || continue
+    count=$((count + 1))
+    if [ "$claude_blocked" -eq 0 ]; then core_link_one Claude "$claude_root" "$skill_id"; fi
+    if [ "$codex_blocked" -eq 0 ]; then core_link_one Codex "$codex_root" "$skill_id"; fi
+  done <<IDS
+$ids
+IDS
+  say "CORE-LINKS: ids=$count linked=$CORE_LINKED ready=$CORE_READY planned=$CORE_PLANNED skipped=$CORE_SKIPPED fail=$CORE_FAIL"
+  if [ "$CORE_FAIL" -gt 0 ]; then
+    return 1
+  fi
+  return 0
 }
 
 dev_main_flow_root_status() {
@@ -951,6 +1085,7 @@ case "$MODE" in
   doctor) doctor ;;
   doctor-dev-main-flow) dev_main_flow_doctor ;;
   install-shared) install_shared ;;
+  install-core) install_core_skills ;;
   install-dev-main-flow) install_dev_main_flow ;;
   init-profile) init_profile ;;
   install-profile) install_profile ;;

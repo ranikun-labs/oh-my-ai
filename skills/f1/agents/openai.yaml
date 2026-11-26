@@ -1,0 +1,7 @@
+interface:
+  display_name: "F1"
+  short_description: "Explicit Korean F1 summary and development reporting"
+  default_prompt: "Use $f1 explicitly to answer with a Korean F1 summary or development report for this request. Keep the existing report and advisory contract. It adds no execution, delegation, or remote-write authority."
+
+policy:
+  allow_implicit_invocation: false
