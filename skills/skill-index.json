@@ -5,7 +5,7 @@
     {
       "name": "cloud-local-session-bridge",
       "path": "skills/cloud-local-session-bridge/SKILL.md",
-      "description": "Use when a Claude Code cloud session must reach the owner's own computer (Mac mini, Windows, WSL2) or a local/Remote Control session on it — to hand off work, send a prompt, or receive results — or when such a connection \"doesn't work\". Diagnoses which direction is blocked (folder attach, session listing, message send) and the owner approval each needs, instead of retrying blindly or falling back to copy-paste too early.",
+      "description": "Use first — before telling the user to paste anything — when a Claude Code cloud session must reach the owner's own computer (Mac mini, Windows, WSL2) or a local/Remote Control session on it — to hand off work, send a prompt, or receive results — or when such a connection \"doesn't work\". Prefers create_session on the device's bridge environment (prompt runs without re-approval); diagnoses which direction is blocked (folder attach, session listing, message send) and the owner approval each needs, instead of retrying blindly or falling back to copy-paste too early.",
       "summary": "클라우드 세션과 로컬(Mac·Windows) 세션 사이 연결이 막힐 때 막힌 방향을 진단하고 필요한 승인만 받아 인계하는 플레이북",
       "routing": {
         "visibility": "contextual",
@@ -22,7 +22,10 @@
               "Mac 세션",
               "세션 간 통신",
               "Remote Control",
-              "클라우드 연결"
+              "클라우드 연결",
+              "세션 만들어",
+              "로컬에 세션",
+              "create_session"
             ]
           },
           {
@@ -37,7 +40,9 @@
             "로컬 세션",
             "맥미니",
             "세션 간 통신",
-            "원격 연결"
+            "원격 연결",
+            "세션 생성",
+            "하위 세션"
           ],
           "en": [
             "remote control",

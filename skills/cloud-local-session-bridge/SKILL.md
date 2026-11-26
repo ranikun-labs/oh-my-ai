@@ -1,6 +1,6 @@
 ---
 name: cloud-local-session-bridge
-description: Use when a Claude Code cloud session must reach the owner's own computer (Mac mini, Windows, WSL2) or a local/Remote Control session on it — to hand off work, send a prompt, or receive results — or when such a connection "doesn't work". Diagnoses which direction is blocked (folder attach, session listing, message send) and the owner approval each needs, instead of retrying blindly or falling back to copy-paste too early.
+description: Use first — before telling the user to paste anything — when a Claude Code cloud session must reach the owner's own computer (Mac mini, Windows, WSL2) or a local/Remote Control session on it — to hand off work, send a prompt, or receive results — or when such a connection "doesn't work". Prefers create_session on the device's bridge environment (prompt runs without re-approval); diagnoses which direction is blocked (folder attach, session listing, message send) and the owner approval each needs, instead of retrying blindly or falling back to copy-paste too early.
 metadata:
   source: born-here
   summary: 클라우드 세션과 로컬(Mac·Windows) 세션 사이 연결이 막힐 때 막힌 방향을 진단하고 필요한 승인만 받아 인계하는 플레이북
@@ -18,6 +18,9 @@ metadata:
           - 세션 간 통신
           - Remote Control
           - 클라우드 연결
+          - 세션 만들어
+          - 로컬에 세션
+          - create_session
       - kind: intent
         values:
           - reach_local_session_from_cloud
@@ -27,6 +30,8 @@ metadata:
         - 맥미니
         - 세션 간 통신
         - 원격 연결
+        - 세션 생성
+        - 하위 세션
       en:
         - remote control
         - cross-session
@@ -41,6 +46,8 @@ metadata:
 ---
 
 # Cloud ↔ Local session bridge
+
+> **먼저 할 것:** 클라우드에서 로컬 기기(Mac·Windows)로 일을 넘길 때는 기존 세션에 메시지를 보내기 전에 **`create_session(environment_id=<bridge 환경>)`로 그 기기에 새 세션을 만드는 경로**를 먼저 검토한다. 넘긴 prompt가 사용자 재승인 없이 바로 실행된다. 기존 세션은 이미 작업 중이거나 대기 중일 때만 이어 쓴다. 사용자에게 "직접 붙여 넣으세요"라고 안내하는 건 이 경로가 막혔을 때만 한다.
 
 클라우드 세션(claude.ai/code)과 사용자의 컴퓨터(Mac mini, Windows 등)에서 도는 로컬 세션 사이에 일을 넘기거나 결과를 받을 때 쓰는 플레이북이다.
 
