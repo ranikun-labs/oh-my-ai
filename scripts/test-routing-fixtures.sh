@@ -198,4 +198,6 @@ hook_context="$(printf '%s' "$hook_json" | json_field hookSpecificOutput.additio
   || fail "FX-RT-041: F1 advisory status disagrees with the displayed candidates"
 echo "passed: FX-RT-041-filtered-f1-advisory-status"
 
+node scripts/test-agent-return-routing.mjs
+
 echo "all routing fixtures passed"
