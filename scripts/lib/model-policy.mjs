@@ -22,7 +22,7 @@ export const DECISION_CODES = Object.freeze([
   "POLICY_MISSING", "POLICY_INVALID", "POLICY_NOT_APPROVED", "UNKNOWN_MODEL", "MODEL_DISABLED",
   "EFFORT_DISABLED", "MODE_DISABLED", "ROLE_NOT_ALLOWED", "RUNTIME_UNSUPPORTED",
   "SUBSTITUTION_NOT_APPROVED", "NO_DEFAULT", "DEFAULT_SELECTED", "APPLIED", "ROLLED_BACK",
-  "APPLY_REQUIRES_TTY", "APPLY_NOT_CONFIRMED",
+  "APPLY_REQUIRES_TTY", "APPLY_NOT_CONFIRMED", "ROLLBACK_REQUIRES_TTY", "ROLLBACK_NOT_CONFIRMED",
 ]);
 
 const TOP_KEYS = [
@@ -596,8 +596,15 @@ export function applyPolicy(env = process.env, candidatePath, options = {}) {
  * Manual rollback: swap the active file with the archived copy named by the active
  * file's previous_version. Refuses (no change) when the copy is missing or invalid.
  * Never called automatically. The replaced active version is archived first.
+ *
+ * Same human gate as apply (mistake-guard, not a security boundary; see docs/contracts/model-policy.md):
+ * options.isTTY must be true and options.confirm(summary) must return true, else DENY. Checked before
+ * any file is read; the confirmation runs after validation and before any write.
  */
-export function rollbackPolicy(env = process.env) {
+export function rollbackPolicy(env = process.env, options = {}) {
+  if (options.isTTY !== true || typeof options.confirm !== "function") {
+    return decision("DENY", "ROLLBACK_REQUIRES_TTY", ["rollback needs an interactive terminal confirmation (stdin is not a TTY)"]);
+  }
   const requestedPath = resolveExecutionPolicyPath(env).path;
   if (!fs.existsSync(requestedPath)) return decision("DENY", "POLICY_MISSING", ["active policy missing; nothing to roll back"]);
   const activePath = fs.realpathSync(requestedPath);
@@ -618,6 +625,15 @@ export function rollbackPolicy(env = process.env) {
   const archivePath = previousCopyPath(activePath, active.policy.policy_version);
   if (fs.existsSync(archivePath) && fs.readFileSync(archivePath, "utf8") !== activeText) {
     return decision("DENY", "POLICY_INVALID", ["archive for the active version exists with different content; resolve manually"]);
+  }
+  const summary = {
+    from_version: active.policy.policy_version,
+    to_version: previous.policy.policy_version,
+    path: activePath,
+    approved_by: previous.policy.approved_by,
+  };
+  if (options.confirm(summary) !== true) {
+    return decision("DENY", "ROLLBACK_NOT_CONFIRMED", ["operator did not confirm; nothing was written"], summary);
   }
   writeFileAtomic(archivePath, activeText);
   writeFileAtomic(activePath, fs.readFileSync(copyPath, "utf8"));

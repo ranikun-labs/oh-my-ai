@@ -177,7 +177,7 @@ Nothing is substituted automatically. A denied request stays denied. A substitut
 | `check --role R --model M --effort E --mode X [--provider P] [--runtime-capabilities F]` | Dry resolve against the dry path. Drafts give `POLICY_NOT_APPROVED`. |
 | `diff CANDIDATE` | Reads the dry-path active file and reports changes: `ON`/`OFF` for model enablement, effort and mode flags; `ADDED`/`REMOVED`/`CHANGED` for allowed tuples, role defaults, substitutions, cost_limits. Works for drafts. |
 | `apply CANDIDATE` | Only a candidate with `status: ACTIVE` and approval fields. Its `previous_version` must equal the current active `policy_version` (or be `null` if none). **Requires an interactive TTY on stdin**: otherwise `DENY APPLY_REQUIRES_TTY` before anything is read or written. The operator then types the candidate's `policy_version` to confirm (anything else: `DENY APPLY_NOT_CONFIRMED`, nothing written). Steps after confirmation: copy the current active to `model-policy.<active version>.json` (refused if that archive differs), then replace the active file atomically with mode `0600`. Manual only. |
-| `rollback` | Manual only. Swaps the active file with the archived copy named by `previous_version`; the copy must be ACTIVE. Refuses with no change if anything is missing or invalid. |
+| `rollback` | Manual only. Swaps the active file with the archived copy named by `previous_version`; the copy must be ACTIVE. Refuses with no change if anything is missing or invalid. **Same TTY gate as `apply`**: non-TTY stdin gives `DENY ROLLBACK_REQUIRES_TTY` before anything is read or written. On a TTY the operator types the target (`previous_version`) to confirm; anything else gives `DENY ROLLBACK_NOT_CONFIRMED` and nothing is written. |
 
 The resolver never reads evaluation data, and nothing calls `apply` or `rollback` automatically.
 
@@ -203,6 +203,7 @@ The resolver never reads evaluation data, and nothing calls `apply` or `rollback
 2. `model-policy.<previous_version>.json` must exist, validate, be `ACTIVE`, and carry the matching `policy_version`.
 3. The active version is archived to `model-policy.<active policy_version>.json`. If that file already exists with different content, rollback is refused.
 4. The previous copy replaces the active file via temp file + rename, mode `0600`.
+5. Before step 3 writes anything, the caller must pass the TTY gate (`ROLLBACK_REQUIRES_TTY`) and the operator must type the target version (`ROLLBACK_NOT_CONFIRMED` otherwise).
 
 Any failed precondition leaves the active file unchanged.
 
@@ -224,7 +225,7 @@ Run these in order. Each step has an owner check; do not skip ahead.
 - `approved_by` and `approved_at` are a **declaration**. The code checks that they are present and that `approved_at` parses. It does not verify who the approver is.
 - **File write access to the execution location equals approval authority.** Anyone who can write the active file, or both the candidate and the active file, can make a policy ACTIVE by writing its fields directly, with no `apply` at all. `apply` does not add a security boundary over that.
 - The **TTY check on `apply` is a mistake-guard, not a security boundary.** It stops a scripted or non-interactive run (for example a closed stdin with an arbitrary `approved_by`) from applying by accident. A process that can allocate a pseudo-terminal, or call `applyPolicy` directly with its own `isTTY`/`confirm` options, bypasses it. The library seam (`options.isTTY`, `options.confirm`) is for tests and programmatic callers; the environment cannot set it.
-- `rollback` is not behind the TTY gate. It is the same class of write and carries the same authority assumption.
+- `rollback` sits behind the same TTY gate as `apply` (`ROLLBACK_REQUIRES_TTY`, confirmation by typing the target version). It is the same class of write and carries the same authority assumption, so the same limits apply.
 - Where a stronger boundary is needed, it must come from outside this code, for example filesystem ownership of the execution directory, or a signed approval. Neither is implemented here.
 9. **Runtime 회귀**: run the guard path with a real runtime adapter for the new selection. The runtime must report the effective model, effort and mode. Compare them with `compareEffective`. A `MISMATCH` or `UNKNOWN` result (reported as `UNVERIFIED_CONFIG`) blocks the change from being treated as verified. Roll back with `model-policy.mjs rollback` if regression fails.
 
@@ -250,4 +251,4 @@ The guard keeps its generic reasoning allowlist (`low|medium|high|max`) as a cap
 
 ## Verification
 
-`make test-model-policy` runs `scripts/test-model-policy.mjs` (30 fixtures: draft rejection, env path cannot unlock execution, unsupported option -> `POLICY_INVALID` at validate and `RUNTIME_UNSUPPORTED` at resolve, xhigh default OFF, fast independent, default specificity and `NO_DEFAULT`, diff, apply, rollback, compareEffective, cost_limits advisory, check provenance (FX-MP-026), apply TTY gate (FX-MP-027), XDG `via` labels (FX-MP-028), `substitutions`-less policy DENY (FX-MP-029)). The apply tests pass an explicit in-process confirm seam; no test relies on a real terminal. Every test passes explicit temp `HOME` and `XDG_CONFIG_HOME`; none reads the real $HOME or XDG config. `profiles/example/model-policy.json.example` is a `DRAFT` placeholder template that must validate and must not execute.
+`make test-model-policy` runs `scripts/test-model-policy.mjs` (31 fixtures: draft rejection, env path cannot unlock execution, unsupported option -> `POLICY_INVALID` at validate and `RUNTIME_UNSUPPORTED` at resolve, xhigh default OFF, fast independent, default specificity and `NO_DEFAULT`, diff, apply, rollback, compareEffective, cost_limits advisory, check provenance (FX-MP-026), apply TTY gate (FX-MP-027), rollback TTY gate (FX-MP-030), XDG `via` labels (FX-MP-028), `substitutions`-less policy DENY (FX-MP-029)). The apply tests pass an explicit in-process confirm seam; no test relies on a real terminal. Every test passes explicit temp `HOME` and `XDG_CONFIG_HOME`; none reads the real $HOME or XDG config. `profiles/example/model-policy.json.example` is a `DRAFT` placeholder template that must validate and must not execute.

@@ -549,20 +549,46 @@ check("FX-MP-023 rollback swaps to archived copy, 0600, refuses without copy and
   const iso = isolatedEnv("rollback-ok");
   writeJson(path.join(iso.dir, "model-policy.v1.json"), basePolicy({ policy_version: "v1", previous_version: null }));
   writeJson(iso.defaultFile, basePolicy({ policy_version: "v2", previous_version: "v1" }));
-  const outcome = rollbackPolicy(iso.env);
+  const outcome = rollbackPolicy(iso.env, SCRIPTED_TTY);
   assert.equal(outcome.code, "ROLLED_BACK");
   assert.equal(JSON.parse(fs.readFileSync(iso.defaultFile, "utf8")).policy_version, "v1");
   assert.equal(JSON.parse(fs.readFileSync(path.join(iso.dir, "model-policy.v2.json"), "utf8")).policy_version, "v2");
   assert.equal(fs.statSync(iso.defaultFile).mode & 0o777, 0o600);
   const before = fs.readFileSync(iso.defaultFile, "utf8");
-  assert.equal(rollbackPolicy(iso.env).code, "POLICY_INVALID");
+  assert.equal(rollbackPolicy(iso.env, SCRIPTED_TTY).code, "POLICY_INVALID");
   assert.equal(fs.readFileSync(iso.defaultFile, "utf8"), before);
 
   const missing = isolatedEnv("rollback-nocopy");
   writeJson(missing.defaultFile, basePolicy({ policy_version: "v2", previous_version: "v1" }));
   const snapshot = fs.readFileSync(missing.defaultFile, "utf8");
-  assert.equal(rollbackPolicy(missing.env).code, "POLICY_MISSING");
+  assert.equal(rollbackPolicy(missing.env, SCRIPTED_TTY).code, "POLICY_MISSING");
   assert.equal(fs.readFileSync(missing.defaultFile, "utf8"), snapshot);
+});
+
+check("FX-MP-030 rollback needs a TTY: non-TTY denied before any read or write; declined confirm writes nothing", () => {
+  const iso = isolatedEnv("rollback-tty");
+  writeJson(path.join(iso.dir, "model-policy.v1.json"), basePolicy({ policy_version: "v1", previous_version: null }));
+  writeJson(iso.defaultFile, basePolicy({ policy_version: "v2", previous_version: "v1" }));
+  const before = fs.readFileSync(iso.defaultFile, "utf8");
+  // CLI with piped (non-TTY) stdin: must not roll back even when the typed answer is correct.
+  const cli = spawnSync(process.execPath, [CLI, "rollback"], { encoding: "utf8", input: "v1\n", env: { PATH: process.env.PATH, ...iso.env } });
+  assert.equal(cli.status, 1);
+  assert.equal(JSON.parse(cli.stdout).code, "ROLLBACK_REQUIRES_TTY");
+  assert.equal(fs.readFileSync(iso.defaultFile, "utf8"), before);
+  assert.equal(fs.existsSync(path.join(iso.dir, "model-policy.v2.json")), false, "no archive when denied");
+  // Library: missing isTTY or confirm fails closed.
+  assert.equal(rollbackPolicy(iso.env).code, "ROLLBACK_REQUIRES_TTY");
+  assert.equal(rollbackPolicy(iso.env, { isTTY: true }).code, "ROLLBACK_REQUIRES_TTY");
+  assert.equal(rollbackPolicy(iso.env, { confirm: () => true }).code, "ROLLBACK_REQUIRES_TTY");
+  assert.equal(fs.readFileSync(iso.defaultFile, "utf8"), before);
+  // Operator declines: nothing archived, nothing replaced. The summary names the target version.
+  let seen = null;
+  const declined = rollbackPolicy(iso.env, { isTTY: true, confirm: summary => { seen = summary; return false; } });
+  assert.equal(declined.code, "ROLLBACK_NOT_CONFIRMED");
+  assert.equal(seen.from_version, "v2");
+  assert.equal(seen.to_version, "v1");
+  assert.equal(fs.readFileSync(iso.defaultFile, "utf8"), before);
+  assert.equal(fs.existsSync(path.join(iso.dir, "model-policy.v2.json")), false);
 });
 
 check("FX-MP-024 cost_limits are advisory: not enforced, missing limit is not unlimited approval", () => {

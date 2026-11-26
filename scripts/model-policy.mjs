@@ -63,10 +63,10 @@ function runValidate(positional, flags, env) {
   return read.status === "VALID" ? 0 : 1;
 }
 
-// Interactive confirmation for apply. The operator must type the candidate's policy_version.
-// Reads one line from stdin (a TTY here: applyPolicy denies earlier when it is not).
-function ttyConfirm(summary) {
-  process.stderr.write(`apply ${summary.from_version ?? "(none)"} -> ${summary.to_version} at ${summary.path}\n`
+// Interactive confirmation for apply and rollback. The operator must type the target policy_version.
+// Reads one line from stdin (a TTY here: the library denies earlier when it is not).
+function ttyConfirm(summary, action = "apply") {
+  process.stderr.write(`${action} ${summary.from_version ?? "(none)"} -> ${summary.to_version} at ${summary.path}\n`
     + `declared approved_by: ${summary.approved_by}\nType ${summary.to_version} to confirm: `);
   const buf = Buffer.alloc(256);
   let n;
@@ -136,7 +136,10 @@ function main(argv, env = process.env) {
     return outcome.code === "APPLIED" ? 0 : 1;
   }
   if (command === "rollback") {
-    const outcome = rollbackPolicy(env);
+    const outcome = rollbackPolicy(env, {
+      isTTY: process.stdin.isTTY === true,
+      confirm: summary => ttyConfirm(summary, "rollback"),
+    });
     print(outcome);
     return outcome.code === "ROLLED_BACK" ? 0 : 1;
   }
