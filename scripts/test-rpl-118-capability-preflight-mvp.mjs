@@ -123,7 +123,7 @@ function verifiers() {
         && evidence.scope_ref === context.scope_ref
         && evidence.target.base_sha === context.target.base_sha
         && evidence.target.head_sha === context.target.head_sha
-        && evidence.expected.model === "sol"
+        && evidence.expected.model === "synthetic-model"
         && evidence.expected.reasoning === "high"
         && evidence.expected.fast === false
         && evidence.expected.model === context.requested.model
@@ -241,7 +241,7 @@ function knownReviewGuard(currentTask) {
       role: "reviewer",
       permissions: "read-only",
       task: "Review fixed candidate",
-      requested: { model: "sol", reasoning: "high", fast: false },
+      requested: { model: "synthetic-model", reasoning: "high", fast: false },
       runtime: {
         id: "synthetic-codex",
         provider_id: "synthetic-provider",
@@ -269,7 +269,7 @@ function knownReviewGuard(currentTask) {
       runtime_id: "synthetic-codex",
       provider_id: "synthetic-provider",
       environment_fingerprint: "synthetic-env-v1",
-      model: "sol",
+      model: "synthetic-model",
       reasoning: "high",
       fast: false,
       independent_context: true,
@@ -282,7 +282,7 @@ function knownReviewGuard(currentTask) {
       task_id: currentTask.task_id,
       scope_ref: currentTask.scope_ref,
       target,
-      expected: { model: "sol", reasoning: "high", fast: false },
+      expected: { model: "synthetic-model", reasoning: "high", fast: false },
       evidence_ref: "synthetic-review-profile:" + currentTask.task_id,
     },
   };
@@ -591,8 +591,8 @@ pass("REVIEW_GUARD_VERIFIED");
 
 for (const [label, requested] of [
   ["MODEL", { model: "other", reasoning: "high", fast: false }],
-  ["REASONING", { model: "sol", reasoning: "medium", fast: false }],
-  ["FAST", { model: "sol", reasoning: "high", fast: true }],
+  ["REASONING", { model: "synthetic-model", reasoning: "medium", fast: false }],
+  ["FAST", { model: "synthetic-model", reasoning: "high", fast: true }],
 ]) {
   const mismatchedProfileTask = task("REVIEW", [reviewSource]);
   knownReviewGuard(mismatchedProfileTask);

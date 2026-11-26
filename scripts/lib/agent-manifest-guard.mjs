@@ -3,6 +3,7 @@
  * This module validates evidence; it does NOT create agents or query runtimes.
  * It cannot attest effective model settings without a trusted runtime verifier.
  */
+import { loadExecutionPolicy, resolveModelSelection } from "./model-policy.mjs";
 
 const ROLES = new Set(["coordinator", "writer", "reviewer", "research"]);
 const REASONING = new Set(["low", "medium", "high", "max"]);
@@ -50,10 +51,67 @@ export function validateAgentManifest(manifest) {
 }
 
 /**
+ * Optional model-policy gate (docs/contracts/model-policy.md). Inactive unless the caller
+ * passes options.modelPolicy, options.modelPolicyEnv, or options.requireModelPolicy === true.
+ * - modelPolicy: an object the trusted caller already loaded (drafts still fail: POLICY_NOT_APPROVED).
+ * - modelPolicyEnv: an env object; the guard reads ONLY the execution location via
+ *   loadExecutionPolicy (default file; OH_MY_AI_MODEL_POLICY counts only if the active file
+ *   sets allow_path_override: true).
+ * options.runtimeModelCapabilities must come from a trusted runtime adapter; without
+ * it the policy gate fails closed (RUNTIME_UNSUPPORTED).
+ */
+function checkModelPolicy(manifest, options) {
+  const { modelPolicy, modelPolicyEnv, requireModelPolicy, runtimeModelCapabilities } = options;
+  const hasPolicy = modelPolicy !== undefined && modelPolicy !== null;
+  const hasEnv = modelPolicyEnv !== undefined && modelPolicyEnv !== null;
+  if (!hasPolicy && !hasEnv && requireModelPolicy !== true) return null;
+  let policy = hasPolicy ? modelPolicy : undefined;
+  if (!hasPolicy && hasEnv) {
+    const loaded = loadExecutionPolicy(modelPolicyEnv);
+    if (loaded.status !== "VALID") {
+      return result("BLOCKED", loaded.status, loaded.errors.length ? loaded.errors : ["execution policy " + loaded.status]);
+    }
+    policy = loaded.policy;
+  }
+  const requested = {
+    provider: manifest.requested.provider ?? manifest.runtime.id,
+    model: manifest.requested.model,
+    effort: manifest.requested.reasoning,
+    mode: manifest.requested.fast === true ? "fast" : "standard",
+  };
+  const verdict = resolveModelSelection({ policy, role: manifest.role, requested, runtimeCapabilities: runtimeModelCapabilities });
+  if (verdict.status === "ALLOW") return null;
+  return result("BLOCKED", verdict.code, verdict.reasons);
+}
+
+/**
+ * Compare requested vs effective {model, effort, mode}. Per field: MATCH when both known and equal,
+ * MISMATCH when both known and different, UNKNOWN when either side is missing/"UNKNOWN".
+ * Overall: any MISMATCH -> MISMATCH; else any UNKNOWN -> UNKNOWN; else MATCH.
+ * UNKNOWN is reported as UNVERIFIED_CONFIG (label) and is never presented as a match or PASS.
+ * Naming follows the PR #220 contract vocabulary; no code is imported from it.
+ */
+export function compareEffective({ requested, effective } = {}) {
+  const known = value => typeof value === "string" && value.trim().length > 0 && value.trim().toUpperCase() !== "UNKNOWN";
+  const fields = {};
+  for (const key of ["model", "effort", "mode"]) {
+    const want = requested?.[key];
+    const got = effective?.[key];
+    fields[key] = known(want) && known(got) ? (want === got ? "MATCH" : "MISMATCH") : "UNKNOWN";
+  }
+  const values = Object.values(fields);
+  const status = values.includes("MISMATCH") ? "MISMATCH" : values.includes("UNKNOWN") ? "UNKNOWN" : "MATCH";
+  const label = status === "UNKNOWN" ? "UNVERIFIED_CONFIG" : status;
+  return { status, label, fields };
+}
+
+/**
  * capability must be obtained at dispatch time from a trusted adapter.
  * A static capability-registry declaration is not a runtime setting proof.
+ * options (optional): { modelPolicy, requireModelPolicy, runtimeModelCapabilities }.
+ * With no options the behavior is unchanged from RPL-116.
  */
-export function preflightDispatch(manifest, capability) {
+export function preflightDispatch(manifest, capability, options = {}) {
   const checked = validateAgentManifest(manifest);
   if (checked.status !== "VALID") return checked;
   if (manifest.authorization.status !== "approved") {
@@ -69,6 +127,8 @@ export function preflightDispatch(manifest, capability) {
   if (manifest.role === "reviewer") required.push("independent_context");
   const unsupported = required.filter(k => !record(capability[k]) || capability[k].supported !== true || !present(capability[k].evidence_ref));
   if (unsupported.length) return result("BLOCKED", "CAPABILITY_BLOCKED", unsupported.map(k => k + " not verified supported"));
+  const policyGate = checkModelPolicy(manifest, options);
+  if (policyGate) return policyGate;
   return result("READY", "READY_TO_DISPATCH", [], {required_capabilities:required});
 }
 

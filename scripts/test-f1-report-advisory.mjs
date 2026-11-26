@@ -62,7 +62,7 @@ const mainOnlyAiStatus = `## AI 실행 현황
 
 | Agent ID | 실제 역할 | 실제 참여 | spawn events | resume events | continue events | 요청 Model/Reasoning/Fast·출처 | 운영 선호·출처 | 실효 Model/Reasoning/Fast·출처 | 실제 작업·상태 | 공식 토큰·비용·구간·출처 |
 |---|---|---|---:|---:|---:|---|---|---|---|---|
-| Main | Main | YES | 0 | 0 | 1 | UNKNOWN — 이번 경로에서 생성 요청 없음 | Terra High — 운영 요청, 대화 근거 | UNKNOWN — Runtime 설정 근거 없음 | 요청 분석과 결과 취합을 수행 | UNKNOWN — 완료 후 공식 수치 없음 |
+| Main | Main | YES | 0 | 0 | 1 | UNKNOWN — 이번 경로에서 생성 요청 없음 | Gamma High — 운영 요청, 대화 근거 | UNKNOWN — Runtime 설정 근거 없음 | 요청 분석과 결과 취합을 수행 | UNKNOWN — 완료 후 공식 수치 없음 |
 `;
 
 const multiAgentAiStatus = `## AI 실행 현황
@@ -72,10 +72,10 @@ const multiAgentAiStatus = `## AI 실행 현황
 
 | Agent ID | 실제 역할 | 실제 참여 | spawn events | resume events | continue events | 요청 Model/Reasoning/Fast·출처 | 운영 선호·출처 | 실효 Model/Reasoning/Fast·출처 | 실제 작업·상태 | 공식 토큰·비용·구간·출처 |
 |---|---|---|---:|---:|---:|---|---|---|---|---|
-| Main | Main | YES | 0 | 0 | 1 | UNKNOWN — 현재 턴에서 생성 요청 없음 | Terra High — 운영 요청 | UNKNOWN — 실효 설정 근거 없음 | Objective와 결과 취합 | UNKNOWN — 공식 계측 미제공 |
-| writer-a | Writer | YES | 1 | 0 | 0 | Luna Max — 생성 요청 metadata | Luna Max — 운영 선호 | UNKNOWN — Runtime attestation 미제공 | Advisory 수정, 완료 | UNKNOWN — 해당 구간 수치 없음 |
-| writer-b | Writer | YES | 1 | 0 | 0 | Luna Max — 생성 요청 metadata | Luna Max — 운영 선호 | UNKNOWN — Runtime attestation 미제공 | 회귀 fixture 수정, 완료 | UNKNOWN — 해당 구간 수치 없음 |
-| reviewer-a | Reviewer | YES | 1 | 0 | 0 | Sol Medium — 생성 요청 metadata | Sol Medium — 운영 선호 | UNKNOWN — Runtime attestation 미제공 | 고정 HEAD 검토, 완료 | UNKNOWN — 해당 구간 수치 없음 |
+| Main | Main | YES | 0 | 0 | 1 | UNKNOWN — 현재 턴에서 생성 요청 없음 | Gamma High — 운영 요청 | UNKNOWN — 실효 설정 근거 없음 | Objective와 결과 취합 | UNKNOWN — 공식 계측 미제공 |
+| writer-a | Writer | YES | 1 | 0 | 0 | Alpha High — 생성 요청 metadata | Alpha High — 운영 선호 | UNKNOWN — Runtime attestation 미제공 | Advisory 수정, 완료 | UNKNOWN — 해당 구간 수치 없음 |
+| writer-b | Writer | YES | 1 | 0 | 0 | Alpha High — 생성 요청 metadata | Alpha High — 운영 선호 | UNKNOWN — Runtime attestation 미제공 | 회귀 fixture 수정, 완료 | UNKNOWN — 해당 구간 수치 없음 |
+| reviewer-a | Reviewer | YES | 1 | 0 | 0 | Beta Medium — 생성 요청 metadata | Beta Medium — 운영 선호 | UNKNOWN — Runtime attestation 미제공 | 고정 HEAD 검토, 완료 | UNKNOWN — 해당 구간 수치 없음 |
 | spawned-no-work | Helper | NO | 1 | 0 | 0 | UNKNOWN — 요청 metadata 없음 | UNKNOWN — 운영 선호 미관측 | UNKNOWN — Runtime attestation 미제공 | 생성됐으나 실제 작업에 참여하지 않음 | UNKNOWN — 참여·사용량 구간 없음 |
 `;
 const fullReportWithMainOnly = validReport.replace("## 아직 안 되는 것", `${mainOnlyAiStatus}\n## 아직 안 되는 것`);
