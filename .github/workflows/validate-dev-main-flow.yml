@@ -28,6 +28,12 @@ jobs:
       - name: Run Skill frontmatter YAML fixtures
         run: node scripts/test-skill-frontmatter-validation.cjs
 
+      - name: Validate Jira closure draft source contract
+        run: node scripts/test-dev-main-flow-jira-closure-contract.mjs
+
+      - name: Validate batch-report composition source contract
+        run: node scripts/test-batch-report-composition-contract.mjs
+
       - name: Validate explicit-only Skill metadata and source link
         run: |
           node <<'NODE'

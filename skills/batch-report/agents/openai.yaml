@@ -1,0 +1,7 @@
+interface:
+  display_name: "Batch Report"
+  short_description: "Consolidate parallel agent results with evidence kept"
+  default_prompt: "Use $batch-report explicitly to consolidate the parallel agent results in this batch. Preserve evidence, per-task status, and conflicts. It adds no execution or approval authority."
+
+policy:
+  allow_implicit_invocation: false
