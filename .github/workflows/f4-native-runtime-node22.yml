@@ -157,6 +157,8 @@ jobs:
           node scripts/test-f4-handoff-workspace.mjs
           node scripts/test-task-session-association.mjs
           node scripts/test-f4-writer-continuation.mjs
+          node scripts/test-f4-claude-writer-recovery.mjs
+          node scripts/test-f4-claude-recovery-entry.mjs
       - name: Run RPL-95 source fixture when integrated
         if: hashFiles('scripts/test-user-local-state-fixtures.mjs') != ''
         run: node scripts/test-user-local-state-fixtures.mjs
