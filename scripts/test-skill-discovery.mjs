@@ -20,7 +20,8 @@ const renderer = path.join(repoRoot, "scripts", "render-skill-index.mjs");
 const gate = path.join(repoRoot, "scripts", "check-skill-source-boundary.mjs");
 const exposureGate = path.join(repoRoot, "scripts", "check-skill-exposure-links.mjs");
 
-const work = fs.mkdtempSync(path.join(os.tmpdir(), "skill-discovery-"));
+// realpath 로 고정: 심링크 tmp(macOS /var → /private/var)에서도 CLI 진입점·경로 비교가 같은 문자열을 쓰게 한다.
+const work = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "skill-discovery-")));
 let counter = 0;
 
 try {
@@ -339,7 +340,9 @@ function testExposureLinksFailures() {
   expect("id-mismatch", root => relLink(root, ".agents/skills", "wrong-id", path.join(root, "skills", "flat-a")), /wrong-id\] id mismatch: exposed as "wrong-id" but the target Skill is "flat-a"/);
   expect("real-copy", root => writeSkill(path.join(root, ".claude", "skills", "copied"), "copied"), /copied\] is a real directory copy/);
   expect("regular-file", root => fs.writeFileSync(path.join(root, ".claude", "skills", "plain"), "x\n"), /plain\] is a regular file/);
-  expect("empty-dir", root => fs.rmSync(path.join(root, ".claude", "skills", "flat-a")), /\.claude\/skills: no exposure links to check/);
+  // 대상은 심볼릭 링크다. rmSync(path) 는 일부 플랫폼(macOS Node 24.3)에서 링크 대상 디렉터리로 해석해 EISDIR 을 낸다.
+  // 링크만 지우는 unlinkSync 를 쓴다 (대상 Skill 디렉터리는 건드리지 않는다).
+  expect("empty-dir", root => fs.unlinkSync(path.join(root, ".claude", "skills", "flat-a")), /\.claude\/skills: no exposure links to check/);
   expect("missing-dir", root => fs.rmSync(path.join(root, ".agents", "skills"), { recursive: true, force: true }), /\.agents\/skills: cannot read directory/);
   expect("discovery-error", root => fs.mkdirSync(path.join(root, "skills", "orphan")), /skills\/orphan\/: directory has no SKILL\.md/);
   expect("duplicate-normalized", root => {

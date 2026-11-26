@@ -16,7 +16,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
-import { DEFAULT_REPO_ROOT, discoverSkills } from "./lib/skill-discovery.mjs";
+import { DEFAULT_REPO_ROOT, discoverSkills, isEntrypoint } from "./lib/skill-discovery.mjs";
 import { DEPENDENCY_MISSING_EXIT_CODE, missingYamlDependency } from "./lib/yaml-dependency.mjs";
 
 // 고정 YAML 파서는 import 시점이 아니라 검사 시점에 로드한다. 미설치여도 모듈 import 자체는 실패하지 않고 DEPENDENCY_MISSING 으로 보고하기 위함.
@@ -197,7 +197,7 @@ function parseArgs(argv) {
   return options;
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isEntrypoint(process.argv[1], import.meta.url)) {
   let result;
   try {
     const options = parseArgs(process.argv.slice(2));

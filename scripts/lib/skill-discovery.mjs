@@ -40,6 +40,19 @@ export const TRANSITIONAL_CORE_IDS = Object.freeze([
   "batch-report",
 ]);
 
+// 진입점 판정. Node 는 메인 모듈의 import.meta.url 을 realpath 로 주고 argv[1] 은 호출 경로(심링크 포함)다.
+// 문자열로만 비교하면 macOS 임시 디렉터리(/var → /private/var)처럼 경로에 심링크가 낀 곳에서 CLI 가 조용히 아무것도 안 한다.
+export function isEntrypoint(argv1, moduleUrl) {
+  if (!argv1) return false;
+  let invoked;
+  try {
+    invoked = fs.realpathSync(argv1);
+  } catch {
+    invoked = path.resolve(argv1);
+  }
+  return invoked === fs.realpathSync(fileURLToPath(moduleUrl));
+}
+
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 export const DEFAULT_REPO_ROOT = path.resolve(MODULE_DIR, "..", "..");
 
@@ -336,6 +349,6 @@ function main(argv) {
   return 0;
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isEntrypoint(process.argv[1], import.meta.url)) {
   process.exitCode = main(process.argv.slice(2));
 }
