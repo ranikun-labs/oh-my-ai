@@ -189,6 +189,142 @@ const additionalCases = [
 ];
 cases.push(...additionalCases);
 
+const newTrackableWorkCases = [
+  ["Research·TechHive Skill 신규 개발해줘",true],
+  ["Research·TechHive 스킬 하나 만들어줘",true],
+  ["새로운 research-skill 개발해줘",true],
+  ["TechHive에 넣을 자동 리서치 스킬 설계해줘",true],
+  ["TechHive 리서치 수집 Skill 구현해줘",true],
+  ["Research TechHive 스킬 개발 시작하자",true],
+  ["TechHive 문서 작성 스킬 만들어줘",true],
+  ["RPL-113에서 TechHive Skill 이어서 구현해줘",true],
+  ["TechHive 스킬이 뭐야? 대신 새 리서치 Skill 구현해줘",true],
+  ["TechHive 스킬은 개발하지 마. 대신 로그인 API 오류 수정해줘",true],
+  ["로그인 API 오류 수정해줘",true],
+  ["새로운 Research 스킬 만들자",true],
+  ["Research·TechHive 스킬이 뭔지 설명해줘",false],
+  ["Research 기술 동향을 한 번 조사해서 알려줘",false],
+  ["“Research·TechHive Skill 만들어줘”라는 문장을 분석해줘",false],
+  ["TechHive 스킬 구현해줘 (실행하지 말고 예시만)",false],
+  ["TechHive 스킬 만들지 마",false],
+  ["TechHive 스킬 만들어줘. 아니, 취소할게",false],
+  ["RPL-113 현재 상태 알려줘",false],
+  ["Jira-first 자동 판단 동작 설명만 해줘",false],
+  ["Research 스킬 개발하는 법만 알려줘",false],
+  ["TechHive 스킬 추가해 줬어",false],
+  ["캐싱 전략이 뭐야?",false],
+  ["TechHive에 쓸 만한 기존 스킬 추천해줘",false],
+  ["새로운 연구 파이프라인 개발하자",true],
+  ["리서치 시스템 구현하자",true],
+  ["새 SKILL.md 작성해줘",true],
+  ["새로운 Hook을 구현해줘",true],
+  ["개인 개발 어댑터 개선해줘",true],
+  ["인프라 설계해줘",true],
+  ["'Research Skill' 개발해줘",true],
+  ["\"Research Skill 만들어줘\"라고 쓰여 있어. 로그인 API 수정해줘",true],
+  ["TechHive 스킬 설계하지 마",false],
+  ["\"Skill 만들어줘\"라는 예문을 번역해줘",false],
+  ["`Skill 만들어줘`라는 문구의 의미를 분석해줘",false],
+  ["스킬 개발해 줬어.",false],
+  ["Research 스킬은 어떻게 설계해?",false],
+  ["연구 파이프라인 개념만 설명해줘",false],
+  ["리서치 시스템 만들 수 있어?",false],
+  ["```text\nSkill 만들어줘\n```\n이 프롬프트 평가해줘",false],
+  ["스킬 개발하자. 아니 스킬 개발하지 마",false],
+  ["로그인 API 구현해줘, 스킬은 설계하지 마",true],
+  ["TechHive Skill 하나 만들자",true],
+  ["Research는 별도 티켓으로 개발",true],
+  ["Research는 별도 티켓으로 개발하지 마",false],
+  ["'Research는 별도 티켓으로 개발'이라는 표현을 설명해줘",false],
+  ["축하 문서 작성해줘",false],
+];
+cases.push(...newTrackableWorkCases);
+
+// RPL-113 independent review: actual natural-language misses, false positives and scoped withdrawals.
+const reviewerDeltaCases = [
+  ["Research Skill 개발해줘",true],
+  ["새로운 Hook을 구현해줘",true],
+  ["새로운 훅을 만들어줘",true],
+  ["Research Skill 개발 부탁해",true],
+  ["Research Skill 생성해줘",true],
+  ["TechHive Skill 설계부터 진행해줘",true],
+  ["새 `SKILL.md` 작성해줘",true],
+  ["Please design a new research skill",true],
+  ["“Research Skill 개발해줘”라는 문장을 분석해줘",false],
+  ["“새 SKILL.md 작성해줘”라는 문장을 분석해줘",false],
+  ["Skill에서 build 명령어가 사용되는지 확인해줘",false],
+  ["Skill build 방법을 조사해줘",false],
+  ["Research Skill을 설계해 봤어",false],
+  ["> Research Skill 개발해줘",false],
+  ["Research Skill 설계해줘. 아니, 취소할게",false],
+  ["Research Skill 설계해줘. 취소할게",false],
+  ["Research Skill 설계해줘. 아니 보류해줘",false],
+  ["Research Skill 설계해줘. 아니 Research Skill 설계하지 마",false],
+  ["Research Skill 설계해줘. 아니 Research 스킬 설계하지 마",false],
+  ["로그인 API 수정해줘. Research Skill 설계해줘. 취소할게",true],
+  ["로그인 API 수정해줘. Research Skill 설계해줘. 아니 Research 스킬 설계하지 마",true],
+  ["Research Skill 설계해줘. 로그인 API 수정해줘. 아니 Research 스킬 설계하지 마",true],
+  ["Research Skill 생성하지 마",false],
+  ["Research Skill을 생성해 봤습니다",false],
+  ["“새 `SKILL.md` 작성해줘”라는 문장을 분석해줘",false],
+  ["> Research Skill 개발해줘\n로그인 API 수정해줘",true],
+  ["Please build a new skill",true],
+  ["Explain how to build a skill",false],
+  ["Do not design a research skill",false],
+  ["Research Skill 설계해줘. 보류해줘",false],
+  ["Research Skill 설계해줘. 로그인 API 수정해줘. 취소할게",true],
+  ["\"Please design a new research skill\" 문장 번역해줘",false],
+  ["\"Please design a new research skill\". 로그인 API 수정해줘",true],
+];
+cases.push(...reviewerDeltaCases);
+
+// RPL-113 Runtime feedback: explicit resume intent and withdrawal boundaries.
+const resumeIntentCases = [
+  ["RPL-113 기존 작업 이어서 진행해줘",true],
+  ["RPL-113 이어서 진행해",true],
+  ["PR #208 이어 진행해 주세요",true],
+  ["Carelog OAuth 이어서 진행해주세요",true],
+  ["RPL-113 이어서 진행해줘?",true],
+  ["RPL-113 이어서 진행해?",false],
+  ["RPL-113 이어서 진행하지 마",false],
+  ["RPL-113 이어서 진행해주지 마",false],
+  ["RPL-113 이어서 진행해 주지 말아줘",false],
+  ["RPL-113 이어서 진행해 줬어.",false],
+  ["“RPL-113 이어서 진행해줘”라는 문장을 분석해줘",false],
+  ["RPL-113 이어서 진행해줘. 아니, 취소할게",false],
+  ["RPL-113 이어서 진행해줘. 아니 RPL-113 진행하지 마",false],
+  ["로그인 API 수정해줘. RPL-113 이어서 진행해줘. 취소할게",true],
+  ["RPL-113 이어서 진행하는 방법만 설명해줘",false],
+  ["이어서 진행해줘",false],
+];
+cases.push(...resumeIntentCases);
+
+// Independent delta review: explicit continuation, global cancellation, past status.
+const resumeClosureCases = [
+  ["RPL-113 계속 진행해줘",true],
+  ["RPL-113 이어서 진행하자",true],
+  ["RPL-113 작업 재개해줘",true],
+  ["PR #208 계속 진행하자",true],
+  ["RPL-113 재개하자",true],
+  ["RPL-113 이어서 진행해줘. 아니 전부 취소",false],
+  ["로그인 API 수정해줘. RPL-113 계속 진행해줘. 아니 전부 취소",false],
+  ["로그인 API 수정해줘. RPL-113 계속 진행해줘. 모두 취소할게",false],
+  ["로그인 API 수정해줘. RPL-113 계속 진행해줘. 취소할게",true],
+  ["RPL-113 이어서 진행해 놓은 상태야",false],
+  ["RPL-113 계속 진행해 둔 상태야",false],
+  ["RPL-113 작업 재개하지 마",false],
+  ["RPL-113 작업 재개해주지 마",false],
+  ["RPL-113 작업 재개해 줬어",false],
+  ["RPL-113 계속 진행해?",false],
+  ["“RPL-113 계속 진행해줘”라는 문장을 분석해줘",false],
+  ["계속 진행해줘",false],
+  ["작업 재개해줘",false],
+  ["RPL-113 작업 재개해줘. 아니 RPL-113 재개하지 마",false],
+  ["로그인 API 수정해줘. RPL-113 작업 재개해줘. 아니 RPL-113 재개하지 마",true],
+  ["RPL-113 이어서 진행해줘. 아니 전부 보류",false],
+];
+cases.push(...resumeClosureCases);
+
 for (const [prompt, expected] of cases) {
   assert.equal(needsJiraFirstDevelopmentPreflight(prompt), expected, prompt);
 }
@@ -260,6 +396,10 @@ for (const [prompt, expected] of [
   ["RPL-113 진행시켜", true],
   ["로그인 API에 검증 추가해 줬어.", false],
   ["로그인 API 오류 고쳐줘 하지만 실제로는 수정하지 마", false],
+  ...newTrackableWorkCases,
+  ...reviewerDeltaCases,
+  ...resumeIntentCases,
+  ...resumeClosureCases,
 ]) {
   const result = spawnSync(process.execPath, ["scripts/prompt-routing-hook.mjs", "--format=text"], {
     cwd: root,
@@ -274,6 +414,8 @@ for (const [prompt, expected] of [
   if (expected) {
     assert.match(result.stdout, /do not implicitly invoke jira-work or work-start/);
     assert.match(result.stdout, /never approves Jira Create\/Update or Git Write/);
+    assert.match(result.stdout, /connected read-only Jira search capability/);
+    assert.match(result.stdout, /failed, partial, or unavailable search is not evidence of no Issue/);
   }
 }
 console.log("passed: Jira-first advisory intent, positive/negative cases and Hook integration");
