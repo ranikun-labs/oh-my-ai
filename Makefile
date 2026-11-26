@@ -34,10 +34,16 @@ test-routing-fixtures:
 	node ./scripts/test-render-skill-index-symlink.mjs
 	node ./scripts/test-skill-discovery.mjs
 
+# BASE_SHA: PR 기준 커밋. 주면 그 커밋의 노출 링크가 모두 남아 있어야 PASS (링크 유실 검출). 없으면 SKIP 사유를 찍고 구조만 검사.
 test-skill-discovery:
 	node ./scripts/test-skill-discovery.mjs
 	node ./scripts/check-skill-source-boundary.mjs
-	node ./scripts/check-skill-exposure-links.mjs
+	@if [ -n "$(BASE_SHA)" ] && git cat-file -e "$(BASE_SHA)^{commit}" 2>/dev/null; then \
+		node ./scripts/check-skill-exposure-links.mjs --baseline "$(BASE_SHA)"; \
+	else \
+		echo "SKIP: exposure-link baseline check (BASE_SHA $(if $(BASE_SHA),'$(BASE_SHA)' not present in this clone,not set)); running structure-only check"; \
+		node ./scripts/check-skill-exposure-links.mjs; \
+	fi
 
 test-work-start-fixtures:
 	./scripts/test-work-start-fixtures.sh

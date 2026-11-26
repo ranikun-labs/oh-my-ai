@@ -71,7 +71,16 @@ jobs:
           NODE
 
       - name: Validate .claude/skills and .agents/skills exposure links
-        run: node scripts/check-skill-exposure-links.mjs
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          # PR 기준 커밋의 노출 링크가 모두 남아 있어야 한다(링크 삭제 = FAIL). 기준 커밋을 못 찾으면 사유를 찍고 구조만 검사한다.
+          if [ -n "$BASE_SHA" ] && git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
+            node scripts/check-skill-exposure-links.mjs --baseline "$BASE_SHA"
+          else
+            echo "SKIP: exposure-link baseline check (base sha '${BASE_SHA:-<unset>}' not present in this checkout); running structure-only check"
+            node scripts/check-skill-exposure-links.mjs
+          fi
 
       - name: Regenerate instructions and check generated diffs
         run: |

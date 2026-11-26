@@ -28,7 +28,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { RESERVED_GROUPS, discoverSkills, resolveSkill } from "./lib/skill-discovery.mjs";
 import { DEPENDENCY_MISSING_EXIT_CODE, missingYamlDependency } from "./lib/yaml-dependency.mjs";
-import { EXPOSURE_DIRS, captureExposureBaseline } from "./check-skill-exposure-links.mjs";
+import { EXPOSURE_DIRS, captureExposureBaseline, loadBaseline } from "./check-skill-exposure-links.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 // 생성물: render-instructions.sh 가 render-skill-index.mjs 도 다시 호출하므로 skill-index.json 도 함께 비교한다.
@@ -163,8 +163,17 @@ function main(id, group) {
     }
 
     // 5. 노출 링크: 새 위치로 재지정 (복사본에서만). 링크가 없던 Skill이면 검사용 링크를 복사본에만 만든다.
-    // 기준선 = 이동 전 트리의 노출 ID 전체. 재지정 후에도 모든 ID가 남아 있어야 한다(CLI --baseline 으로 검사).
-    const baseline = captureExposureBaseline(base);
+    // 기준선 = 커밋된 HEAD의 노출 ID 전체(작업 트리를 찍은 복사본이 아님). 작업 트리에서 이미 사라진 링크도 여기서 잡힌다.
+    // git 기준선을 얻을 수 없으면(.git 없는 트리 등) 파일시스템 목록으로 대체하고 그 사실을 결과에 표기한다.
+    // 주의: 이 시점의 복사본은 재지정 전 상태여야 하며, 아래 루프가 이 목록을 다시 쓰지 않는다.
+    let baseline;
+    let baselineSource = "HEAD";
+    try {
+      baseline = loadBaseline("HEAD", repoRoot);
+    } catch {
+      baseline = captureExposureBaseline(repoRoot);
+      baselineSource = "filesystem (no git HEAD)";
+    }
     const baselineFile = path.join(work, "exposure-baseline.txt");
     fs.writeFileSync(baselineFile, `${baseline.join("\n")}\n`);
     const linkRows = [];
@@ -179,7 +188,7 @@ function main(id, group) {
     }
     const exposure = run(moved, ["scripts/check-skill-exposure-links.mjs", "--root", moved, "--baseline", baselineFile]);
     record("exposure-links", exposure.status === 0,
-      `${linkRows.join("; ")}; baseline ${baseline.length} id(s) | ${firstLine(exposure)}`);
+      `${linkRows.join("; ")}; baseline ${baseline.length} id(s) from ${baselineSource} | ${firstLine(exposure)}`);
 
     // 6. 경계 게이트
     const boundary = run(moved, [path.join("scripts", "check-skill-source-boundary.mjs"), "--root", moved]);
