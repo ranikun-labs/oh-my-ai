@@ -38,6 +38,8 @@ $work-start 로그인 실패 메시지를 더 명확하게 바꾸고 싶어
 
 이 단계까지 제품 코드는 수정되지 않으며 기본 선택지도 없습니다.
 
+> 개발 요청의 대표 진입은 `dev-main-flow`(신규·재개)이고, `work-start`는 그 아래의 신규 범위 수집 하위 기능이자 호환 경로입니다. 전체 흐름은 [대표 작업 흐름](docs/harness/representative-workflow.md)을 참고하세요.
+
 ## Requirements
 
 - macOS 또는 Linux
@@ -231,7 +233,7 @@ Codex에서:
 $work-start 로그인 실패 메시지를 개선해줘
 ```
 
-Work-start는 이처럼 사용자가 명시적으로 호출할 때만 실행됩니다. 자연어 요청만으로 Engine이나 Artifact가 자동 실행·생성되지는 않습니다.
+Work-start는 이처럼 사용자가 명시적으로 호출할 때만 실행됩니다. 자연어 요청만으로 Engine이나 Artifact가 자동 실행·생성되지는 않습니다. 신규 개발·재개 작업의 대표 흐름은 `dev-main-flow`이며, 역할 분담은 [대표 작업 흐름](docs/harness/representative-workflow.md)에 정리되어 있습니다.
 
 ## 생성되는 파일
 
