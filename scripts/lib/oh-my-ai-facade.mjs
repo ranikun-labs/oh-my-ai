@@ -210,6 +210,19 @@ function readSkillMeta(file) {
   return { source, explicitOnly };
 }
 
+// setup.sh codex_policy_gap 과 같은 규칙. 명시 전용 Skill(disable-model-invocation: true)인데
+// agents/openai.yaml 에 allow_implicit_invocation: false 가 없으면 Codex 루트에 링크하지 않는다 (암묵 호출 방지).
+export function codexPolicyGap(skillDir) {
+  if (!readSkillMeta(path.join(skillDir, "SKILL.md")).explicitOnly) return false;
+  let yaml = "";
+  try {
+    yaml = fs.readFileSync(path.join(skillDir, "agents", "openai.yaml"), "utf8");
+  } catch {
+    // 정책 파일 없음 → 공백
+  }
+  return !/^[ \t]+allow_implicit_invocation:[ \t]*false[ \t]*(#.*)?$/m.test(yaml);
+}
+
 // ---------- version ----------
 
 function cmdVersion(repoRoot, args, { out }) {
@@ -457,12 +470,16 @@ function collectStatus(repoRoot, env) {
     const items = coreEntries.map(({ id }) => {
       const source = index.sourceOf(id);
       if (!source) return { id, state: "missing-source" };
-      return { id, state: legacy || linkState(path.join(roots[runtime], id), id, source, repoRoot) };
+      const state = legacy || linkState(path.join(roots[runtime], id), id, source, repoRoot);
+      // Codex 정책 공백 Skill 은 미링크가 정상(의도된 제외). absent 일 때만 policy-gap 으로 본다.
+      if (runtime === "codex" && state === "absent" && codexPolicyGap(source)) return { id, state: "policy-gap" };
+      return { id, state };
     });
     core[runtime] = {
       root: roots[runtime],
       ready: items.filter(i => i.state === "ready").length,
-      total: items.length,
+      total: items.filter(i => i.state !== "policy-gap").length,
+      policy_gap: items.filter(i => i.state === "policy-gap").length,
       items,
     };
   }
@@ -488,6 +505,7 @@ function collectStatus(repoRoot, env) {
 
   if (config.error) add("FAIL", "config", config.error);
   else add("OK", "config", `update.policy=${config.values["update.policy"]} context.inject=${config.values["context.inject"]}`);
+  for (const w of config.warnings ?? []) add("WARN", "config", w);
   if (!config.error && config.values["update.policy"] === "AUTO") {
     add("WARN", "policy", "update.policy=AUTO 는 저장만 됩니다: auto-run NOT IMPLEMENTED (CHECK로 동작)");
   }
@@ -511,10 +529,11 @@ function collectStatus(repoRoot, env) {
   for (const runtime of ["claude", "codex"]) {
     const c = core[runtime];
     for (const item of c.items) {
-      if (item.state === "ready" || item.state === "missing-source") continue;
+      if (item.state === "ready" || item.state === "missing-source" || item.state === "policy-gap") continue;
       const level = ["stale-source", "dangling", "conflict", "legacy-dir-link"].includes(item.state) ? "FAIL" : "WARN";
       add(level, "skills", `${runtime} ${item.id}: ${item.state}`);
     }
+    if (c.policy_gap > 0) add("OK", "skills", `${runtime} 명시 전용 Skill ${c.policy_gap}개 미노출 (agents/openai.yaml 정책 없음, 의도된 제외)`);
     const absent = c.items.filter(i => i.state === "absent").length;
     if (absent > 0) add("WARN", "skills", `${runtime} Core 미노출 ${absent}개 → ${BIN} install --apply`);
   }
@@ -532,7 +551,7 @@ function collectStatus(repoRoot, env) {
     core_links: Object.fromEntries(["claude", "codex"].map(runtime => {
       const tally = { this: 0, other: 0, absent: 0, other_state: 0 };
       for (const item of core[runtime].items) {
-        if (item.state === "missing-source") continue;
+        if (item.state === "missing-source" || item.state === "policy-gap") continue;
         const info = linkRelation(path.join(roots[runtime], item.id), repoRoot);
         if (info.relation === "this") tally.this += 1;
         else if (info.relation === "other") tally.other += 1;
@@ -577,11 +596,12 @@ function collectStatus(repoRoot, env) {
 
 function safeConfig(env) {
   try {
-    const stored = readConfigFile(configFilePath(env));
+    const warnings = [];
+    const stored = readConfigFile(configFilePath(env), warnings);
     const eff = effectiveConfig(stored);
     const values = {};
     for (const [k, v] of Object.entries(eff)) values[k] = v.value;
-    return { values, sources: Object.fromEntries(Object.entries(eff).map(([k, v]) => [k, v.source])) };
+    return { values, warnings, sources: Object.fromEntries(Object.entries(eff).map(([k, v]) => [k, v.source])) };
   } catch (error) {
     if (error instanceof ConfigError) return { error: error.message, values: {} };
     throw error;
@@ -969,8 +989,10 @@ function cmdConfig(env, args, { out, err }) {
     return 2;
   };
   let stored;
+  const warnings = [];
   try {
-    stored = readConfigFile(file);
+    stored = readConfigFile(file, warnings);
+    for (const w of warnings) err(`warn: ${w}`);
   } catch (error) {
     if (error instanceof ConfigError) {
       err(`config error: ${error.message} (${file})`);

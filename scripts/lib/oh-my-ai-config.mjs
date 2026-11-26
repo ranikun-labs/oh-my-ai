@@ -28,7 +28,10 @@ export function configFilePath(env = process.env) {
 }
 
 // 파일을 읽어 검증한다. 없으면 빈 객체. 깨졌으면 ConfigError (덮어쓰지 않는다).
-export function readConfigFile(file) {
+// warnings 배열을 넘기면 무시한 항목(Core에서 빠진 context.preload id)을 적어 준다.
+// Core 목록이 바뀌어 저장된 id가 stale이 돼도 ConfigError로 취급하지 않는다: 그러면 config 가 실패하고
+// hook 은 기본값(context.inject=on)으로 돌아가 사용자가 꺼 둔 주입이 다시 켜진다.
+export function readConfigFile(file, warnings = null) {
   let text;
   try {
     text = fs.readFileSync(file, "utf8");
@@ -42,10 +45,10 @@ export function readConfigFile(file) {
   } catch {
     throw new ConfigError("config.json is not valid JSON (file left untouched)");
   }
-  return validateStored(raw);
+  return validateStored(raw, warnings);
 }
 
-function validateStored(raw) {
+function validateStored(raw, warnings) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new ConfigError("config.json must be an object");
   for (const section of Object.keys(raw)) {
     if (!["update", "context"].includes(section)) throw new ConfigError(`unknown config section: ${section}`);
@@ -60,7 +63,18 @@ function validateStored(raw) {
     for (const name of Object.keys(body)) {
       const key = `${section}.${name}`;
       if (!CONFIG_KEYS[key]) throw new ConfigError(`unknown config key: ${key}`);
-      stored[key] = validateValue(key, body[name]);
+      let value = body[name];
+      if (key === "context.preload" && Array.isArray(value)) {
+        const known = knownCoreIds();
+        const kept = value.filter(id => typeof id !== "string" || known.has(id));
+        for (const id of value) {
+          if (typeof id === "string" && !known.has(id)) {
+            warnings?.push(`context.preload: "${id}" is no longer a Core skill; ignored (fix with: config set context.preload <ids>)`);
+          }
+        }
+        value = kept;
+      }
+      stored[key] = validateValue(key, value);
     }
   }
   return stored;

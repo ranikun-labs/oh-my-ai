@@ -155,8 +155,9 @@ Tier 는 `scripts/lib/skill-discovery.mjs` 가 Skill마다 계산한다. 우선�
 2. frontmatter `metadata.tier: core | library`
 3. `TRANSITIONAL_CORE_IDS` (과도기 목록, 같은 파일). Skill을 그룹으로 옮기면 이 목록에서 뺀다.
 
-`ohmyai install --apply` 는 shared 설치 뒤 Core 전부를 claude/codex skill 디렉터리에 심볼릭 링크한다.
-이미 있는 사용자 파일·디렉터리·옛 링크는 덮어쓰지 않고 `FAIL` 로 보고하며 `PARTIAL` 요약과 exit 1 이 된다.
+`ohmyai install --apply` 는 shared 설치 뒤 Core 를 claude/codex skill 디렉터리에 심볼릭 링크한다.
+예외: 명시 전용(`disable-model-invocation: true`) Skill 은 `agents/openai.yaml` 에 `allow_implicit_invocation: false` 가 있을 때만 Codex 루트에 링크한다. 없으면 `skip:` 사유를 출력하고 링크하지 않는다 (Codex 암묵 호출 방지). 정책 파일을 추가한 뒤 다시 install 하면 링크된다.
+이미 있는 사용자 파일·디렉터리·옛 링크는 덮어쓰지 않고 `FAIL` 로 보고하며 `PARTIAL` 요약과 exit 1 이 된다. Skill 루트가 옛 디렉터리 링크이거나 디렉터리가 아니면 그 런타임 전체가 `FAIL` 이다.
 Library 는 기본으로 링크하지 않고 `--with <id>` 로만 추가한다. `ohmyai update --apply` 는 fast-forward 뒤 render → Core 링크 → doctor 를 같은 방식으로 판정한다.
 `batch-report` 처럼 소스가 없는 Core id 는 `missing-source` 로 표시되고 링크되지 않는다.
 

@@ -20,6 +20,7 @@ CORE_FAIL=0
 CORE_LINKED=0
 CORE_READY=0
 CORE_PLANNED=0
+CORE_SKIPPED=0
 
 usage() {
   cat <<'EOF'
@@ -674,12 +675,30 @@ install_shared() {
 core_root_check() {
   label="$1"
   root="$2"
+  # 루트가 막히면 그 런타임의 Core 링크는 전부 건너뛰므로, 실패 1건으로 집계해 exit 1 이 되게 한다.
   if is_legacy_dir_link "$root"; then
     say "FAIL: $label skills root is a legacy directory link ($root -> $(readlink "$root")); remove that link yourself, then re-run install"
+    CORE_FAIL=$((CORE_FAIL + 1))
     return 1
   fi
   if [ -e "$root" ] && [ ! -d "$root" ]; then
     say "FAIL: $label skills root is not a directory ($root)"
+    CORE_FAIL=$((CORE_FAIL + 1))
+    return 1
+  fi
+  return 0
+}
+
+# Codex 는 명시 전용(disable-model-invocation: true) Skill 을 암묵 호출할 수 있다.
+# 그래서 Skill 디렉터리에 agents/openai.yaml 의 allow_implicit_invocation: false 가 없으면 Codex 루트 링크를 건너뛴다.
+# 반환 0 = 정책 공백. 읽기만 한다. (scripts/lib/oh-my-ai-facade.mjs codexPolicyGap 과 같은 규칙)
+codex_policy_gap() {
+  skill_dir="$1"
+  if ! awk 'NR>1 && /^---[ \t]*$/ {exit} NR>1 && /^disable-model-invocation:[ \t]*true[ \t]*$/ {found=1} END {exit found ? 0 : 1}' "$skill_dir/SKILL.md" 2>/dev/null; then
+    return 1
+  fi
+  if [ -f "$skill_dir/agents/openai.yaml" ] \
+    && grep -Eq '^[[:space:]]+allow_implicit_invocation:[[:space:]]*false[[:space:]]*(#.*)?$' "$skill_dir/agents/openai.yaml"; then
     return 1
   fi
   return 0
@@ -697,6 +716,14 @@ core_link_one() {
     return 0
   fi
   state="$(skill_link_state "$dest" "$skill_id" "$source_dir")"
+  if [ "$runtime" = "Codex" ] && codex_policy_gap "$source_dir"; then
+    if [ "$state" = "absent" ]; then
+      CORE_SKIPPED=$((CORE_SKIPPED + 1))
+      say "skip: Codex $skill_id not linked (disable-model-invocation: true without agents/openai.yaml allow_implicit_invocation: false; Codex would invoke it implicitly)"
+      return 0
+    fi
+    say "warn: Codex $skill_id is linked ($state) without an explicit-only policy file; remove that link yourself if implicit Codex use is not wanted"
+  fi
   case "$state" in
     ready)
       CORE_READY=$((CORE_READY + 1))
@@ -748,7 +775,7 @@ install_core_skills() {
   done <<IDS
 $ids
 IDS
-  say "CORE-LINKS: ids=$count linked=$CORE_LINKED ready=$CORE_READY planned=$CORE_PLANNED fail=$CORE_FAIL"
+  say "CORE-LINKS: ids=$count linked=$CORE_LINKED ready=$CORE_READY planned=$CORE_PLANNED skipped=$CORE_SKIPPED fail=$CORE_FAIL"
   if [ "$CORE_FAIL" -gt 0 ]; then
     return 1
   fi

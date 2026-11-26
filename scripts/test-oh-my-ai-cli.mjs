@@ -14,7 +14,9 @@ import { coreIdsOf, discoverSkills } from "./lib/skill-discovery.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const CORE_SKILLS = coreIdsOf(discoverSkills(repoRoot)).map(entry => entry.id);
-const root = fs.mkdtempSync(path.join(os.tmpdir(), "ohmyai-cli-test-"));
+// realpath 로 정규화: macOS 는 os.tmpdir() 이 /var/... 이고 실제 경로는 /private/var/... 라서, 테스트 기대값(논리 경로)과
+// CLI 출력(realpath 기반 REPO)이 어긋난다. 루트를 실경로로 고정해 두 쪽이 같은 문자열을 쓰게 한다.
+const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ohmyai-cli-test-")));
 const results = [];
 
 const GIT_ID = ["-c", "user.name=ohmyai-test", "-c", "user.email=ohmyai-test@example.invalid"];
@@ -561,7 +563,13 @@ test("install --apply: links every Core id into both runtimes; library only with
   assert.match(r.stdout, /CORE-LINKS: ids=\d+ linked=\d+/);
   for (const s of core) {
     assertLinkedTo(path.join(sb.claude, "skills", s.name), s.dir);
-    assertLinkedTo(path.join(sb.agents, "skills", s.name), s.dir);
+    if (codexPolicyGapOf(s.dir)) {
+      // Codex 정책 공백: 명시 전용 Skill 을 암묵 호출 가능하게 링크하지 않는다 (skip 사유 출력).
+      assert.equal(fs.existsSync(path.join(sb.agents, "skills", s.name)), false, `${s.name} must not be linked into Codex`);
+      assert.match(r.stdout, new RegExp(`skip: Codex ${s.name} not linked`));
+    } else {
+      assertLinkedTo(path.join(sb.agents, "skills", s.name), s.dir);
+    }
   }
   assert.equal(fs.existsSync(path.join(sb.claude, "skills", lib.name)), false, "library linked by default");
 
@@ -582,9 +590,90 @@ test("install --apply: user directory with the same name is preserved; PARTIAL a
   assert.match(r.stderr, /senior/);
   assert.doesNotMatch(r.stdout, /install: OK/);
   assert.equal(fs.readFileSync(path.join(userDir, "mine.md"), "utf8"), "user\n");
-  assert.ok(fs.lstatSync(path.join(sb.agents, "skills", "senior")).isSymbolicLink(), "other runtime still linked");
-  const other = coreOf(sb.clone).find(s => s.name !== "senior");
+  const other = coreOf(sb.clone).find(s => s.name !== "senior" && !codexPolicyGapOf(s.dir));
+  assertLinkedTo(path.join(sb.agents, "skills", other.name), other.dir);
   assertLinkedTo(path.join(sb.claude, "skills", other.name), other.dir);
+});
+
+// Codex 정책 공백(setup.sh codex_policy_gap / facade codexPolicyGap 과 같은 규칙): 명시 전용인데 openai.yaml 정책이 없다.
+function codexPolicyGapOf(skillDir) {
+  const text = fs.readFileSync(path.join(skillDir, "SKILL.md"), "utf8");
+  const frontmatter = text.split(/^---\s*$/m)[1] ?? "";
+  if (!/^disable-model-invocation:\s*true\s*$/m.test(frontmatter)) return false;
+  const yamlPath = path.join(skillDir, "agents", "openai.yaml");
+  const yaml = fs.existsSync(yamlPath) ? fs.readFileSync(yamlPath, "utf8") : "";
+  return !/^[ \t]+allow_implicit_invocation:[ \t]*false[ \t]*(#.*)?$/m.test(yaml);
+}
+
+test("install --apply: explicit-only Skill gets a Codex link only when the policy file says allow_implicit_invocation: false", () => {
+  const sb = makeFixture("install-codex-policy");
+  const gap = coreOf(sb.clone).find(s => codexPolicyGapOf(s.dir));
+  assert.ok(gap, "fixture needs an explicit-only Core skill without a policy file");
+  const r = cli(sb, ["install", "--apply"]);
+  assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
+  assert.match(r.stdout, /skip: Codex /);
+  assert.match(r.stdout, /skipped=[1-9]/);
+  assert.equal(fs.existsSync(path.join(sb.agents, "skills", gap.name)), false);
+  const s = JSON.parse(cli(sb, ["status", "--json"]).stdout);
+  const item = s.core_skills.codex.items.find(i => i.id === gap.name);
+  assert.equal(item.state, "policy-gap");
+  assert.equal(s.core_skills.codex.policy_gap >= 1, true);
+
+  // 정책 파일이 생기면 (allow_implicit_invocation: false) 그때 Codex 링크를 만든다.
+  fs.mkdirSync(path.join(gap.dir, "agents"), { recursive: true });
+  fs.writeFileSync(path.join(gap.dir, "agents", "openai.yaml"), "policy:\n  allow_implicit_invocation: false\n");
+  const again = cli(sb, ["install", "--apply"]);
+  assert.equal(again.status, 0, `${again.stdout}\n${again.stderr}`);
+  assertLinkedTo(path.join(sb.agents, "skills", gap.name), gap.dir);
+});
+
+test("install --apply: a legacy directory link or a non-directory skills root is FAIL, PARTIAL, exit 1 (other runtime still linked)", () => {
+  const legacy = makeFixture("install-legacy-root");
+  fs.mkdirSync(legacy.claude, { recursive: true });
+  fs.symlinkSync(path.join(legacy.clone, "skills"), path.join(legacy.claude, "skills"), "dir");
+  const a = cli(legacy, ["install", "--apply"]);
+  assert.equal(a.status, 1, `${a.stdout}\n${a.stderr}`);
+  assert.match(a.stderr, /PARTIAL/);
+  assert.match(a.stderr, /legacy directory link/);
+  assert.match(a.stdout, /CORE-LINKS: .* fail=[1-9]/);
+  assert.ok(fs.lstatSync(path.join(legacy.claude, "skills")).isSymbolicLink(), "legacy link left untouched");
+  const core = coreOf(legacy.clone).find(s => !codexPolicyGapOf(s.dir));
+  assertLinkedTo(path.join(legacy.agents, "skills", core.name), core.dir);
+
+  const file = makeFixture("install-file-root");
+  fs.mkdirSync(file.agents, { recursive: true });
+  fs.writeFileSync(path.join(file.agents, "skills"), "not a dir\n");
+  const b = cli(file, ["install", "--apply"]);
+  assert.equal(b.status, 1, `${b.stdout}\n${b.stderr}`);
+  assert.match(b.stderr, /PARTIAL/);
+  assert.match(b.stdout + b.stderr, /skills root is not a directory/);
+});
+
+test("config: a stale context.preload id warns, keeps list/get working, and does not turn context.inject back on", () => {
+  const sb = makeFixture("config-stale");
+  fs.mkdirSync(path.join(sb.cfg, "oh-my-ai"), { recursive: true });
+  const keep = CORE_SKILLS[0];
+  fs.writeFileSync(path.join(sb.cfg, "oh-my-ai", "config.json"), JSON.stringify({ context: { inject: "off", preload: ["retired-skill-xyz", keep] } }));
+  const list = cli(sb, ["config", "list", "--json"]);
+  assert.equal(list.status, 0, `${list.stdout}\n${list.stderr}`);
+  const v = JSON.parse(list.stdout);
+  assert.equal(v["context.inject"], "off");
+  assert.deepEqual(v["context.preload"], [keep]);
+  assert.match(list.stderr, /retired-skill-xyz.*no longer a Core skill/);
+  assert.equal(cli(sb, ["config", "get", "context.inject"]).stdout.trim(), '"off"');
+
+  // hook 이 읽는 설정 로더도 inject=off 를 유지해야 한다 (예전: ConfigError → 기본값 on).
+  const probe = spawnSync(process.execPath, ["--input-type=module", "-e",
+    `import { loadContextConfig } from ${JSON.stringify(path.join(sb.clone, "scripts", "lib", "oh-my-ai-context.mjs"))};
+     process.stdout.write(JSON.stringify(loadContextConfig(process.env)));`], { env: envFor(sb), encoding: "utf8" });
+  assert.equal(probe.status, 0, probe.stderr);
+  const ctx = JSON.parse(probe.stdout);
+  assert.equal(ctx.ok, true);
+  assert.equal(ctx.inject, "off");
+
+  const set = cli(sb, ["config", "set", "context.preload", keep]);
+  assert.equal(set.status, 0, `${set.stdout}\n${set.stderr}`);
+  assert.equal(cli(sb, ["config", "get", "context.inject"]).stdout.trim(), '"off"');
 });
 
 test("install dry-run: prints exact planned links and creates nothing", () => {
