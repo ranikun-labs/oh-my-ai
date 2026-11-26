@@ -316,5 +316,100 @@
       "worker I counts as 1 input with the note 중복 3회 수신, 내용 동일",
       "conservation still holds: the consolidated output explains 1 input for worker I"
     ]
+  },
+  {
+    "id": "BR24",
+    "category": "context-compaction",
+    "prompt": "/batch-report checkpoint 컨텍스트 압축 후 재개. ledger에는 워커 J(task T-7, attempt_id a1)의 task_status=PASS, evidence=SHA 고정, 테스트 118 passed만 남아 있고 findings·blockers·owner_requests·정정 기록 필드는 ledger 항목에 없음. 재개 후 워커 J의 a1 보고가 다시 도착했고 findings 1건(설정 키 누락 경고)과 owner_requests 1건이 포함됨",
+    "candidates": [
+      "batch-report"
+    ],
+    "expected_action": "partial_ledger_unknown_not_deduped",
+    "criteria": [
+      "the arrival is not deduplicated against the partial ledger entry, even though attempt_id, task_status and evidence match",
+      "the ledger entry's missing fields (findings, blockers, owner_requests, corrections) are shown as UNKNOWN(복구 불가 필드: ...), not assumed equal to the arrival",
+      "the arrival is kept as a separate input and not merged into the ledger item",
+      "caller asked to resupply the full envelope or Main asked to re-confirm; nothing silently dropped",
+      "observation scope for the resumed batch is stated as partial or unknown, not complete"
+    ]
+  },
+  {
+    "id": "BR25",
+    "category": "duplicate-arrival",
+    "prompt": "/batch-report 워커 K 보고 2건. task는 같은 T-9. 첫 보고 attempt_id=a1, 두 번째 보고 attempt_id=a2 (새 시도, 재실행). 나머지 필드(claim, evidence SHA, 테스트 118 passed, task_status=PASS, findings·blockers·owner_requests 없음)는 전부 동일",
+    "candidates": [
+      "batch-report"
+    ],
+    "expected_action": "new_attempt_kept_both_latest_marked",
+    "criteria": [
+      "same task with a different attempt_id is a new attempt, not a duplicate, even though every other field matches",
+      "worker K counts as 2 inputs, not 1",
+      "the later attempt a2 is marked 최신 시도 and the earlier a1 is kept, marked 대체됨, not deleted",
+      "identical content across attempts does not trigger the 중복 N회 수신 note"
+    ]
+  },
+  {
+    "id": "BR26",
+    "category": "duplicate-arrival",
+    "prompt": "/batch-report 워커 L이 attempt_id=a1로 보고 2건. 첫 보고 task_status=BLOCKED, findings 없음. 재개 후 두 번째 보고 task_status=PASS(근거: 고정 SHA와 테스트 120 passed), findings 1건 추가(경고: 설정 키 누락은 해결됨, 재확인 필요)",
+    "candidates": [
+      "batch-report"
+    ],
+    "expected_action": "resumed_attempt_correction_kept_both",
+    "criteria": [
+      "same attempt_id with changed task_status and a new finding is an update or correction, not a duplicate",
+      "both reports kept; the later one marked 갱신 or 정정 with the differing fields (task_status BLOCKED vs PASS, the new finding) shown side by side",
+      "the later PASS carries evidence refs (고정 SHA, 테스트 120 passed) so it is not a claim-only PASS, but it is labeled 에이전트 주장 unless Main 직접 확인 confirmed it",
+      "the earlier BLOCKED report is not deleted or merged into the later one",
+      "the new finding is not dropped"
+    ]
+  },
+  {
+    "id": "BR27",
+    "category": "duplicate-arrival",
+    "prompt": "/batch-report 워커 M 보고 2건. attempt_id가 없어 파생 규칙 적용(agent+task+evidence HEAD, 같은 HEAD). 첫 보고 claim='테스트 통과', task_status=PASS. 두 번째 보고 claim='테스트 통과, 린트 1건 경고', task_status=PASS, 나머지 필드 동일",
+    "candidates": [
+      "batch-report"
+    ],
+    "expected_action": "derived_attempt_same_id_kept_distinct_not_authoritative",
+    "criteria": [
+      "derived attempt_id is recorded as 'derived (not authoritative)' in the source line of both inputs",
+      "even though the derived attempt_id matches and the claim differs, the two reports are kept as separate inputs (no 갱신/정정 link between them)",
+      "both reports are preserved with their own claim and 린트 경고; nothing is merged or dropped",
+      "neither report is used to mark the batch or the task complete; latest attempt is UNKNOWN because no dispatch evidence exists",
+      "the output does not treat claim-only PASS as evidence-backed PASS"
+    ]
+  },
+  {
+    "id": "BR28",
+    "category": "duplicate-arrival",
+    "prompt": "/batch-report 워커 N 보고 2건. attempt_id가 없어 파생 규칙 적용(agent+task+evidence HEAD, 같은 HEAD). 두 보고 모든 필드(claim, evidence SHA, 테스트 118 passed, task_status=PASS, findings·blockers·owner_requests 없음)가 완전히 동일. dispatch id·agent run id·dispatch 시각 없음",
+    "candidates": [
+      "batch-report"
+    ],
+    "expected_action": "derived_identical_content_not_collapsed_latest_unknown_not_complete",
+    "criteria": [
+      "the two identical-content reports are NOT collapsed as 중복 N회 수신; both are counted as separate inputs",
+      "source line of both inputs states 'attempt_id: derived (not authoritative)'",
+      "latest attempt is stated as UNKNOWN, since no caller-supplied attempt/dispatch id, agent run id, or dispatch timestamp exists; no ordering-based guess",
+      "observation scope is not 'complete' and the batch is not marked complete because the latest attempt cannot be identified",
+      "PASS is not stated as an evidence-backed completion of the task on the basis of derived ids"
+    ]
+  },
+  {
+    "id": "BR29",
+    "category": "context-compaction",
+    "prompt": "/batch-report checkpoint 컨텍스트 압축 후 재개. ledger 항목 워커 P(task T-11)에서 필수 envelope 필드 중 evidence(SHA·CI 링크)가 복구되지 않음. 나머지 필드(task_status=PASS, attempt_id=a3, findings·blockers·owner_requests 없음)는 ledger에 남아 있고, 묶음 입력은 1건이며 호출자는 전체 입력을 넘겼다고 확인함",
+    "candidates": [
+      "batch-report"
+    ],
+    "expected_action": "unrecoverable_required_field_blocks_complete_and_pass",
+    "criteria": [
+      "observation scope is stated as partial or unknown, not complete, even though the caller says all inputs were supplied",
+      "overall status is not PASS; the task_status=PASS from the ledger is not promoted to a batch PASS",
+      "the unrecoverable field is shown as UNKNOWN(복구 불가 필드: evidence), not filled from memory or assumed present",
+      "the ledger values that were recovered (task_status, attempt_id, empty findings) are kept and shown with their source marked accordingly",
+      "Main is asked to re-confirm or the caller is asked to resupply the evidence envelope; nothing silently dropped"
+    ]
   }
 ]

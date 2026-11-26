@@ -1,21 +1,21 @@
 # batch-report와 dev-main-flow 구성 계약
 
-이 문서는 `skills/batch-report/SKILL.md`와 `skills/dev-main-flow/SKILL.md`가 병렬 에이전트 보고 타이밍을 어떻게 나눠 갖는지 정한다. #215에서 작성한 구성 계획을 보존한다. #211 병합 후 후속 소비 경로는 `skills/adaptive-goal-closure/SKILL.md`의 Parallel result reporting 절에서 소유하고 `skills/dev-main-flow/SKILL.md`는 그 결과를 참조한다. 정적 검사와 실제 Runtime 적용은 별도 증거다.
+이 문서는 batch-report Core와 F4 호출자 계약의 병렬 에이전트 보고 타이밍 소유 경계를 설명한다. #215에서 작성한 구성 계획을 보존한다. #211 병합 후 후속 소비 경로는 `skills/adaptive-goal-closure/SKILL.md`의 Parallel result reporting 절에서 소유하고 `skills/dev-main-flow/SKILL.md`는 그 결과를 참조한다. 정적 검사와 실제 Runtime 적용은 별도 증거다.
 
 ## 관계
 
-- dev-main-flow는 batch-report를 **참조로만** 소비한다. 여러 에이전트 결과를 한 보고로 묶을 때 batch-report를 호출하고, 입력 envelope과 집계 규칙은 batch-report가 소유한다.
+- 명시 승인된 병렬 F4의 Main/Lead는 `skills/adaptive-goal-closure/SKILL.md`의 단일 소비 경로로 batch-report를 적용한다. dev-main-flow는 F4의 종합 결과를 참조하며 중복 호출하지 않는다. 입력 envelope·중복 및 정정·복구 규칙은 batch-report Core가 소유한다. F4 호출자는 기존 dispatch/AttemptOutcome 근거로 예상 시도와 반환 결과를 대조하고 기존 Checkpoint에 복구 근거를 보존한다.
 - batch-report는 dev-main-flow를 참조하지 않는다(`skills/batch-report/SKILL.md` §9, 역방향 의존 금지). 따라서 batch-report 본문은 호출자 고유 항목의 목록을 복제하지 않고, 이 문서의 정본 표를 기준으로 호출자 계약을 가리킨다.
 
 ## 정본 표 (보고 타이밍 소유 경계, 단일 원본)
 
-이 표가 "누가 무엇을 소유하나"의 유일한 정본이다. `skills/batch-report/SKILL.md` §1과 `skills/dev-main-flow/SKILL.md`는 이 표를 복제하지 않고 "호출자 계약"으로 참조한다.
+이 표가 "누가 무엇을 소유하나"의 유일한 정본이다. `skills/batch-report/SKILL.md` §1과 F4의 Parallel result reporting 절은 이 표를 호출자 계약으로 참조한다. dev-main-flow는 F4의 결과를 소비한다.
 
 | 항목 | 정본 owner | batch-report에서의 처리 | 근거 |
 |---|---|---|---|
 | 진행 신호 `[묶음] n/m 완료 (작업명)` 한 줄, 에이전트별 긴 보고 억제 | batch-report `start` | 소유, 본문에 기술 | SKILL §1 |
 | 입력 envelope, 결과별 추출, 집계(최악 상태·출처·충돌·보존) | batch-report | 소유, 본문에 기술 | SKILL §2–§4 |
-| 긴급 실패, 보안 문제, Owner Gate의 즉시 보고 | 호출자 계약 | 참조만, 묶음 종료까지 지연 금지 | SKILL §1 |
+| 긴급 실패, 독립 Reviewer BLOCKER/MAJOR Finding, 보안 문제, Owner Gate의 즉시 보고 | 호출자 계약 | 참조만, 묶음 종료까지 지연 금지 | SKILL §1 |
 | 검증 전제를 뒤집는 발견, 비용·타인 영향(예: 공유 Runner 중지로 팀원 CI 대기), 승인 범위 이탈·hook 우회 시도 | 호출자 계약 | 참조만, 묶음 종료까지 지연 금지 | SKILL §1·§4 (운영 사례 반영, 호출자 목록에 추가) |
 | blocker, handoff, recovery, AttemptOutcome, 필수 checkpoint의 즉시 갱신 | dev-main-flow F4 계약 | 참조만 | PR #211 `skills/dev-main-flow/SKILL.md` 77행 |
 | PR 본문·Jira·F1 요약 같은 일반 갱신의 F4 fan-in 일괄 반영 | dev-main-flow F4 | 참조만 | PR #211 77행 |
@@ -28,7 +28,7 @@
 병렬 Worker를 띄우는 방법은 보고 타이밍이 아니다. 따라서 위 정본 표에 넣지 않고, batch-report 본문에도 넣지 않는다(SKILL §9: 호출자별 계약은 호출자 소유). 호출자(dev-main-flow 또는 실행 지시문)가 Worker 지시문에 아래를 넣는다.
 
 - **Writer 분리**: Worktree·Terraform state 하나당 Writer 1명. 같은 대상을 쓰는 작업은 한 Worker에 순서대로 묶는다. 독립 작업은 한 메시지에서 병렬로 띄운다.
-- **단일 핸드백**: 보고는 한 번만 한다. 핸드백이 delivered면 재전송하지 않는다. 강제 알림이 같은 내용으로 반복되면 응답하지 않고, 내용이 바뀔 때만 보고한다. 중복 수신은 SKILL §4a에 따라 입력 1건으로 집계된다.
+- **단일 핸드백**: 보고는 한 번만 한다. 핸드백이 delivered면 재전송하지 않는다. 강제 알림이 같은 내용으로 반복되면 응답하지 않고, 내용이 바뀔 때만 보고한다. 권위 있는 동일 Attempt의 의미 필드가 전부 같은 재수신만 SKILL §4a에 따라 입력 1건으로 집계된다. 이전 Attempt의 늦은 반환 또는 식별 근거 없는 반환을 현재 Attempt 완료로 처리하지 않는다.
 - **Main은 조율, Worker는 실행**: 조사·구현·정리는 비용이 낮은 모델의 Worker에게 맡기고, Main은 판단·승인 확인·종합만 맡는다. 모델 선택은 호출자가 정한다.
 - **대기는 Monitor 또는 스크립트로**: 결과를 기다리기만 하는 감시에는 에이전트를 띄우지 않는다.
 - **계정·자격증명**: 사용할 계정을 확인한 뒤 진행하고, 토큰·인증 값은 출력하지 않는다.
@@ -46,18 +46,18 @@
 - 선택(추천): 이 문서의 정본 표 한 곳에 소유 경계를 두고, batch-report §1은 "호출자 계약 항목, 지연 금지"로만 참조한다.
 - 숨은 비용: batch-report를 단독으로 쓰는 사용자는 이 문서를 보지 못할 수 있다. 그래서 SKILL §1에 "지연 금지" 원칙을 남겨 두어, 표를 보지 못해도 보안·Owner Gate가 묶음 뒤로 밀리지 않게 했다. 정본 표와 SKILL §1이 어긋나면 이 표를 먼저 고친다.
 
-## 선택 사항: 여러 날 세션의 묶음 로그 (호출자 소유, 기본 미채택)
+## 호출자 Checkpoint 복구와 선택적 장기 로그
 
-며칠씩 이어지는 세션에서는 묶음 상태를 파일로 남기고 싶을 수 있다. 이 기능은 Skill에 넣지 않고, 호출자가 원하면 선택적으로 쓰는 관행으로만 둔다.
+기존 F4 Checkpoint에서 필요한 전체 결과 envelope 및 dispatch 근거의 복구 가능성은 필수이며, RPL-120/RPL-95의 기존 상태 계약을 재사용한다. 별도 장기 로그 파일은 선택 사항이다. 복구 불가 필드는 UNKNOWN으로 남기고 complete/PASS를 금지한다. batch-report 자체는 상태를 저장하지 않는다.
 
 - Skill에 넣지 않는 이유: SKILL §8은 파일·상태 디렉터리·DB를 만들지 않는다고 정했다. Skill이 상태를 가지면 재현성과 독립 사용이 깨지고, 재개 상태는 RPL-120과 RPL-95가 맡는다.
 - 허용되는 형태: 호출자가 묶음 종료 때 ledger 블록과 종합 본문을 사용자 로컬 상태 디렉터리의 개인 파일로 남긴다. 저장소 안에는 두지 않고, 같은 이름의 기존 파일은 덮어쓰지 않는다.
 - Skill의 동작은 바뀌지 않는다. Skill은 이 파일을 읽거나 쓰지 않는다. 재개 시에는 호출자가 파일을 읽어 결과를 다시 넘기고, 넘기지 않은 항목은 SKILL §7에 따라 `UNKNOWN`으로 보고한다.
-- 기본값: 미채택. 필요하다고 판단한 호출자가 명시적으로 켠다.
+- 별도 장기 로그 파일의 기본값: 미채택. 필요할 때 명시적으로 켠다. 기존 필수 Checkpoint 계약은 그대로 유지한다.
 
-## 발견 사항 (Main 판단 대상)
+## 역사적 발견 사항 (#211 병합 전)
 
-- PR #211 77행 문장에는 보안 문제와 Owner Gate가 없다. 정본 표는 두 항목을 호출자 계약 항목으로 정했으므로, 아래 교체안에 명시 추가했다. #211을 병합하기 전에 Main이 이 추가를 승인해야 한다.
+- 당시 #211의 즉시 갱신 문구에 보안 문제와 Owner Gate 명시가 빠져 있어 보완을 제안했다. #211은 이미 master에 병합되었으며, 현재 소비 계약은 F4가 소유한다. 아래 제안은 역사적 근거이며 현재 별도 #211 승인 요청이 아니다.
 
 ## #211 병합 이후 소비 경로
 
