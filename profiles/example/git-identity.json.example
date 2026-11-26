@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "allow_env_overrides": false,
+  "rules": [
+    {
+      "match": "github.com/<work-org>/*",
+      "author_email": "<work-author-email>",
+      "author_name": "<work-author-name>",
+      "github_user": "<work-github-user>",
+      "ssh_host_alias": "github-work",
+      "preserve_author_emails": []
+    },
+    {
+      "match": "github.com/<personal-github-user>/*",
+      "author_email": "<personal-author-email>",
+      "author_name": "<personal-author-name>",
+      "github_user": "<personal-github-user>",
+      "ssh_host_alias": "github-personal",
+      "preserve_author_emails": []
+    }
+  ]
+}
