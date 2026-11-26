@@ -63,6 +63,23 @@ Do not create an issue by default, transition an issue to Done without proven ac
 
 For an existing Jira or Confluence record proposal or authorized update, compose [work-record-sync](../work-record-sync/SKILL.md) for its target, approval, concurrency, write, and readback gates. The reference grants no mutation authority and does not permit record creation.
 
+#### Jira closure comment draft (existing Primary only)
+
+At a meaningful state change of an approved development session, prepare a concise Jira comment draft from the existing F1, handoff-prompt, and verified checkpoint evidence. Keep implementation, review, merge, Runtime apply, deployment and acceptance distinct. Do not invent a new Jira status or field.
+
+| Situation | When to prepare the draft | Content to record |
+| --- | --- | --- |
+| STOPPED / HANDOFF | Actual interruption or handoff, including a material blocker | Completed scope and user effect; current PR/HEAD; verified tests and NOT_RUN; blocker, remaining work, responsible role, and exact resume condition. |
+| REVIEW_PENDING | Implementation and required pre-review verification finished; independent review is next | User effect and actual changed scope; PR/fixed HEAD; test/CI evidence; review scope, remaining gates and next action. |
+| DELTA_REVIEW_PENDING | Required findings corrected and affected verification finished; independent delta review is next | Findings and actual corrections; reviewed old HEAD and new HEAD; affected tests/CI; delta review scope and remaining gates. |
+| COMPLETED | Original Acceptance Criteria and required acceptance proven, including verified target branch and merge SHA when merged Source is required | User effect; PR and actual Merge SHA when applicable; verification and independent review; acceptance and Runtime/apply/deployment states; remaining separately owned work or none. |
+
+The four situation labels describe drafts only; they are not Jira workflow states. Ordinary updates are batched at F4 fan-in; important blockers, handoffs, recovery, AttemptOutcome and required checkpoints are not deferred. Reuse the latest evidence and do not repeat the same state and evidence. If the review or required CI is still pending, report that actual state; never turn an implementation or CI PASS into acceptance. Preserve an original acceptance condition for an unmerged candidate without forcing a merge.
+
+A comment draft is not publication, a Jira transition, or write approval. Read the live existing Primary and relevant existing comments before proposing publication; if unavailable, keep an explicitly unverified draft. Use [work-record-sync](../work-record-sync/SKILL.md) for the exact target, action (append comment), content approval, live permissions, concurrency and scoped readback. Reconfirm the source HEAD/evidence and current record immediately before any approved write. Do not post a duplicate, replace existing comments, or retry an ambiguous write; retain the exact proposed text and report the resulting state as unknown if readback cannot establish it. A read-only/status-only call may inspect and propose a draft, but must not publish it. A Hook or SessionEnd event grants no write authority.
+
+Done is a separate approved transition under section 5 and the owning workflow, never a side effect of a comment. Do not mark a ticket Done without its original acceptance evidence, required gates and exact transition authority. Record only the approved delta, and verify the stored comment or transition separately. No new Skill, record engine, ledger, or automatic Jira write is introduced.
+
 ### 4. Enter the existing F4 playbook without weakening its gates
 
 The full-wrapper request above is the explicit request to apply the existing adaptive-goal-closure playbook, so no second prompt is needed. Read the actual dependency through supported Skill discovery/catalog or an approved source reader; retain its source URI and revision and follow its current contract. If Native Skill discovery or Apply is unavailable but the approved source is readable and the existing authority permits manual use, label that evidence `MANUAL_READ_APPLY`; never report it as Native. Do not treat the copy in this Skill or a manually remembered procedure as proof that the dependency was loaded. If the source or required authority cannot be verified, mark only the F4 execution stage `BLOCKED/NOT_RUN`, report the actual limit and safe alternatives, and continue independent read-only review or other approved READY work.
