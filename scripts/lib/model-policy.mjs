@@ -391,13 +391,23 @@ export function loadExecutionPolicy(env = process.env) {
  * `status` is the validation/execution result (unchanged). The approval state of the file is
  * exposed separately: policy_status (ACTIVE / DRAFT*), approved_by, approved_at (null when absent).
  * Present whenever the file is readable and valid, including drafts; absent for missing/invalid files.
+ * `approved_by` is masked (first character + "***") unless `showApprover` is true.
  */
-export function describeActivePolicy(env = process.env) {
+export function maskApprover(value) {
+  if (value === null || value === undefined) return null;
+  return `${String(value).slice(0, 1)}***`;
+}
+
+export function describeActivePolicy(env = process.env, { showApprover = false } = {}) {
   const loaded = loadExecutionPolicy(env);
   const summary = { path: loaded.path, via: loaded.via, status: loaded.status, errors: loaded.errors, advisory: ["cost_limits"] };
   const file = loaded.policy ?? (loaded.status === "POLICY_NOT_APPROVED" ? readPolicyFile(loaded.path).policy : null);
   if (!file) return summary;
-  const approval = { policy_status: file.status, approved_by: file.approved_by ?? null, approved_at: file.approved_at ?? null };
+  const approval = {
+    policy_status: file.status,
+    approved_by: showApprover ? (file.approved_by ?? null) : maskApprover(file.approved_by),
+    approved_at: file.approved_at ?? null,
+  };
   if (!loaded.policy) return { ...summary, ...approval };
   const policy = loaded.policy;
   const archive = policy.previous_version === null ? null : previousCopyPath(loaded.path, policy.previous_version);

@@ -18,7 +18,9 @@ import {
   resolveModelSelection, rollbackPolicy,
 } from "./lib/model-policy.mjs";
 
-const USAGE = "usage: model-policy.mjs status | validate [FILE] [--runtime-capabilities F] | check --role R --model M --effort E --mode X [--provider P] [--runtime-capabilities F] | diff CANDIDATE | apply CANDIDATE | rollback";
+const USAGE = "usage: model-policy.mjs status [--show-approver] | validate [FILE] [--runtime-capabilities F] | check --role R --model M --effort E --mode X [--provider P] [--runtime-capabilities F] | diff CANDIDATE | apply CANDIDATE | rollback";
+
+const BOOLEAN_FLAGS = new Set(["show-approver"]);
 
 function parseArgs(argv) {
   const positional = [];
@@ -26,6 +28,7 @@ function parseArgs(argv) {
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg.startsWith("--")) {
+      if (BOOLEAN_FLAGS.has(arg.slice(2))) { flags[arg.slice(2)] = true; continue; }
       const value = argv[i + 1];
       if (value === undefined || value.startsWith("--")) return null;
       flags[arg.slice(2)] = value;
@@ -104,7 +107,7 @@ function main(argv, env = process.env) {
   if (!command || parsed === null) { process.stderr.write(USAGE + "\n"); return 2; }
   const { positional, flags } = parsed;
   if (command === "status") {
-    const summary = describeActivePolicy(env);
+    const summary = describeActivePolicy(env, { showApprover: flags["show-approver"] === true });
     print(summary);
     return summary.status === "VALID" ? 0 : 1;
   }

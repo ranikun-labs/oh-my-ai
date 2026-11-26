@@ -288,9 +288,19 @@ check("FX-MP-013b describeActivePolicy exposes approval state: ACTIVE fields, DR
   const activeSummary = describeActivePolicy(active.env);
   assert.equal(activeSummary.status, "VALID");
   assert.equal(activeSummary.policy_status, "ACTIVE");
-  assert.equal(activeSummary.approved_by, "owner-fixture");
+  assert.equal(activeSummary.approved_by, "o***", "approver masked by default");
   assert.equal(activeSummary.approved_at, "2026-11-25T00:00:00Z");
   assert.equal(activeSummary.policy_version, "v2");
+  const fullSummary = describeActivePolicy(active.env, { showApprover: true });
+  assert.equal(fullSummary.approved_by, "owner-fixture");
+  assert.equal(fullSummary.approved_at, "2026-11-25T00:00:00Z");
+  const cliActive = spawnSync(process.execPath, [CLI, "status"], { encoding: "utf8", env: { PATH: process.env.PATH, ...active.env } });
+  assert.equal(JSON.parse(cliActive.stdout).approved_by, "o***");
+  assert.equal(JSON.parse(cliActive.stdout).approved_at, "2026-11-25T00:00:00Z");
+  assert.ok(!cliActive.stdout.includes("owner-fixture"), "full approver must not leak without --show-approver");
+  const cliFull = spawnSync(process.execPath, [CLI, "status", "--show-approver"], { encoding: "utf8", env: { PATH: process.env.PATH, ...active.env } });
+  assert.equal(JSON.parse(cliFull.stdout).approved_by, "owner-fixture");
+  assert.equal(cliFull.status, 0);
 
   const draft = isolatedEnv("describe-approval-draft");
   const draftPolicy = basePolicy({ status: "DRAFT", policy_version: "v3", previous_version: "v2" });

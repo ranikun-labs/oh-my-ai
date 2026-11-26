@@ -175,10 +175,10 @@ The resolver never reads evaluation data, and nothing calls `apply` or `rollback
 | --- | --- |
 | `status` | Validation / execution result, unchanged: `VALID`, `POLICY_NOT_APPROVED`, `POLICY_MISSING`, `POLICY_INVALID`. |
 | `policy_status` | The file's own `status`: `ACTIVE`, or `DRAFT*`. Present when the file is readable and valid. |
-| `approved_by` | Owner identity string from the file, or `null` when absent (always `null` for drafts). |
+| `approved_by` | Owner identity, **masked by default** as first character + `***` (e.g. `o***`). Full value only with `describeActivePolicy(env, { showApprover: true })` or `model-policy.mjs status --show-approver`. `null` when absent (always `null` for drafts). |
 | `approved_at` | ISO-8601 approval timestamp from the file, or `null` when absent. |
 
-- `ACTIVE` file: `status: VALID`, `policy_status: ACTIVE`, approval fields filled, plus the policy summary (`policy_version`, `enabled_models`, `roles`, ...).
+- `ACTIVE` file: `status: VALID`, `policy_status: ACTIVE`, `approved_by` masked (unless `--show-approver`), `approved_at` filled, plus the policy summary (`policy_version`, `enabled_models`, `roles`, ...).
 - `DRAFT*` file: `status: POLICY_NOT_APPROVED`, `policy_status: DRAFT*`, both approval fields `null`. No policy body (models, roles, `evaluation_ref`) is printed.
 - Missing or invalid file: the fields above are not added. Output is unchanged from before.
 - No secret values are exposed. The output never includes the file's cost_limits contents, substitutions, or evaluation data beyond the existing summary.
