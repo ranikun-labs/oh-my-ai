@@ -1,6 +1,6 @@
 # batch-report와 dev-main-flow 구성 계약
 
-이 문서는 `skills/batch-report/SKILL.md`와 `skills/dev-main-flow/SKILL.md`가 병렬 에이전트 보고 타이밍을 어떻게 나눠 갖는지 정한다. 이 브랜치는 dev-main-flow를 수정하지 않는다. PR #211(`docs/RPL-113-jira-closure-comments-20261124`, head `2ce962a`)이 병합된 뒤 아래 한 줄을 적용한다.
+이 문서는 `skills/batch-report/SKILL.md`와 `skills/dev-main-flow/SKILL.md`가 병렬 에이전트 보고 타이밍을 어떻게 나눠 갖는지 정한다. #215에서 작성한 구성 계획을 보존한다. #211 병합 후 후속 소비 경로는 `skills/adaptive-goal-closure/SKILL.md`의 Parallel result reporting 절에서 소유하고 `skills/dev-main-flow/SKILL.md`는 그 결과를 참조한다. 정적 검사와 실제 Runtime 적용은 별도 증거다.
 
 ## 관계
 
@@ -59,9 +59,9 @@
 
 - PR #211 77행 문장에는 보안 문제와 Owner Gate가 없다. 정본 표는 두 항목을 호출자 계약 항목으로 정했으므로, 아래 교체안에 명시 추가했다. #211을 병합하기 전에 Main이 이 추가를 승인해야 한다.
 
-## #211 문장 교체안 (#211 병합 후 적용)
+## #211 병합 이후 소비 경로
 
-PR #211의 `skills/dev-main-flow/SKILL.md` 77행 문장을 아래처럼 바꾼다. 이 브랜치에서는 적용하지 않는다.
+아래는 #215에서 제안한 역사적 교체안이다. 후속 구현은 직접 F4 호출에도 적용되도록 F4의 단일 소비 계약을 참조하며, #211의 즉시 갱신 경계와 검증 관문은 유지한다.
 
 ```diff
 - Ordinary updates are batched at F4 fan-in; important blockers, handoffs, recovery, AttemptOutcome and required checkpoints are not deferred.
