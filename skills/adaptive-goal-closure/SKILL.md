@@ -33,16 +33,32 @@ Prefer a short request containing `Workstream / Objective / Primary Jira / Repo 
 4. Mark independent tasks **READY**, tasks waiting for approval/ownership/runner **BLOCKED**, and read-only reviews **REVIEW_ONLY**. Isolate an uncertain lane, not the entire Workstream.
 5. Never start a second Writer for the same Primary Jira or writable worktree; never overwrite unrelated changes. Reuse valid evidence from an unchanged HEAD and run targeted Delta verification when appropriate.
 
+## Mandatory execution-role isolation
+
+These are invariants of every authorized F4 execution, including direct invocation, wrapper composition, resumed work, and Finding closure. They are not model-selection preferences.
+
+- **Main / Lead (when assigned):** decide goals and scope, coordinate and delegate, reconcile custody, check evidence/HEAD/CI identity proportionately, perform fan-in, and select the next approved READY. Do not implement source or take over Writer verification, including through another coordinating actor.
+- **Authorized Writer:** own the approved Slice end to end: implementation, final edits, test authoring, builds, self-tests, failure investigation and fixes, affected regression tests, required CI follow-through and evidence. An intermediate patch or pending required CI is not a completed Writer result. An explicitly authorized integration Writer may perform integration tests under the same custody rules.
+- **Independent Reviewer:** inspect the fixed HEAD or immutable patch and perform risk-proportionate independent verification; return Findings to the Writer. Never fix the reviewed source or represent a Writer self-check as independent review.
+
+**No Main takeover.** Neither Main nor Lead may perform Writer work merely because it is small, only one edit or test remains, a Writer finished early, delegation failed, a budget was exhausted, or the assigned model is unavailable. This applies to work not yet delegated as well as work already delegated. Resume the current Writer after verifying identity, ownership, scope and current evidence. If unavailable, use only an authorized succession or handoff after reconciling prior attempts and custody; otherwise checkpoint the affected Lane as BLOCKED and continue independent approved READY. Never silently promote a coordinating actor to Writer. Only an explicit Owner assignment to change that actor's role for a bounded scope permits Writer execution; record the assignment, verify custody and policy, and preserve any required independent Review and Merge gates. It does not authorize concurrent Writers, self-approval, or an exception for future work.
+
+**No silent model escalation.** Before dispatch, resume or succession, use the approved role-specific model, reasoning and speed/service-tier policy and verified Runtime capability. Do not replace the Writer with a more expensive Main, Reviewer, or alternative model merely to finish. If the policy cannot be satisfied or mandatory settings cannot be attested under the existing policy, stop that Lane and preserve the checkpoint. Keep requested and effective settings separate; mark unobserved values UNKNOWN. An approved role or model change is not proof of effective application.
+
+**Evidence reuse, not duplicate execution.** Main/Lead may read bounded evidence to verify the approved scope, fixed HEAD, CI status, acceptance and approval facts; they must not redo the Writer's full code investigation, build or regression suite as a substitute for valid evidence. If the evidence is stale, incomplete or conflicting, request only the relevant additional work from the Writer or independent verification from the Reviewer. Preserve risk-required verification; this is not a reason to skip required tests on changed code.
+
+**Role-compliance gate.** Check assignment, custody, policy and capability at dispatch, resume, Finding handoff and next READY. At fan-in distinguish actual actors and work performed, requested/effective settings, available usage evidence and unresolved gaps. If unauthorized takeover or escalation is observed, stop that Lane, preserve changes and evidence, reconcile ownership and route the necessary recovery/verification to the authorized actors. Do not promote a violation to a normal completed Slice; report the violation, impact, recovery and remaining gates. Unknown observation coverage is not evidence of compliance. Reuse the existing reporting and policy contracts; do not invent telemetry, a new orchestrator, or tool enforcement. This playbook is an instruction contract, not proof of Runtime-level prevention.
+
 ## Goal Closure loop (bounded)
 
 ```text
 Objective + Gate check
   -> READY selection (critical path first)
-  -> assigned Writer implements within authorized scope
-  -> Native / integration tests and evidence
+  -> assigned Writer implements, fixes, tests and follows through required CI within authorized scope
+  -> Writer returns fixed HEAD / immutable patch and evidence
   -> separate Reviewer on a fixed HEAD or immutable patch
   -> Finding? existing Writer fixes -> targeted retest -> Delta review
-  -> Fan-in (real diff, CI, review, unresolved gates)
+  -> Fan-in (real diff, CI, review, role compliance, unresolved gates)
   -> close this approved Slice -> next READY in the SAME Objective
   -> stop, hand off or checkpoint if no safe READY remains
 ```
@@ -52,6 +68,18 @@ Objective + Gate check
 - **Review:** a Writer's self-check, a CI PASS, and a policy-compliant independent Reviewer are separate outcomes. A Reviewer does not fix source. Treat requested model/reasoning/Fast and effective attested values as separate; unknown remains `UNKNOWN`.
 - **Failure:** distinguish code defect, environment failure, missing authority, response loss, duplicate execution, stale callback, and unavailable Runner. Do not retry ambiguous remote writes automatically. Avoid the same failing investigation loop.
 - **Stop:** approved Objective completed, budget/runtime limit, unsafe work, necessary Owner decision, or all approved READY lanes blocked. Do not expand into a different Objective or create more work just to keep the loop alive. No promise of background or timed execution without actual Runtime support.
+
+## Parallel result reporting — compose the existing batch-report contract
+
+Only within an explicitly authorized F4 execution (direct or via dev-main-flow), when at least two independent agent tasks form a parallel batch, the existing Main or assigned Lead applies `skills/batch-report/SKILL.md` as a composed dependency. Read the actual source through supported discovery or an approved source reader and retain its revision; the explicit F4 invocation supplies this composition intent, not permission to dispatch or write. Do not activate it from quoted mentions, ordinary questions, or single-agent execution. Do not spawn a separate batch-report Agent.
+
+- Before dispatch of the batch, apply its `start` mode once; during the batch, use its short progress signal instead of separate long reports for ordinary hand-backs. On resume, reuse the existing batch reference and checkpoint rather than restarting an unchanged batch.
+- Preserve the expected task/agent/attempt roster from existing dispatch evidence and reconcile it with received result envelopes at each checkpoint and terminal fan-in. Distinguish planned, dispatched, returned and verified outcomes. Represent every missing expected result explicitly as `UNKNOWN` (or a proven `BLOCKED`/`NOT_RUN` outcome) with its identity and reason; never infer completion from an absent hand-back. If the expected roster is unverified or a result is missing, observation cannot be complete and the batch cannot be reported as wholly completed. Apply batch-report's existing deduplication and correction rules without replacing earlier evidence.
+- Bind every returned envelope to the existing dispatch/AttemptOutcome identity (`task`, `agent`, `attempt_id`) and its observed dispatch/run evidence; carry that provenance and the expected attempt roster through the existing checkpoint. Determine the current attempt from the recorded dispatch relation/order, not from arrival order, opaque ID sorting, matching HEAD, or a guessed ID. A late result from a superseded attempt remains evidence for that attempt only and must never satisfy a missing current attempt. Apply the batch-report Core rules for identical retransmissions, corrections and distinct attempts; an unverified or derived attempt identity cannot satisfy the roster, justify deduplication or mark completion. Preserve it separately as UNKNOWN with partial/unknown coverage. Do not issue new IDs or create a registry here.
+- At a required checkpoint apply `checkpoint`; at terminal fan-in apply `final` once to the accumulated result envelopes. Retain task/agent identity, original claims and evidence references, verified HEAD/CI/review, findings, conflicts, blockers, requested/effective settings and unobserved values under the existing contracts. Preserve the batch-report ledger and distinguish partial or unknown observation. The existing F4 checkpoint/user-local-state owner preserves recoverable complete envelopes, original claims, findings, blockers, Owner requests, corrections, conflicts, dispatch provenance and expected roster. On resume reconcile the restored envelopes and required fields with that roster before deduplication or completion; missing required fields or unverified provenance block complete/PASS until recovered from authorized evidence. Reuse existing references and do not add a storage engine. Do not promote missing evidence to PASS.
+- The caller's immediate-report boundary in `docs/harness/batch-report-composition.md` applies: urgent failures, independent Reviewer BLOCKER/MAJOR findings, security issues, Owner Gate items, invalidated verification premises, material cost/team impact, scope violations, important blockers, handoffs, recovery, AttemptOutcome and required checkpoints are not deferred. Reporting does not change authorization or the Writer/Reviewer gates.
+- The existing lead/Main consumes the consolidated output once and uses the existing F1 reporting contract for one user-facing final report; do not append a second full report or invoke F1 or 한글화 again for the same evidence. Keep the role-compliance gate and evidence reuse: a batch report does not authorize Main to re-run Writer tests or independently approve a change.
+- Record Native Apply only with observed Runtime evidence; if Native composition is unsupported but the actual source is readable, record `MANUAL_READ_APPLY`. If the source cannot be read, record the batch-report stage as `BLOCKED/NOT_RUN`, use the existing concise evidence-preserving reporting path and continue otherwise authorized work. Do not claim the Skill was applied. Runtime Background Agent completion notifications, OS alerts and Hook events are not Main progress reports and are not suppressed by this Skill.
 
 ## Remote mutation and completion gates
 
@@ -64,7 +92,7 @@ Objective + Gate check
 
 Explain first in Korean for someone not in the session: **what changed → user impact → what works → what is still blocked → next action**. Put technical evidence underneath, not before the user outcome.
 
-Record per Primary Jira: Objective, Repo/PR/Branch, Base & verified HEAD, Writer identity and ownership evidence, actual modified files/commits, Native Test, CI, independent Review, Runtime E2E, effective model settings if available, risks and STOP condition. Keep previous evidence as historical, not a new PASS.
+Record per Primary Jira: Objective, Repo/PR/Branch, Base & verified HEAD, Writer identity and ownership evidence, actual modified files/commits, Native Test, CI, independent Review, Runtime E2E, actual role participation and role compliance/violations, requested/effective model settings, available usage evidence (UNKNOWN when unobserved), risks and STOP condition. Keep previous evidence as historical, not a new PASS.
 
 ### Short task example
 
