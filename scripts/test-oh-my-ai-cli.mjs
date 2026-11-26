@@ -663,9 +663,13 @@ function writeModelStub(sb, mode = "ok") {
     "if (argv[0] === 'status') {",
     "  if (mode === 'garbage') { console.log('not json'); process.exit(0); }",
     "  if (mode === 'missing') { console.log(JSON.stringify({ path: '/x', via: 'default', status: 'POLICY_MISSING', errors: [], advisory: ['cost_limits'] })); process.exit(1); }",
+    "  const show = argv.includes('--show-approver');",
     "  const base = { path: '/x', via: 'default', errors: [], advisory: ['cost_limits'], policy_version: '2026.11.25-1', previous_version: null, enabled_models: [], roles: ['senior'] };",
-    "  if (mode === 'draft') { console.log(JSON.stringify({ ...base, status: 'POLICY_NOT_APPROVED' })); process.exit(1); }",
-    "  console.log(JSON.stringify({ ...base, status: 'VALID' }));",
+    "  // #227 dfda659+ 출력: policy_status / approved_by / approved_at. approved_by 는 기본 마스킹, --show-approver 시 전체.",
+    "  const approver = show ? 'owner-fixture' : 'ow***';",
+    "  if (mode === 'legacy') { console.log(JSON.stringify({ ...base, status: 'VALID' })); process.exit(0); }",
+    "  if (mode === 'draft') { console.log(JSON.stringify({ ...base, status: 'POLICY_NOT_APPROVED', policy_status: 'DRAFT_CANDIDATE', approved_by: null, approved_at: null })); process.exit(1); }",
+    "  console.log(JSON.stringify({ ...base, status: 'VALID', policy_status: 'ACTIVE', approved_by: approver, approved_at: '2026-11-25T00:00:00Z' }));",
     "  process.exit(0);",
     "}",
     "console.log(JSON.stringify({ argv }));",
@@ -712,6 +716,10 @@ test("models: passthrough of each subcommand, --apply gate, exit status propagat
   assert.equal(noApply.status, 2);
   assert.doesNotMatch(noApply.stdout, /argv/);
   assert.equal(cli(sb, ["models", "rollback"]).status, 2);
+  // --show-approver 는 status 에만 passthrough 된다.
+  assert.equal(JSON.parse(cli(sb, ["models", "status", "--show-approver"]).stdout).approved_by, "owner-fixture");
+  assert.equal(JSON.parse(cli(sb, ["models", "status"]).stdout).approved_by, "ow***");
+  assert.equal(cli(sb, ["models", "validate", "--show-approver"]).status, 2);
   // apply/diff 는 후보 파일이 필요하다.
   assert.equal(cli(sb, ["models", "apply", "--apply"]).status, 2);
   assert.equal(cli(sb, ["models", "diff"]).status, 2);
@@ -723,14 +731,32 @@ test("models: passthrough of each subcommand, --apply gate, exit status propagat
 test("models: status line shows version, approval and validation result for each policy state", () => {
   const sb = makeFixture("models-status-line");
   writeModelStub(sb, "ok");
-  assert.match(cli(sb, ["status"]).stdout, /model policy  2026\.11\.25-1 · ACTIVE · validation VALID/);
+  assert.match(cli(sb, ["status"]).stdout, /model policy  2026\.11\.25-1 · ACTIVE · approved_by ow\*\*\* · validation VALID/);
   const ok = JSON.parse(cli(sb, ["status", "--json"]).stdout).model_policy;
-  assert.deepEqual(ok, { state: "configured", version: "2026.11.25-1", approval: "ACTIVE", validation: "VALID" });
+  assert.deepEqual(ok, {
+    state: "configured", version: "2026.11.25-1", approval: "ACTIVE", approval_source: "reported",
+    approved_by: "ow***", approved_at: "2026-11-25T00:00:00Z", validation: "VALID",
+  });
 
-  // 스크립트 status 는 DRAFT 정책에 exit 1 을 주지만 JSON 은 그대로 읽는다.
+  // 스크립트 status 는 DRAFT 정책에 exit 1 을 주지만 JSON 은 그대로 읽는다. policy_status 를 직접 쓴다.
   writeModelStub(sb, "draft");
-  assert.match(cli(sb, ["status"]).stdout, /model policy  2026\.11\.25-1 · NOT ACTIVE · validation POLICY_NOT_APPROVED/);
+  assert.match(cli(sb, ["status"]).stdout, /model policy  2026\.11\.25-1 · DRAFT_CANDIDATE · validation POLICY_NOT_APPROVED/);
+  const draft = JSON.parse(cli(sb, ["status", "--json"]).stdout).model_policy;
+  assert.equal(draft.approval, "DRAFT_CANDIDATE");
+  assert.equal(draft.approval_source, "reported");
+  assert.equal(draft.approved_by, null);
   assert.equal(cli(sb, ["status", "--json"]).status, 0);
+
+  // 구버전 #227 (policy_status 없음): status 로 추론하고 (inferred) 로 표시한다.
+  writeModelStub(sb, "legacy");
+  assert.match(cli(sb, ["status"]).stdout, /model policy  2026\.11\.25-1 · ACTIVE \(inferred\) · validation VALID/);
+  const legacy = JSON.parse(cli(sb, ["status", "--json"]).stdout).model_policy;
+  assert.equal(legacy.approval_source, "inferred");
+  assert.equal(legacy.approved_by, null);
+
+  // facade 상태 줄은 --show-approver 없이 호출되므로 전체 승인자가 나오지 않는다.
+  writeModelStub(sb, "ok");
+  assert.doesNotMatch(cli(sb, ["status"]).stdout, /owner-fixture/);
 
   writeModelStub(sb, "missing");
   assert.match(cli(sb, ["status"]).stdout, /model policy  not configured\n/);

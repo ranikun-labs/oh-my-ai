@@ -39,7 +39,7 @@ ohmyai status                             # 설치 결과 확인 (또는 node sc
 | `ohmyai update [--ref REF] [--apply]` | `git fetch` 후 기준 ref(기본 `origin/master`)와 비교 | git; `--apply` 시 render + doctor |
 | `ohmyai config list|get|set` | 사용자 설정 조회·저장 | 직접 (`config.json`) |
 | `ohmyai skills [--core\|--library\|--all] [--json]` | Skill 목록, 출처, explicit-only, 노출 상태 | skill-discovery |
-| `ohmyai models status\|validate\|diff\|check\|apply\|rollback` | model policy 위임. `apply`·`rollback`은 `--apply` 필요(파사드 게이트, 스크립트로는 넘기지 않음). 종료 코드는 스크립트 그대로. `scripts/model-policy.mjs`(#227)가 없으면 status는 "not available" 안내 후 0, 변경 명령은 2 | `scripts/model-policy.mjs` (정책 로직 없음) |
+| `ohmyai models status [--show-approver]\|validate\|diff\|check\|apply\|rollback` | model policy 위임. `apply`·`rollback`은 `--apply` 필요(파사드 게이트, 스크립트로는 넘기지 않음). `status --show-approver`는 승인자 전체 표시를 스크립트에 그대로 넘긴다(기본은 스크립트가 마스킹). 상태 줄(`ohmyai status`)은 `policy_status`(ACTIVE/DRAFT_*)를 그대로 읽고, 필드가 없는 구버전 #227에서만 `status`로 추론하며 `(inferred)`로 표시한다. 승인자는 스크립트가 준 값만 보여준다. 종료 코드는 스크립트 그대로. `scripts/model-policy.mjs`(#227)가 없으면 status는 "not available" 안내 후 0, 변경 명령은 2 | `scripts/model-policy.mjs` (정책 로직 없음) |
 | `ohmyai help` / `--help` / `-h` | 사용법 | 직접 |
 
 내부 명령 `hook`, `context-checkpoint`, `work-start`, `jira-ticket`, `work-view` 는 기존과 바이트 단위로 같게 동작한다.

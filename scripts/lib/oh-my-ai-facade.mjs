@@ -1101,12 +1101,15 @@ function modelPolicyScript(repoRoot) {
 // status 한 줄용 요약. 스크립트 status 는 describeActivePolicy() JSON 을 항상 출력하고, 검증 실패면 exit 1 이다.
 // 그래서 exit 코드가 아니라 JSON 내용으로 판단한다.
 //  - policy_version: 활성 정책 버전 (정책이 로드된 경우에만 있음)
-//  - status: 검증 결과 (VALID | POLICY_MISSING | POLICY_INVALID | POLICY_NOT_APPROVED)
-//  - 승인 상태: describeActivePolicy 는 policy.status 를 노출하지 않는다. VALID 는 ACTIVE 로만 통과하므로
-//    VALID -> ACTIVE, POLICY_NOT_APPROVED -> not ACTIVE 로 유도한다.
+//  - status: 검증 결과 (VALID | POLICY_MISSING | POLICY_INVALID | POLICY_NOT_APPROVED). 승인 판정에 쓰지 않는다.
+//  - policy_status: 파일 자체의 승인 상태 (ACTIVE | DRAFT*). 있으면 그대로 쓴다 (approval_source: reported).
+//  - approved_by / approved_at: 스크립트가 준 값만 그대로 표시한다. 마스킹·노출 여부는 스크립트 몫이다
+//    (기본 마스킹, --show-approver 시 전체).
+//  - policy_status 가 없는 구버전 #227 이면 기존처럼 status 로 추론하고 approval_source: inferred 로 표시한다.
 function modelPolicySummary(repoRoot, env) {
   const script = modelPolicyScript(repoRoot);
   if (!script) return { state: "not available" };
+  // 파사드 요약은 항상 기본(마스킹) 출력만 쓴다. --show-approver 는 `models status` passthrough 로만 전달된다.
   const r = spawnSync(process.execPath, [script, "status"], {
     cwd: repoRoot,
     env: setupEnv(env),
@@ -1119,17 +1122,28 @@ function modelPolicySummary(repoRoot, env) {
     return { state: "not configured", validation: "UNREADABLE" };
   }
   if (!parsed.policy_version) return { state: "not configured", validation: parsed.status ?? "unknown" };
-  const approval = parsed.status === "VALID" ? "ACTIVE" : parsed.status === "POLICY_NOT_APPROVED" ? "NOT ACTIVE" : "unknown";
+  const validation = parsed.status ?? "unknown";
+  const reported = typeof parsed.policy_status === "string" && parsed.policy_status.length > 0;
+  const approval = reported
+    ? parsed.policy_status
+    : validation === "VALID" ? "ACTIVE" : validation === "POLICY_NOT_APPROVED" ? "NOT ACTIVE" : "unknown";
   return {
     state: "configured",
     version: parsed.policy_version,
     approval,
-    validation: parsed.status ?? "unknown",
+    approval_source: reported ? "reported" : "inferred",
+    approved_by: parsed.approved_by ?? null,
+    approved_at: parsed.approved_at ?? null,
+    validation,
   };
 }
 
 function modelPolicyLine(summary) {
-  if (summary.state === "configured") return `${summary.version} · ${summary.approval} · validation ${summary.validation}`;
+  if (summary.state === "configured") {
+    const approval = summary.approval_source === "inferred" ? `${summary.approval} (inferred)` : summary.approval;
+    const approver = summary.approved_by ? ` · approved_by ${summary.approved_by}` : "";
+    return `${summary.version} · ${approval}${approver} · validation ${summary.validation}`;
+  }
   if (summary.state === "not available") return "not available (requires #227)";
   return summary.validation === "POLICY_MISSING" || !summary.validation ? "not configured" : `not configured (${summary.validation})`;
 }
@@ -1158,6 +1172,11 @@ function cmdModels(repoRoot, env, args, { out, err }) {
     err(`usage: ${BIN} models ${sub} <file>`);
     return 2;
   }
+  // --show-approver 는 status 전용 passthrough 다 (승인자 전체 표시는 스크립트가 결정한다).
+  if (rest.includes("--show-approver") && sub !== "status") {
+    err(`${BIN} models ${sub} does not accept --show-approver (status only)`);
+    return 2;
+  }
   // --apply 는 이 파사드의 승인 게이트다. 스크립트는 값 없는 플래그를 usage 오류(exit 2)로 거부하므로 넘기지 않는다.
   const passthrough = rest.filter(a => a !== "--apply");
   // 정책 판단은 스크립트 몫이다. 나머지 인자는 가공 없이 그대로 넘긴다.
@@ -1182,7 +1201,7 @@ function cmdHelp({ out }) {
   out("  update [--ref REF] [--apply] [--force-worktrees]  fetch 후 비교 (기본 origin/master). --apply: clean fast-forward → render → Core 링크 → doctor");
   out("  config list|get|set         ~/.config/oh-my-ai/config.json (update.policy, context.inject, context.preload)");
   out("  skills [--core|--library|--all] [--json]   Skill 목록, 출처, explicit-only, 노출 상태");
-  out("  models status|validate|diff|check|apply|rollback   model policy (scripts/model-policy.mjs 위임, 없으면 not available). apply/rollback은 --apply 필요");
+  out("  models status|validate|diff|check|apply|rollback   model policy (scripts/model-policy.mjs 위임, 없으면 not available). apply/rollback은 --apply 필요. status --show-approver: 승인자 전체 표시(passthrough)");
   out("  help                         이 도움말 (--help, -h 동일)");
   out("");
   out("내부 명령 (hook, context-checkpoint, work-start, jira-ticket, work-view)은 기존과 동일하게 동작합니다.");
