@@ -52,6 +52,10 @@ Verify the current approved Objective or request scope and the exact target and 
 
 For Confluence, use the page's purpose, audience, owner, and hierarchy to choose the target. Update an existing detail page for changes to the same procedure or evidence. Update a parent summary only when a milestone, decision, or status changes, and link to the supporting detail. If a separate long-lived record is needed, propose its title, owner, source revision, and parent link through the existing page creation workflow. Refer canonical contract changes to the responsible Writer or Owner. Keep ambiguous, duplicate, or unverified records read-only.
 
+### Link an issue created by the separate Jira workflow
+
+If the approved workflow includes linking an issue to an existing record, use the exact issue key verified by the [Jira creation workflow](../jira-ticket/SKILL.md) and the existing target record ID. Check current links first and propose only the missing relation. Linking requires its own approval, conflict check, and readback under sections 2–4. If Jira creation is confirmed but linking fails, keep the verified key and resume at link reconciliation. If creation is ambiguous, reconcile it under the Jira creation workflow before proposing a link.
+
 ## 2. Prepare an exact proposal
 
 Show the target and each proposed field change as current value → proposed value, with the reason and source evidence. Include the live target version and separate verified facts from assumptions. Propose only fields within the existing approved scope. Do not update unspecified fields or silently turn a Confluence projection into a product decision.
