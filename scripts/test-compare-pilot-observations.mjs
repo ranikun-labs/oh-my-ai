@@ -94,6 +94,44 @@ test("compares scoped nonzero counters from the existing collector", () => {
     .body.receivedUsageCounters.input_tokens, "UNKNOWN");
 });
 
+test("detailed UNKNOWN reasoning withholds all deltas", () => {
+  const unknown = { ...conditions, reasoning: "UNKNOWN_not_present_in_turn.completed_usage" };
+  assert.deepEqual(compare({ ...baseline, conditions: unknown }, { ...candidate, conditions: unknown }), {
+    exit: 1, body: { status: "NOT_COMPARABLE", reasons: ["conditions.reasoning"] },
+  });
+});
+
+const invalidEvidence = [
+  ["different caller roles", (usage) => { usage.caller_scope.role = "reviewer"; }],
+  ["source and scope mismatch", (usage) => {
+    usage.source = "codex exec --json child stdout; allowlisted usage fields only";
+  }],
+  ["object in place of the observation array", (usage) => {
+    usage.observed_usage_records = { ...usage.observed_usage_records, length: 1 };
+  }],
+  ["partial declaration with complete counters", (usage) => {
+    usage.schema_conformance = "NONCONFORMANT_PARTIAL_MISSING_REQUIRED_FIELDS";
+    usage.missing_required_usage_fields = ["input_tokens"];
+    usage.observed_usage_records[0].missing_required_fields = ["input_tokens"];
+  }],
+  ["missing fields in a conformant record", (usage) => {
+    usage.observed_usage_records[0].missing_required_fields = ["input_tokens"];
+  }],
+  ["invalid single-record index", (usage) => { usage.observed_usage_records[0].stream_record_index = 2; }],
+];
+
+for (const [name, change] of invalidEvidence) {
+  test(`withholds usage deltas for ${name}`, () => {
+    const before = observed(baseline, [counters]);
+    const after = observed(candidate, [{ ...counters, input_tokens: 40 }]);
+    change(after.usage);
+    const { receivedUsageCounters, officialUsage, cost } = compare(before, after).body;
+    assert.ok(Object.values(receivedUsageCounters).every((value) => value === "UNKNOWN"));
+    assert.equal(officialUsage, "UNKNOWN");
+    assert.equal(cost, "UNKNOWN");
+  });
+}
+
 test("rejects invalid input without exposing it", () => {
   for (const input of ["", "private malformed input", "[]\n{}", "{}\n{}\n{}", "x".repeat(1024 * 1024 + 1)]) {
     const result = run(input);
